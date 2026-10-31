@@ -1,0 +1,11 @@
+{
+  "name": "ov-plugin-ts-template",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "extism-js src/index.js -o dist/plugin.wasm"
+  },
+  "dependencies": {
+    "@extism/js-pdk": "^1.0.0"
+  }
+}
