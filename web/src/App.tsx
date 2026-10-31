@@ -20,6 +20,7 @@ import { LogicNode } from './components/nodes/LogicNode';
 import { ActionNode } from './components/nodes/ActionNode';
 import { NodePalette } from './components/palette/NodePalette';
 import { NodeInspector } from './components/drawer/NodeInspector';
+import { TemplateToolbar } from './components/templates/TemplateToolbar';
 
 export const App: React.FC = () => {
   const {
@@ -111,6 +112,7 @@ export const App: React.FC = () => {
         </div>
 
         <div className="header-actions">
+          <TemplateToolbar />
           <div className="bg-toggle-group" title="Canvas Background Style">
             <button
               type="button"

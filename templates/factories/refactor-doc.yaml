@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+apiVersion: factory.ov.io/v1alpha1
+kind: FactoryTemplate
+metadata:
+  name: refactor-doc
+  version: 0.1.0
+  description: Non-destructive pipeline focusing on AST complexity analysis, documentation sync, and zero business logic alteration.
+
+spec:
+  entrypoint: refactor-trigger
+
+  steps:
+    - id: refactor-trigger
+      name: Refactor Event Trigger
+      plugin: extism://plugins/ingestion.wasm
+      config:
+        sources: ["cron", "codebase_recon", "manual_trigger"]
+
+    - id: ast-analyzer
+      name: Tree-sitter AST & Complexity Analyzer
+      plugin: extism://plugins/ast-analyzer.wasm
+      depends_on: ["refactor-trigger"]
+      config:
+        max_cyclomatic_complexity: 15
+        enable_ast_grep: true
+
+    - id: doc-sync
+      name: Documentation & Architecture Synchronizer
+      plugin: extism://plugins/doc-sync.wasm
+      depends_on: ["ast-analyzer"]
+      config:
+        sync_adr: true
+        generate_tsdoc: true
+
+    - id: verify-no-logic-change
+      name: Invariance & Regression Verifier
+      plugin: extism://plugins/builder-tdd.wasm
+      depends_on: ["doc-sync"]
+      config:
+        mode: "regression-invariance"
+        require_zero_behavioral_diff: true
+
+    - id: approver
+      name: Non-Destructive Refactor Approver
+      plugin: extism://plugins/approver.wasm
+      depends_on: ["verify-no-logic-change"]
+      config:
+        fast_track_docs_only: true
+
+  gates:
+    min_coverage_percent: 90.0
+    max_security_alerts: 0
+    require_approval: true

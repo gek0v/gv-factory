@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+apiVersion: factory.ov.io/v1alpha1
+kind: FactoryTemplate
+metadata:
+  name: bugfix-express
+  version: 0.1.0
+  description: Lightweight pipeline for log error remediation with automated fast-track to main upon passing tests.
+
+spec:
+  entrypoint: error-log-ingestion
+
+  steps:
+    - id: error-log-ingestion
+      name: Error Log Ingestion
+      plugin: extism://plugins/ingestion.wasm
+      config:
+        sources: ["sentry", "datadog", "github_issue", "log_stream"]
+
+    - id: bug-localizer
+      name: Bug Localizer (Trace & AST)
+      plugin: extism://plugins/spec-writer.wasm
+      depends_on: ["error-log-ingestion"]
+      config:
+        stack_trace_analysis: true
+        output_format: "reproduction-test"
+
+    - id: builder-tdd
+      name: Fast TDD Patch Runner
+      plugin: extism://plugins/builder-tdd.wasm
+      depends_on: ["bug-localizer"]
+      config:
+        mode: "red-green-refactor"
+        max_iterations: 3
+
+    - id: code-verifier
+      name: Automated Test & Lint Verifier
+      plugin: extism://plugins/reviewer-code.wasm
+      depends_on: ["builder-tdd"]
+      config:
+        clean_context: true
+        strict_linter: true
+
+    - id: fast-track-merger
+      name: Fast-Track Merge Gate
+      plugin: extism://plugins/approver.wasm
+      depends_on: ["code-verifier"]
+      config:
+        auto_fast_track: true
+        feedback_loop_limit: 2
+
+  gates:
+    min_coverage_percent: 85.0
+    max_security_alerts: 0
+    require_approval: false

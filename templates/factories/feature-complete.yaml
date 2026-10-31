@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+apiVersion: factory.ov.io/v1alpha1
+kind: FactoryTemplate
+metadata:
+  name: feature-complete
+  version: 0.1.0
+  description: Comprehensive pipeline with SDD spec-writer, builder-tdd, 4 parallel reviewers (security, arch, uiux, code), and mandatory human approval gate.
+
+spec:
+  entrypoint: ingestion
+
+  steps:
+    - id: ingestion
+      name: Feature Ingestion & Backlog Normalizer
+      plugin: extism://plugins/ingestion.wasm
+      config:
+        sources: ["github_issue", "jira", "product_spec"]
+
+    - id: spec-writer
+      name: SDD Spec Writer & Acceptance Criteria
+      plugin: extism://plugins/spec-writer.wasm
+      depends_on: ["ingestion"]
+      config:
+        memory_retrieval: true
+        output_format: "sdd-tdd"
+
+    - id: builder-tdd
+      name: Builder TDD Sandbox Runner
+      plugin: extism://plugins/builder-tdd.wasm
+      depends_on: ["spec-writer"]
+      config:
+        mode: "red-green-refactor"
+        max_iterations: 5
+
+    - id: security-reviewer
+      name: Security Reviewer (OWASP & Secrets)
+      plugin: extism://plugins/reviewer-security.wasm
+      parallel: true
+      depends_on: ["builder-tdd"]
+      config:
+        clean_context: true
+
+    - id: arch-reviewer
+      name: Architecture & Standards Reviewer
+      plugin: extism://plugins/reviewer-arch.wasm
+      parallel: true
+      depends_on: ["builder-tdd"]
+      config:
+        clean_context: true
+
+    - id: ui-ux-reviewer
+      name: UI/UX & Accessibility Reviewer
+      plugin: extism://plugins/reviewer-uiux.wasm
+      parallel: true
+      depends_on: ["builder-tdd"]
+      config:
+        clean_context: true
+
+    - id: code-reviewer
+      name: Code Quality & Coverage Reviewer
+      plugin: extism://plugins/reviewer-code.wasm
+      parallel: true
+      depends_on: ["builder-tdd"]
+      config:
+        clean_context: true
+
+    - id: gate-approver
+      name: Approver & Human Decision Gate
+      plugin: extism://plugins/approver.wasm
+      depends_on: ["security-reviewer", "arch-reviewer", "ui-ux-reviewer", "code-reviewer"]
+      config:
+        feedback_loop_limit: 3
+
+  gates:
+    min_coverage_percent: 90.0
+    max_security_alerts: 0
+    require_approval: true
