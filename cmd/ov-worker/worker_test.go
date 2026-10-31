@@ -103,3 +103,46 @@ func TestWorker_PipelineExecution(t *testing.T) {
 		t.Errorf("expected lifecycle events to be published during execution")
 	}
 }
+
+func TestWorker_MultiFactoryPipelineSubmission(t *testing.T) {
+	worker := NewWorker(WorkerConfig{
+		DisableNATS:    true,
+		DefaultRetries: 1,
+		DefaultTimeout: 5 * time.Second,
+		MaxConcurrent:  2,
+	})
+	defer worker.Close()
+
+	if worker.Orchestrator == nil {
+		t.Fatalf("expected orchestrator to be initialized on worker")
+	}
+
+	tpl := schema.FactoryTemplate{
+		Metadata: schema.Metadata{
+			Name: "worker-submit-test",
+		},
+		Spec: schema.FactorySpec{
+			Steps: []schema.StepConfig{
+				{
+					ID:     "step-1",
+					Name:   "Init",
+					Plugin: "extism://plugins/init.wasm",
+				},
+			},
+		},
+	}
+
+	run, err := worker.SubmitPipeline(context.Background(), dag.RunRequest{
+		RunID:    "worker-sub-1",
+		Template: tpl,
+		Branch:   "ov-run/worker-branch",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error submitting pipeline: %v", err)
+	}
+
+	if run == nil || run.ID != "worker-sub-1" {
+		t.Fatalf("expected run with ID worker-sub-1, got %v", run)
+	}
+}
+
