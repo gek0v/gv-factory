@@ -2,66 +2,172 @@
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
 import { create } from 'zustand';
-import { type Node, type Edge, applyNodeChanges, applyEdgeChanges, type OnNodesChange, type OnEdgesChange } from '@xyflow/react';
+import {
+  type Node,
+  type Edge,
+  type Connection,
+  type OnNodesChange,
+  type OnEdgesChange,
+  BackgroundVariant,
+  MarkerType,
+  applyNodeChanges,
+  applyEdgeChanges,
+  addEdge,
+} from '@xyflow/react';
+import type { ExecutionStatus, FactoryNodeData } from './types/flow';
+import { validateConnection } from './utils/validation';
+import { initialNodes, initialEdges } from './initialFlow';
 
-interface FactoryFlowState {
-  nodes: Node[];
+let nextNodeId = 10;
+
+export interface FactoryFlowState {
+  nodes: Node<FactoryNodeData>[];
   edges: Edge[];
-  onNodesChange: OnNodesChange;
+  selectedNodeId: string | null;
+  backgroundVariant: BackgroundVariant;
+  onNodesChange: OnNodesChange<Node<FactoryNodeData>>;
   onEdgesChange: OnEdgesChange;
-  setNodes: (nodes: Node[]) => void;
+  onConnect: (connection: Connection) => void;
+  isValidConnection: (connection: Edge | Connection) => boolean;
+  addNode: (
+    nodeData: Partial<FactoryNodeData>,
+    position?: { x: number; y: number }
+  ) => void;
+  deleteNode: (nodeId: string) => void;
+  updateNodeData: (nodeId: string, data: Partial<FactoryNodeData>) => void;
+  updateNodeStatus: (nodeId: string, status: ExecutionStatus) => void;
+  setSelectedNodeId: (nodeId: string | null) => void;
+  setBackgroundVariant: (variant: BackgroundVariant) => void;
+  setNodes: (nodes: Node<FactoryNodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
 }
-
-const initialNodes: Node[] = [
-  {
-    id: 'ingestion',
-    type: 'input',
-    data: { label: 'Ingest (Issue / Webhook)' },
-    position: { x: 50, y: 150 },
-  },
-  {
-    id: 'spec-writer',
-    data: { label: 'Spec Writer (SDD & TDD)' },
-    position: { x: 280, y: 150 },
-  },
-  {
-    id: 'builder-tdd',
-    data: { label: 'Builder TDD (Sandbox)' },
-    position: { x: 520, y: 150 },
-  },
-  {
-    id: 'reviewers',
-    data: { label: '4x Parallel Reviewers' },
-    position: { x: 760, y: 150 },
-  },
-  {
-    id: 'approver',
-    data: { label: 'Approver & Gate' },
-    position: { x: 1000, y: 150 },
-  },
-];
-
-const initialEdges: Edge[] = [
-  { id: 'e1-2', source: 'ingestion', target: 'spec-writer' },
-  { id: 'e2-3', source: 'spec-writer', target: 'builder-tdd' },
-  { id: 'e3-4', source: 'builder-tdd', target: 'reviewers' },
-  { id: 'e4-5', source: 'reviewers', target: 'approver' },
-];
 
 export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   nodes: initialNodes,
   edges: initialEdges,
+  selectedNodeId: null,
+  backgroundVariant: BackgroundVariant.Dots,
+
   onNodesChange: (changes) => {
+    for (const change of changes) {
+      if (change.type === 'select') {
+        if (change.selected) {
+          set({ selectedNodeId: change.id });
+        } else if (get().selectedNodeId === change.id) {
+          set({ selectedNodeId: null });
+        }
+      }
+    }
+
     set({
       nodes: applyNodeChanges(changes, get().nodes),
     });
   },
+
   onEdgesChange: (changes) => {
     set({
       edges: applyEdgeChanges(changes, get().edges),
     });
   },
+
+  isValidConnection: (connection: Edge | Connection) => {
+    const { nodes, edges } = get();
+    const result = validateConnection(connection, nodes, edges);
+    return result.isValid;
+  },
+
+  onConnect: (connection: Connection) => {
+    const { nodes, edges } = get();
+    const validation = validateConnection(connection, nodes, edges);
+    if (!validation.isValid) {
+      return;
+    }
+
+    const newEdge: Edge = {
+      ...connection,
+      id: `e-${connection.source}-${connection.target}-${Date.now()}`,
+      animated: false,
+      markerEnd: { type: MarkerType.ArrowClosed },
+    };
+
+    set({
+      edges: addEdge(newEdge, edges),
+    });
+  },
+
+  addNode: (nodeData, position) => {
+    const currentNodes = get().nodes;
+    const id = `node-${nextNodeId++}`;
+    const nodeType = nodeData.nodeType || 'agent';
+
+    const newPos = position || {
+      x: 100 + ((currentNodes.length * 60) % 600),
+      y: 120 + ((currentNodes.length * 50) % 350),
+    };
+
+    const newNode: Node<FactoryNodeData> = {
+      id,
+      type: nodeType,
+      position: newPos,
+      data: {
+        label: nodeData.label || 'New Factory Node',
+        nodeType,
+        status: nodeData.status || 'pending',
+        ...nodeData,
+      } as FactoryNodeData,
+    };
+
+    set({
+      nodes: [...currentNodes, newNode],
+      selectedNodeId: id,
+    });
+  },
+
+  deleteNode: (nodeId: string) => {
+    const { nodes, edges, selectedNodeId } = get();
+    set({
+      nodes: nodes.filter((n) => n.id !== nodeId),
+      edges: edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
+      selectedNodeId: selectedNodeId === nodeId ? null : selectedNodeId,
+    });
+  },
+
+  updateNodeData: (nodeId: string, data: Partial<FactoryNodeData>) => {
+    set({
+      nodes: get().nodes.map((node) => {
+        if (node.id === nodeId) {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...data,
+            } as FactoryNodeData,
+          };
+        }
+        return node;
+      }),
+    });
+  },
+
+  updateNodeStatus: (nodeId: string, status: ExecutionStatus) => {
+    get().updateNodeData(nodeId, { status });
+  },
+
+  setSelectedNodeId: (nodeId: string | null) => {
+    set({
+      selectedNodeId: nodeId,
+      nodes: get().nodes.map((n) => ({
+        ...n,
+        selected: n.id === nodeId,
+      })),
+    });
+  },
+
+  setBackgroundVariant: (variant: BackgroundVariant) => {
+    set({ backgroundVariant: variant });
+  },
+
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
 }));
+
