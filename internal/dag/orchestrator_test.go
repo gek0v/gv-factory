@@ -188,11 +188,6 @@ func TestOrchestrator_ConcurrentMultiFactoryExecution(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	for _, r := range runs {
-		snap, _ := orchestrator.GetRun(r.ID)
-		t.Logf("RUN %s: state=%s, progress=%.1f, err=%s", r.ID, snap.State, snap.ProgressPercent, snap.Error)
-	}
-
 	if !allDone {
 		t.Fatalf("timed out waiting for concurrent runs to finish")
 	}
@@ -407,10 +402,10 @@ func TestOrchestrator_CancelRun(t *testing.T) {
 		t.Fatalf("expected run2 to be CANCELLED, got %s", snap2.State)
 	}
 
-	// Wait until run1 starts running
-	for start := time.Now(); time.Since(start) < 3*time.Second; {
+	// Wait until run1 starts running and has provisioned its worktree
+	for start := time.Now(); time.Since(start) < 5*time.Second; {
 		snap1, _ := orchestrator.GetRun(run1.ID)
-		if snap1.State == FactoryRunStateRunning {
+		if snap1 != nil && snap1.State == FactoryRunStateRunning && snap1.WorktreePath != "" {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -422,9 +417,9 @@ func TestOrchestrator_CancelRun(t *testing.T) {
 	}
 
 	// Wait for cleanup
-	for start := time.Now(); time.Since(start) < 3*time.Second; {
+	for start := time.Now(); time.Since(start) < 5*time.Second; {
 		snap1, _ := orchestrator.GetRun(run1.ID)
-		if snap1.State == FactoryRunStateCancelled {
+		if snap1 != nil && snap1.State == FactoryRunStateCancelled && sbMgr.ActiveCount() == 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

@@ -352,6 +352,15 @@ func (o *MultiFactoryOrchestrator) executeRun(runID string, req RunRequest) {
 		cancel()
 		return
 	}
+	if run.isCancelled {
+		run.State = FactoryRunStateCancelled
+		now := time.Now()
+		run.CompletedAt = &now
+		o.cancelledCount++
+		o.mu.Unlock()
+		cancel()
+		return
+	}
 	run.cancel = cancel
 	o.mu.Unlock()
 

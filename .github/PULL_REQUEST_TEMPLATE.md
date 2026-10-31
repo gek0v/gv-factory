@@ -24,7 +24,7 @@ Por favor, confirma el cumplimiento de los siguientes requisitos antes de solici
 
 - [ ] **Vinculación con el Issue:** Este PR está enlazado a un issue abierto y discutido previamente.
 - [ ] **Pruebas Automatizadas:** Se han añadido o actualizado pruebas unitarias/integración que cubren los cambios realizados.
-- [ ] **Cumplimiento REUSE / SPDX:** Todos los nuevos ficheros contienen la cabecera correspondiente de licencia y autoría (`SPDX-License-Identifier: Apache-2.0`).
+- [ ] **Cumplimiento REUSE / SPDX:** Todos los nuevos ficheros contienen la cabecera correspondiente de licencia y autoría (Apache-2.0).
 - [ ] **Impacto en el Cerebro (Migraciones SQL):**
   - [ ] No aplica (no modifica estructuras de base de datos ni esquemas vectoriales).
   - [ ] Aplica: Se incluye migración idempotente bajo `migrations/brain/` y se han validado índices HNSW.
