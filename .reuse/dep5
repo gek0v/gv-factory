@@ -4,7 +4,7 @@ Upstream-Contact: maintainers@ov-factory.org
 Source: https://github.com/ov-factory/ov-factory
 
 # Configuración y metadatos generales
-Files: .github/* .github/**/* .vscode/* .idea/* .editorconfig .gitignore .gitattributes .pre-commit-config.yaml go.sum **/Cargo.lock **/Cargo.toml Cargo.lock Cargo.toml web/index.html web/pnpm-lock.yaml coverage.out
+Files: .github/* .github/**/* .vscode/* .idea/* .editorconfig .gitignore .gitattributes .pre-commit-config.yaml go.sum **/Cargo.lock **/Cargo.toml Cargo.lock Cargo.toml web/index.html web/pnpm-lock.yaml coverage.out *.md **/*.md
 Copyright: 2026 OV-Factory Contributors
 License: Apache-2.0
 
