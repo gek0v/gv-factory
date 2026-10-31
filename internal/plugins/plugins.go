@@ -195,9 +195,22 @@ func NewHost(configs ...HostConfig) *Host {
 
 // RegisterHostFunction registers a global host function available to all plugins loaded by this host.
 func (h *Host) RegisterHostFunction(fn extism.HostFunction) {
+	if h == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.hostFunctions = append(h.hostFunctions, fn)
+}
+
+// RegisterRegistry registers all host functions from a HostFunctionRegistry with this host.
+func (h *Host) RegisterRegistry(r *HostFunctionRegistry) {
+	if h == nil || r == nil {
+		return
+	}
+	for _, fn := range r.HostFunctions() {
+		h.RegisterHostFunction(fn)
+	}
 }
 
 // LoadPlugin validates manifest metadata and initializes an isolated Extism plugin instance.

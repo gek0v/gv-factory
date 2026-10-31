@@ -370,3 +370,47 @@ func TestDestroy_EdgeCases(t *testing.T) {
 		t.Errorf("expected branch to be deleted even if worktree dir was already gone")
 	}
 }
+
+func TestMaskSecrets(t *testing.T) {
+	input := "User logged in with password=secret123 and token=my-api-token-456"
+	secrets := []string{"secret123", "my-api-token-456", ""}
+	expected := "User logged in with password=*** and token=***"
+
+	actual := MaskSecrets(input, secrets)
+	if actual != expected {
+		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+func TestGetEnvironmentAndPath(t *testing.T) {
+	repoDir := createTestGitRepo(t)
+	mgr := NewManager(Config{
+		RepoPath:        repoDir,
+		BaseWorktreeDir: t.TempDir(),
+	})
+	ctx := context.Background()
+
+	// Before provisioning
+	if _, ok := mgr.GetEnvironment("run-test-get"); ok {
+		t.Errorf("expected GetEnvironment to return false before provision")
+	}
+	if _, ok := mgr.GetWorktreePath("run-test-get"); ok {
+		t.Errorf("expected GetWorktreePath to return false before provision")
+	}
+
+	env, err := mgr.ProvisionWorktree(ctx, "run-test-get")
+	if err != nil {
+		t.Fatalf("unexpected provision error: %v", err)
+	}
+	defer mgr.Destroy(ctx, "run-test-get")
+
+	gotEnv, ok := mgr.GetEnvironment("run-test-get")
+	if !ok || gotEnv.WorktreePath != env.WorktreePath {
+		t.Errorf("GetEnvironment mismatch: got %v, want %v", gotEnv, env)
+	}
+
+	path, ok := mgr.GetWorktreePath("run-test-get")
+	if !ok || path != env.WorktreePath {
+		t.Errorf("GetWorktreePath mismatch: got %q, want %q", path, env.WorktreePath)
+	}
+}

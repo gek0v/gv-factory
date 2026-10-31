@@ -269,12 +269,31 @@ func (m *Manager) Prune(ctx context.Context) error {
 	return m.prune(ctx)
 }
 
+// GetEnvironment retrieves an active environment by its runID.
+func (m *Manager) GetEnvironment(runID string) (*Environment, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	env, ok := m.activeRuns[runID]
+	return env, ok
+}
+
+// GetWorktreePath returns the worktree path for a given runID if it exists.
+func (m *Manager) GetWorktreePath(runID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	env, ok := m.activeRuns[runID]
+	if !ok || env.WorktreePath == "" {
+		return "", false
+	}
+	return env.WorktreePath, true
+}
+
 // MaskSecrets applies a mask to sensitive values in logs.
 func MaskSecrets(input string, secrets []string) string {
 	masked := input
 	for _, sec := range secrets {
 		if sec != "" {
-			masked = fmt.Sprintf("***")
+			masked = strings.ReplaceAll(masked, sec, "***")
 		}
 	}
 	return masked
