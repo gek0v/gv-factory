@@ -1,0 +1,38 @@
+# Pre-commit hooks para OV-Factory
+# Consulta https://pre-commit.com para más información
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Detección preventiva de secretos y credenciales expuestas
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  # Validación de cumplimiento de licencias y cabeceras SPDX (REUSE FSFE)
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v4.0.0
+    hooks:
+      - id: reuse
+
+  # Validación de mensajes de commit según Conventional Commits
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.2.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: []

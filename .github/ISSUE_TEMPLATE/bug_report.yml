@@ -1,0 +1,73 @@
+name: "🐛 Reporte de Error (Bug Report)"
+description: "Reporta un problema o comportamiento inesperado en OV-Factory"
+title: "[Bug]: "
+labels: ["kind/bug", "status/triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por tomarte el tiempo de reportar este problema. Antes de enviar, asegúrate de verificar que el error no haya sido reportado previamente.
+  - type: input
+    id: version
+    attributes:
+      label: Versión del Binario / Commit
+      description: Indica la versión de `ov-server`, `ov-worker` o el commit exacto (`git rev-parse HEAD`).
+      placeholder: "v0.1.0 o git sha (ej. a1b2c3d)"
+    validations:
+      required: true
+  - type: input
+    id: factory_template
+    attributes:
+      label: Plantilla de Fábrica Utilizada
+      description: Nombre o ruta del archivo de configuración YAML de la factoría (ej. `default-tdd-factory.yaml`).
+      placeholder: "templates/factories/default-tdd-factory.yaml"
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Entorno de Ejecución
+      description: Selecciona el entorno donde se reproduce el fallo.
+      options:
+        - "Docker Compose Local"
+        - "Podman Rootless"
+        - "Kubernetes"
+        - "Bare Metal / Binario Directo"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Pasos para Reproducir
+      description: Explica detalladamente cómo reproducir el error paso a paso.
+      placeholder: |
+        1. Iniciar el servidor con 'ov-server start'
+        2. Cargar la factoría '...'
+        3. Despachar la tarea '...'
+        4. Ver el error en el paso '...'
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamiento Esperado
+      description: ¿Qué comportamiento esperabas que ocurriera?
+    validations:
+      required: true
+  - type: textarea
+    id: sandbox_logs
+    attributes:
+      label: Logs del Sandbox / Servidor
+      description: Copia y pega los logs relevantes del sandbox, Docker o Hatchet.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Validación Previa
+      options:
+        - label: He comprobado que no existe ya un issue similar abierto.
+          required: true
+        - label: He verificado que los logs no contienen secretos ni tokens sensibles.
+          required: true

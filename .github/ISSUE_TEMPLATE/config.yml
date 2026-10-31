@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions
+    url: https://github.com/ov-factory/ov-factory/discussions
+    about: "¿Tienes dudas sobre configuración, arquitectura o ideas preliminares? Únete a nuestras discusiones comunitarias."
+  - name: Política de Seguridad y Divulgación Privada
+    url: https://github.com/ov-factory/ov-factory/security/advisories/new
+    about: "Para reportar vulnerabilidades de seguridad de forma privada y confidencial."

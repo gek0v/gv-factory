@@ -1,0 +1,25 @@
+# Reglas globales de propiedad del repositorio OV-Factory
+# Consulta https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Mantenedores principales por defecto para todo el repositorio
+* @ov-factory/core-maintainers
+
+# Automatización, flujos de CI/CD y gobernanza
+/.github/                     @ov-factory/infrastructure-maintainers @ov-factory/core-maintainers
+/.github/workflows/           @ov-factory/infrastructure-maintainers @ov-factory/security-team
+/CODEOWNERS                   @ov-factory/core-maintainers
+/LICENSE                      @ov-factory/core-maintainers
+/SECURITY.md                  @ov-factory/security-team
+
+# Módulos críticos del núcleo
+/internal/sandbox/            @ov-factory/security-team @ov-factory/sandbox-maintainers
+/internal/auth/               @ov-factory/security-team @ov-factory/core-maintainers
+/internal/plugins/            @ov-factory/wasm-maintainers @ov-factory/core-maintainers
+/internal/brain/              @ov-factory/brain-maintainers
+/internal/dag/                @ov-factory/orchestration-maintainers
+
+# Infraestructura y despliegues
+/deployments/                 @ov-factory/infrastructure-maintainers
+
+# Definiciones de esquema y contratos públicos
+/pkg/schema/                  @ov-factory/core-maintainers

@@ -1,0 +1,42 @@
+# Normalización de saltos de línea a LF en todo el repositorio
+* text=auto eol=lf
+
+# Archivos de código fuente y documentación con saltos LF explícitos
+*.go text eol=lf diff=go
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
+
+# Artefactos WebAssembly y recursos multimedia / gráficos marcados como binarios
+*.wasm binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.webp binary
+*.tar.gz binary
+*.zip binary
+
+# Reglas de fusión especializadas para gestores de paquetes
+go.sum merge=union
+pnpm-lock.yaml merge=binary
+package-lock.json merge=binary
+yarn.lock merge=binary
+
+# Atributos de exportación (git archive)
+.github export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
+.editorconfig export-ignore
+.pre-commit-config.yaml export-ignore
+.reuse export-ignore

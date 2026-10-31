@@ -1,0 +1,64 @@
+name: "🧩 Propuesta de Nuevo Plugin / Nodo (Plugin Proposal)"
+description: "Propón un nuevo nodo oficial para el ecosistema WASM (Revisor, Builder, Conector o Validador)"
+title: "[Plugin]: "
+labels: ["kind/plugin", "ecosystem/wasm", "status/triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Los plugins de OV-Factory se compilan a WebAssembly (WASM) utilizando Extism y operan con capacidades aisladas.
+  - type: input
+    id: plugin_name
+    attributes:
+      label: Nombre del Plugin Propuesto
+      placeholder: "ej. reviewer-semgrep, builder-rust-cargo, connector-linear"
+    validations:
+      required: true
+  - type: dropdown
+    id: plugin_type
+    attributes:
+      label: Rol del Nodo en el Grafo
+      options:
+        - "Ingesta / Conector de Entrada (GitHub, GitLab, Linear, Webhook)"
+        - "Spec Writer (Generación de contratos, BDD, Gherkin)"
+        - "Builder TDD (Generación de código guiado por pruebas)"
+        - "Revisor Especializado (Seguridad, Rendimiento, UI/UX, Arquitectura)"
+        - "Approver / Compuerta de Decisión Criptográfica"
+        - "Conector de Despliegue / Salida"
+    validations:
+      required: true
+  - type: dropdown
+    id: implementation_language
+    attributes:
+      label: Lenguaje de Implementación del Plugin
+      options:
+        - "Rust (Extism PDK)"
+        - "Go (Extism PDK / TinyGo)"
+        - "TypeScript / JavaScript (Extism PDK)"
+        - "Python (Component Model)"
+    validations:
+      required: true
+  - type: textarea
+    id: input_output_schema
+    attributes:
+      label: Contrato de Entrada y Salida (Schema)
+      description: Describe las estructuras JSON esperadas en los conectores de entrada y salida del nodo.
+      placeholder: |
+        Input: { "source_code_path": string, "rules": string[] }
+        Output: { "violations": [{ "file": string, "line": number, "severity": string }] }
+    validations:
+      required: true
+  - type: textarea
+    id: host_functions_required
+    attributes:
+      label: Funciones de Anfitrión Requeridas (Host Functions)
+      description: ¿Necesita el plugin capacidades especiales expuestas por el runtime (lectura de AST, llamadas HTTP, sandbox exec)?
+    validations:
+      required: false
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: Casos de Uso y Beneficios
+      description: Explica por qué este plugin debería formar parte de la biblioteca estándar o del catálogo oficial.
+    validations:
+      required: true

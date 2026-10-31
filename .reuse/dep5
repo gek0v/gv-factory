@@ -1,0 +1,29 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OV-Factory
+Upstream-Contact: maintainers@ov-factory.org
+Source: https://github.com/ov-factory/ov-factory
+
+# Configuración y metadatos generales
+Files: .github/* .github/**/* .vscode/* .idea/* .editorconfig .gitignore .gitattributes .pre-commit-config.yaml
+Copyright: 2026 OV-Factory Contributors
+License: Apache-2.0
+
+# Archivos de datos, esquemas y especificaciones JSON/YAML
+Files: *.json **/*.json *.yaml **/*.yaml *.yml **/*.yml
+Copyright: 2026 OV-Factory Contributors
+License: Apache-2.0
+
+# Recursos gráficos y multimedia
+Files: *.png **/*.png *.jpg **/*.jpg *.svg **/*.svg *.ico **/*.ico *.webp **/*.webp
+Copyright: 2026 OV-Factory Contributors
+License: Apache-2.0
+
+# Migraciones SQL y semillas
+Files: migrations/**/*.sql
+Copyright: 2026 OV-Factory Contributors
+License: Apache-2.0
+
+# Artefactos WebAssembly y binarios de prueba
+Files: *.wasm **/*.wasm
+Copyright: 2026 OV-Factory Contributors
+License: Apache-2.0

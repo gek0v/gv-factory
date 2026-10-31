@@ -1,0 +1,53 @@
+name: "✨ Propuesta de Mejora (Feature Request)"
+description: "Propón una nueva funcionalidad o mejora en el motor de grafos o en la interfaz visual"
+title: "[Feat]: "
+labels: ["kind/enhancement", "status/triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ¡Gracias por querer mejorar OV-Factory! Las propuestas deben alinearse con la arquitectura de micro-kernel y diseño modular.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Componente Afectado
+      description: Selecciona el subsistema principal de la propuesta.
+      options:
+        - "Canvas Visual (@xyflow/react / Frontend SPA)"
+        - "Motor de Grafos y Mutación en Caliente (internal/dag)"
+        - "Cerebro y Memoria Persistente (internal/brain / pgvector)"
+        - "Controlador de Sandboxes y Worktrees (internal/sandbox)"
+        - "Gateway y Bus de Eventos (internal/gateway / NATS / Svix)"
+        - "CLI de Desarrollador (cmd/ov-cli)"
+        - "Otro"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema o Necesidad
+      description: ¿Qué limitación actual o caso de uso no resuelto aborda esta propuesta?
+      placeholder: "Actualmente, al manipular flujos visuales..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Solución Propuesta
+      description: Describe cómo debería funcionar la nueva capacidad o mejora arquitectónica.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas Consideradas
+      description: ¿Qué otras soluciones o herramientas has evaluado y por qué no encajan?
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto Adicional / Mockups
+      description: Enlaces, capturas de pantalla, diagramas o notas conceptuales relevantes.
+    validations:
+      required: false
