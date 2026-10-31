@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+import { MarkerType, type Edge, type Node } from '@xyflow/react';
+import type { FactoryNodeData } from './types/flow';
+
+export const initialNodes: Node<FactoryNodeData>[] = [
+  {
+    id: 'trigger-ingest',
+    type: 'trigger',
+    position: { x: 50, y: 180 },
+    data: {
+      nodeType: 'trigger',
+      subtype: 'webhook',
+      label: 'GitHub Webhook Ingestion',
+      description: 'Receives issue labeled ready-for-agent',
+      eventSource: 'github.com/gek0v/gv-factory',
+      status: 'completed',
+    },
+  },
+  {
+    id: 'agent-spec-writer',
+    type: 'agent',
+    position: { x: 380, y: 180 },
+    data: {
+      nodeType: 'agent',
+      role: 'spec_writer',
+      label: 'Spec Writer Agent (SDD & TDD)',
+      description: 'Generates formal SDD and executable test suites',
+      model: 'claude-3-5-sonnet',
+      pluginTag: 'extism:sdd-gen',
+      status: 'completed',
+    },
+  },
+  {
+    id: 'agent-builder-tdd',
+    type: 'agent',
+    position: { x: 710, y: 180 },
+    data: {
+      nodeType: 'agent',
+      role: 'builder_tdd',
+      label: 'Builder TDD (Sandbox)',
+      description: 'Executes Red-Green-Refactor loop in isolated worktree',
+      model: 'claude-3-5-sonnet',
+      pluginTag: 'extism:tdd-runner',
+      sandboxEnabled: true,
+      status: 'running',
+    },
+  },
+  {
+    id: 'logic-threshold-gate',
+    type: 'logic',
+    position: { x: 1040, y: 180 },
+    data: {
+      nodeType: 'logic',
+      subtype: 'threshold',
+      label: 'Quality & Coverage Evaluator',
+      description: 'Validates unit test coverage and 0 security alerts',
+      thresholdScore: 90,
+      status: 'pending',
+    },
+  },
+  {
+    id: 'agent-human-approver',
+    type: 'agent',
+    position: { x: 1370, y: 80 },
+    data: {
+      nodeType: 'agent',
+      role: 'approver',
+      label: 'Human Approver Gate',
+      description: 'Requires HMAC signed approval token for production PR',
+      model: 'human-gate',
+      status: 'awaiting_approval',
+    },
+  },
+  {
+    id: 'action-open-pr',
+    type: 'action',
+    position: { x: 1700, y: 80 },
+    data: {
+      nodeType: 'action',
+      subtype: 'open_pr',
+      label: 'Merge Queue PR Mutation',
+      description: 'Opens PR to main with merge-tree validation',
+      branchName: 'ov-run/feat-25',
+      target: 'origin/main',
+      status: 'pending',
+    },
+  },
+  {
+    id: 'action-alert-failed',
+    type: 'action',
+    position: { x: 1370, y: 320 },
+    data: {
+      nodeType: 'action',
+      subtype: 'slack_notification',
+      label: 'Broadcast TDD Retry Alert',
+      description: 'Notifies #factory-alerts of threshold failure',
+      target: '#factory-alerts',
+      status: 'failed',
+    },
+  },
+];
+
+export const initialEdges: Edge[] = [
+  {
+    id: 'e-trigger-spec',
+    source: 'trigger-ingest',
+    target: 'agent-spec-writer',
+    sourceHandle: 'trigger-out',
+    targetHandle: 'agent-in',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+  {
+    id: 'e-spec-builder',
+    source: 'agent-spec-writer',
+    target: 'agent-builder-tdd',
+    sourceHandle: 'agent-out',
+    targetHandle: 'agent-in',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+  {
+    id: 'e-builder-logic',
+    source: 'agent-builder-tdd',
+    target: 'logic-threshold-gate',
+    sourceHandle: 'agent-out',
+    targetHandle: 'logic-in',
+    animated: true,
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+  {
+    id: 'e-logic-pass-approver',
+    source: 'logic-threshold-gate',
+    target: 'agent-human-approver',
+    sourceHandle: 'branch-pass',
+    targetHandle: 'agent-in',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+  {
+    id: 'e-logic-fail-alert',
+    source: 'logic-threshold-gate',
+    target: 'action-alert-failed',
+    sourceHandle: 'branch-fail',
+    targetHandle: 'action-in',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+  {
+    id: 'e-approver-pr',
+    source: 'agent-human-approver',
+    target: 'action-open-pr',
+    sourceHandle: 'agent-out',
+    targetHandle: 'action-in',
+    animated: false,
+    markerEnd: { type: MarkerType.ArrowClosed },
+  },
+];
