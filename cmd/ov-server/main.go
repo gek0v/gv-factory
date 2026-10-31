@@ -15,6 +15,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
+	"github.com/gv-factory/gv-factory/internal/connectors/outbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
@@ -55,6 +56,14 @@ func main() {
 		SentrySecret: os.Getenv("SENTRY_WEBHOOK_SECRET"),
 	}, inbound.NewGatewayDispatcher(gw))
 	_ = webhookIngestor
+
+	outboundDispatcher := outbound.NewDefaultDispatcher()
+	outboundDispatcher.Start(ctx)
+	defer func() {
+		_ = outboundDispatcher.Stop()
+	}()
+	_, _ = outboundDispatcher.AttachToGateway(ctx, gw)
+	_ = outboundDispatcher
 
 	log.Println("ov-server initialized successfully. Listening for orchestrations...")
 
