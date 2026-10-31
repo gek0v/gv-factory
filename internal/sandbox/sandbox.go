@@ -7,9 +7,61 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 )
+
+// CleanStaleLocks removes orphaned .git/index.lock and .git/worktrees/*/index.lock files.
+func CleanStaleLocks(repoPath string) error {
+	gitDir := filepath.Join(repoPath, ".git")
+	info, err := os.Stat(gitDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	actualGitDir := gitDir
+	if !info.IsDir() {
+		content, err := os.ReadFile(gitDir)
+		if err != nil {
+			return err
+		}
+		trimmed := strings.TrimSpace(string(content))
+		if strings.HasPrefix(trimmed, "gitdir:") {
+			target := strings.TrimSpace(strings.TrimPrefix(trimmed, "gitdir:"))
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(repoPath, target)
+			}
+			actualGitDir = target
+		}
+	}
+
+	mainLock := filepath.Join(actualGitDir, "index.lock")
+	if err := os.Remove(mainLock); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove index.lock: %w", err)
+	}
+
+	worktreesDir := filepath.Join(actualGitDir, "worktrees")
+	entries, err := os.ReadDir(worktreesDir)
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				wtLock := filepath.Join(worktreesDir, entry.Name(), "index.lock")
+				if err := os.Remove(wtLock); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("failed to remove worktree lock for %s: %w", entry.Name(), err)
+				}
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
+}
 
 // DefaultWorktreeDir returns the default base directory for worktrees.
 // It checks the OV_WORKTREE_DIR environment variable and falls back to
@@ -23,6 +75,8 @@ func DefaultWorktreeDir() string {
 
 // Config sets global settings for sandbox management.
 type Config struct {
+	RepoPath        string
+	BaseBranch      string
 	BaseWorktreeDir string
 	BasePort        int
 }
@@ -45,6 +99,12 @@ type Manager struct {
 
 // NewManager creates a sandbox manager instance.
 func NewManager(cfg Config) *Manager {
+	if cfg.RepoPath == "" {
+		cfg.RepoPath = "."
+	}
+	if cfg.BaseBranch == "" {
+		cfg.BaseBranch = "main"
+	}
 	if cfg.BaseWorktreeDir == "" {
 		cfg.BaseWorktreeDir = DefaultWorktreeDir()
 	}
@@ -82,13 +142,73 @@ func (m *Manager) ProvisionWorktree(ctx context.Context, runID string) (*Environ
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if runID == "" {
+		return nil, fmt.Errorf("runID cannot be empty")
+	}
+
+	if _, exists := m.activeRuns[runID]; exists {
+		return nil, fmt.Errorf("run %q is already active", runID)
+	}
+
+	// 1. Pre-flight lock cleanup
+	if err := CleanStaleLocks(m.config.RepoPath); err != nil {
+		return nil, fmt.Errorf("pre-flight lock cleanup failed: %w", err)
+	}
+
+	// 2. Prepare paths and branch name
+	worktreePath := filepath.Join(m.config.BaseWorktreeDir, runID)
+	branch := fmt.Sprintf("ov-run/%s", runID)
+
+	if err := os.MkdirAll(m.config.BaseWorktreeDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create base worktree directory: %w", err)
+	}
+
+	// 3. Execute git worktree add -b ov-run/<run_id> <worktree_path> <base_branch>
+	cmd := exec.CommandContext(ctx, "git", "worktree", "add", "-b", branch, worktreePath, m.config.BaseBranch)
+	cmd.Dir = m.config.RepoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Rollback partial directory if created
+		_ = os.RemoveAll(worktreePath)
+		_ = CleanStaleLocks(m.config.RepoPath)
+		return nil, fmt.Errorf("failed to provision git worktree: %w, output: %s", err, string(out))
+	}
+
+	// 4. Validate worktree directory exists and is cleanly attached
+	info, err := os.Stat(worktreePath)
+	if err != nil || !info.IsDir() {
+		_ = exec.CommandContext(ctx, "git", "-C", m.config.RepoPath, "worktree", "remove", "--force", worktreePath).Run()
+		_ = os.RemoveAll(worktreePath)
+		return nil, fmt.Errorf("worktree directory was not created successfully")
+	}
+
+	// 5. Verify that active branch is locked to ov-run/<run_id> and not main
+	checkBranchCmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD")
+	branchOut, err := checkBranchCmd.CombinedOutput()
+	if err != nil {
+		_ = exec.CommandContext(ctx, "git", "-C", m.config.RepoPath, "worktree", "remove", "--force", worktreePath).Run()
+		_ = os.RemoveAll(worktreePath)
+		return nil, fmt.Errorf("failed to verify worktree branch: %w", err)
+	}
+
+	activeBranch := strings.TrimSpace(string(branchOut))
+	if activeBranch != branch {
+		_ = exec.CommandContext(ctx, "git", "-C", m.config.RepoPath, "worktree", "remove", "--force", worktreePath).Run()
+		_ = os.RemoveAll(worktreePath)
+		return nil, fmt.Errorf("worktree is attached to branch %q, expected %q", activeBranch, branch)
+	}
+	if activeBranch == m.config.BaseBranch {
+		_ = exec.CommandContext(ctx, "git", "-C", m.config.RepoPath, "worktree", "remove", "--force", worktreePath).Run()
+		_ = os.RemoveAll(worktreePath)
+		return nil, fmt.Errorf("worktree cannot be on base branch %q", m.config.BaseBranch)
+	}
+
 	idx := m.currentIndex
 	m.currentIndex++
 
 	env := &Environment{
 		RunID:        runID,
 		FactoryIndex: idx,
-		WorktreePath: filepath.Join(m.config.BaseWorktreeDir, runID),
+		WorktreePath: worktreePath,
 		BasePort:     m.CalculatePort(idx, 0),
 	}
 
