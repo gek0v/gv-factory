@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ov-postgres
+    environment:
+      POSTGRES_USER: ov_user
+      POSTGRES_PASSWORD: ov_password
+      POSTGRES_DB: ov_factory
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../migrations/brain:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ov_user -d ov_factory"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: ov-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  hatchet:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-engine:latest
+    container_name: ov-hatchet
+    environment:
+      SERVER_ENCRYPTION_JWT_SECRET: devjwtsecretdevjwtsecretdevjwtsecret
+      DATABASE_URL: postgresql://ov_user:ov_password@postgres:5432/ov_factory
+    ports:
+      - "7077:7077"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  svix:
+    image: svix/svix-server:latest
+    container_name: ov-svix
+    environment:
+      SVIX_DB_OPTIONS: postgres://ov_user:ov_password@postgres:5432/ov_factory
+      SVIX_JWT_SECRET: devsvixsecretdevsvixsecret
+    ports:
+      - "8071:8071"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
