@@ -54,13 +54,15 @@ type ArchitecturalRule struct {
 
 // CodebaseKnowledge represents a semantic fragment or AST node stored in pgvector.
 type CodebaseKnowledge struct {
-	ID        string    `json:"id"`
-	FilePath  string    `json:"file_path"`
-	Symbol    string    `json:"symbol"`
-	Language  string    `json:"language"`
-	Content   string    `json:"content"`
-	Embedding []float32 `json:"embedding,omitempty"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	FilePath    string    `json:"file_path"`
+	SymbolName  string    `json:"symbol_name"`
+	SymbolType  string    `json:"symbol_type"`
+	Content     string    `json:"content"`
+	ContentHash string    `json:"content_hash"`
+	Embedding   []float32 `json:"embedding,omitempty"`
+	Distance    float32   `json:"distance,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // TaskEpisode stores past execution learnings, review rejections, and test outcomes.

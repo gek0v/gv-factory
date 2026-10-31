@@ -47,5 +47,8 @@ ON architectural_rules USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_codebase_knowledge_hnsw 
 ON codebase_knowledge USING hnsw (embedding vector_cosine_ops);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_codebase_knowledge_file_symbol
+ON codebase_knowledge (file_path, symbol_name);
+
 CREATE INDEX IF NOT EXISTS idx_task_episodes_hnsw 
 ON task_episodes USING hnsw (embedding vector_cosine_ops);
