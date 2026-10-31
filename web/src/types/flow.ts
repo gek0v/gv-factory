@@ -27,11 +27,47 @@ export type ActionSubtype =
   | 'slack_notification'
   | 'discord_notification';
 
+export interface NodeLogEntry {
+  timestamp: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+export interface ReviewerDiagnostic {
+  reviewerId: string;
+  reviewerName: string;
+  specialty: ReviewerSpecialty;
+  status: 'passed' | 'failed' | 'warning';
+  findings: string[];
+}
+
+export interface GateApprovalPayload {
+  runId: string;
+  token: string;
+  expiresAt: string;
+  coveragePercent?: number;
+  securityAlerts?: number;
+  minCoveragePercent?: number;
+  maxSecurityAlerts?: number;
+  diagnostics?: ReviewerDiagnostic[];
+  headBranch?: string;
+  baseBranch?: string;
+}
+
+export type GatewayConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
 export interface BaseNodeData {
   label: string;
   description?: string;
   status: ExecutionStatus;
   nodeType: FactoryNodeType;
+  executionDurationMs?: number;
+  startedAt?: string;
+  completedAt?: string;
+  logs?: NodeLogEntry[];
+  gitDiff?: string;
+  output?: Record<string, unknown>;
+  errorMessage?: string;
   [key: string]: unknown;
 }
 

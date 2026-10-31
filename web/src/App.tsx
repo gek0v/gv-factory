@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -21,6 +21,9 @@ import { ActionNode } from './components/nodes/ActionNode';
 import { NodePalette } from './components/palette/NodePalette';
 import { NodeInspector } from './components/drawer/NodeInspector';
 import { TemplateToolbar } from './components/templates/TemplateToolbar';
+import { GateResolutionModal } from './components/gate/GateResolutionModal';
+import { defaultGatewayClient } from './api/gateway';
+import { simulatePipelineRun } from './api/simulator';
 
 export const App: React.FC = () => {
   const {
@@ -33,7 +36,15 @@ export const App: React.FC = () => {
     backgroundVariant,
     setBackgroundVariant,
     selectedNodeId,
+    gatewayStatus,
   } = useFactoryFlowStore();
+
+  useEffect(() => {
+    defaultGatewayClient.connect();
+    return () => {
+      defaultGatewayClient.disconnect();
+    };
+  }, []);
 
   const nodeTypes = useMemo(
     () => ({
@@ -112,6 +123,28 @@ export const App: React.FC = () => {
         </div>
 
         <div className="header-actions">
+          <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
+            <span className={`status-dot dot-${gatewayStatus}`} />
+            <span className="gateway-status-text">
+              {gatewayStatus === 'connected'
+                ? 'SSE Live'
+                : gatewayStatus === 'connecting'
+                ? 'Connecting...'
+                : gatewayStatus === 'reconnecting'
+                ? 'Reconnecting...'
+                : 'SSE Offline'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="simulate-run-btn"
+            title="Simulate Real-time Pipeline Execution Telemetry"
+            onClick={() => simulatePipelineRun()}
+          >
+            ▶ Simulate Run
+          </button>
+
           <TemplateToolbar />
           <div className="bg-toggle-group" title="Canvas Background Style">
             <button
@@ -178,6 +211,8 @@ export const App: React.FC = () => {
 
         {selectedNodeId && <NodeInspector />}
       </div>
+
+      <GateResolutionModal />
     </div>
   );
 };
