@@ -65,12 +65,15 @@ type CodebaseKnowledge struct {
 
 // TaskEpisode stores past execution learnings, review rejections, and test outcomes.
 type TaskEpisode struct {
-	ID        string    `json:"id"`
-	RunID     string    `json:"run_id"`
-	TaskName  string    `json:"task_name"`
-	Outcome   string    `json:"outcome"`
-	Summary   string    `json:"summary"`
-	CreatedAt time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	RunID          string    `json:"run_id"`
+	TaskName       string    `json:"task_name"`
+	Outcome        string    `json:"outcome"`
+	Summary        string    `json:"summary"`
+	LessonsLearned string    `json:"lessons_learned,omitempty"`
+	Embedding      []float32 `json:"embedding,omitempty"`
+	Distance       float32   `json:"distance,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // DBPool abstracts database connection pooling operations for testing and production.
