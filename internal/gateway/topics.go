@@ -5,15 +5,17 @@ package gateway
 
 import "strings"
 
-// Standard factory task and run lifecycle topics.
+// Standard factory task, gate and run lifecycle topics.
 const (
-	TopicTaskPending   = "ov.task.pending"
-	TopicTaskStarted   = "ov.task.started"
-	TopicTaskCompleted = "ov.task.completed"
-	TopicTaskFailed    = "ov.task.failed"
-	TopicRunCompleted  = "ov.run.completed"
-	TopicAllTasks      = "ov.task.*"
-	TopicAllEvents     = "ov.>"
+	TopicTaskPending          = "ov.task.pending"
+	TopicTaskStarted          = "ov.task.started"
+	TopicTaskCompleted        = "ov.task.completed"
+	TopicTaskFailed           = "ov.task.failed"
+	TopicRunCompleted         = "ov.run.completed"
+	TopicGateApprovalRequired = "gate.approval_required"
+	TopicMergerDivertedToPR   = "merger.diverted_to_pr"
+	TopicAllTasks             = "ov.task.*"
+	TopicAllEvents            = "ov.>"
 )
 
 // Event represents an internal messaging envelope passed over NATS / WebSockets.
