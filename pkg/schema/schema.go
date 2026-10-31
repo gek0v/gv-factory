@@ -5,10 +5,10 @@ package schema
 
 // FactoryTemplate defines the structure of a multi-agent software factory pipeline.
 type FactoryTemplate struct {
-	APIVersion string       `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string       `json:"kind" yaml:"kind"`
-	Metadata   Metadata     `json:"metadata" yaml:"metadata"`
-	Spec       FactorySpec  `json:"spec" yaml:"spec"`
+	APIVersion string      `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string      `json:"kind" yaml:"kind"`
+	Metadata   Metadata    `json:"metadata" yaml:"metadata"`
+	Spec       FactorySpec `json:"spec" yaml:"spec"`
 }
 
 // Metadata holds naming and versioning info for the template.
@@ -28,12 +28,12 @@ type FactorySpec struct {
 
 // StepConfig defines execution details of an individual agent/plugin node.
 type StepConfig struct {
-	ID        string            `json:"id" yaml:"id"`
-	Name      string            `json:"name" yaml:"name"`
-	Plugin    string            `json:"plugin" yaml:"plugin"`
-	Parallel  bool              `json:"parallel,omitempty" yaml:"parallel,omitempty"`
-	DependsOn []string          `json:"depends_on,omitempty" yaml:"depends_on,omitempty"`
-	Config    map[string]any    `json:"config,omitempty" yaml:"config,omitempty"`
+	ID        string         `json:"id" yaml:"id"`
+	Name      string         `json:"name" yaml:"name"`
+	Plugin    string         `json:"plugin" yaml:"plugin"`
+	Parallel  bool           `json:"parallel,omitempty" yaml:"parallel,omitempty"`
+	DependsOn []string       `json:"depends_on,omitempty" yaml:"depends_on,omitempty"`
+	Config    map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 }
 
 // GatesConfig configures criteria for human review versus automated fast-track to main.
