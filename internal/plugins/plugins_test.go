@@ -6,13 +6,16 @@ package plugins
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	extism "github.com/extism/go-sdk"
+	"github.com/gv-factory/gv-factory/internal/brain"
 	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 )
 
@@ -810,4 +813,271 @@ func TestHostEmptyPluginRefAndHostFunctions(t *testing.T) {
 	}
 	defer inst.Close()
 }
+
+func TestWasmPluginEndToEndExecution(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Setup mock brain service with sample architectural rules
+	mockBrain := newMockBrainService()
+	mockBrain.addRule(brain.ArchitecturalRule{
+		RuleCode:    "ARCH-001",
+		Title:       "Microkernel Portability",
+		Description: "Run agents inside isolated WASM guest environments",
+		Severity:    "ERROR",
+	})
+	mockBrain.addRule(brain.ArchitecturalRule{
+		RuleCode:    "SEC-001",
+		Title:       "Secret Masking",
+		Description: "Scrub all tokens in logging",
+		Severity:    "CRITICAL",
+	})
+
+	// 2. Setup mock workspace with a task file
+	worktreeDir := t.TempDir()
+	taskFilePath := filepath.Join(worktreeDir, "task.txt")
+	if err := os.WriteFile(taskFilePath, []byte("Content of isolated task file for verification"), 0644); err != nil {
+		t.Fatalf("failed to create task file in worktree: %v", err)
+	}
+
+	// 3. Setup captured logs
+	var capturedLogs []LogEvent
+	var logMu sync.Mutex
+	logSink := func(ev LogEvent) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		capturedLogs = append(capturedLogs, ev)
+	}
+
+	// 4. Configure Host and Registry
+	registry := NewHostFunctionRegistry(
+		WithBrainService(mockBrain),
+		WithSecrets("secret-token-xyz"),
+		WithLogSink(logSink),
+	)
+	registry.RegisterWorktree("run-e2e-verification", worktreeDir)
+
+	host := NewHost()
+	defer host.Close()
+	registry.RegisterWithHost(host)
+
+	// 5. Load the compiled e2e_plugin.wasm fixture
+	wasmPath := filepath.Join("testdata", "e2e_plugin.wasm")
+	manifest := PluginManifest{
+		Name:       "e2e-verifier",
+		Version:    "1.0.0",
+		Entrypoint: "execute",
+	}
+
+	inst, err := host.LoadPluginFromPath(ctx, manifest, wasmPath)
+	if err != nil {
+		t.Fatalf("failed to load e2e_plugin.wasm: %v", err)
+	}
+	defer inst.Close()
+
+	// 6. Execute plugin passing pdk.Context
+	pdkCtx := pdk.Context{
+		RunID:  "run-e2e-verification",
+		TaskID: "task-verification-42",
+		Configs: map[string]string{
+			"target_file": "task.txt",
+		},
+	}
+
+	res, err := inst.CallPDK(ctx, "execute", pdkCtx)
+	if err != nil {
+		t.Fatalf("unexpected CallPDK execution failure: %v", err)
+	}
+
+	// 7. Verify pdk.Result output
+	if !res.Success {
+		t.Errorf("expected res.Success to be true, got false")
+	}
+	if !strings.Contains(res.Output, "Execution completed successfully for task task-verification-42") {
+		t.Errorf("unexpected res.Output: %s", res.Output)
+	}
+
+	// Verify data map contents populated by host functions
+	if res.Data == nil {
+		t.Fatalf("expected res.Data to be populated, got nil")
+	}
+
+	rulesCount, ok := res.Data["rules_count"].(float64)
+	if !ok || int(rulesCount) != 2 {
+		t.Errorf("expected rules_count 2, got: %v (type %T)", res.Data["rules_count"], res.Data["rules_count"])
+	}
+
+	fileReadSuccess, ok := res.Data["file_read_success"].(bool)
+	if !ok || !fileReadSuccess {
+		t.Errorf("expected file_read_success to be true, got: %v", res.Data["file_read_success"])
+	}
+
+	fileContent, ok := res.Data["file_content"].(string)
+	if !ok || fileContent != "Content of isolated task file for verification" {
+		t.Errorf("expected file_content 'Content of isolated task file for verification', got: %q", fileContent)
+	}
+
+	// Verify log_event was called and captured
+	logMu.Lock()
+	defer logMu.Unlock()
+	if len(capturedLogs) != 1 {
+		t.Errorf("expected 1 log event captured, got %d", len(capturedLogs))
+	} else {
+		msg := capturedLogs[0].Message
+		if !strings.Contains(msg, "task-verification-42") || !strings.Contains(msg, "run-e2e-verification") {
+			t.Errorf("unexpected captured log message: %s", msg)
+		}
+	}
+}
+
+func TestWasmPluginFaultContainment(t *testing.T) {
+	ctx := context.Background()
+	registry := NewHostFunctionRegistry()
+	host := NewHost()
+	defer host.Close()
+	registry.RegisterWithHost(host)
+
+	wasmPath := filepath.Join("testdata", "e2e_plugin.wasm")
+	manifest := PluginManifest{
+		Name:       "fault-plugin",
+		Version:    "1.0.0",
+		Entrypoint: "execute",
+	}
+
+	inst, err := host.LoadPluginFromPath(ctx, manifest, wasmPath)
+	if err != nil {
+		t.Fatalf("failed to load plugin: %v", err)
+	}
+	defer inst.Close()
+
+	// Calling the trap_test function triggers guest panic
+	_, err = inst.Call(ctx, "trap_test", []byte{})
+	if err == nil {
+		t.Fatal("expected error from guest panic, got nil")
+	}
+
+	var pErr *PluginError
+	if !errors.As(err, &pErr) {
+		t.Fatalf("expected *PluginError, got %T: %v", err, err)
+	}
+	if pErr.Code != ErrCodeRuntime && pErr.Code != ErrCodeTrap {
+		t.Errorf("expected error code RUNTIME_ERROR or TRAP, got %q", pErr.Code)
+	}
+
+	// Verify host daemon remains completely alive and functional
+	helloPath := filepath.Join("testdata", "hello.wasm")
+	helloManifest := PluginManifest{
+		Name:       "hello-after-trap",
+		Version:    "1.0.0",
+		Entrypoint: "run_test",
+	}
+	helloInst, err := host.LoadPluginFromPath(ctx, helloManifest, helloPath)
+	if err != nil {
+		t.Fatalf("failed to instantiate healthy plugin after trap: %v", err)
+	}
+	defer helloInst.Close()
+
+	out, err := helloInst.Call(ctx, "run_test", []byte{})
+	if err != nil || string(out) != "Hello, world!" {
+		t.Fatalf("host damaged by guest trap: out=%s, err=%v", string(out), err)
+	}
+}
+
+func TestWasmPluginConcurrentExecution(t *testing.T) {
+	ctx := context.Background()
+
+	mockBrain := newMockBrainService()
+	mockBrain.addRule(brain.ArchitecturalRule{
+		RuleCode: "CONC-001",
+		Title:    "Concurrency",
+	})
+
+	registry := NewHostFunctionRegistry(WithBrainService(mockBrain))
+	host := NewHost()
+	defer host.Close()
+	registry.RegisterWithHost(host)
+
+	wasmPath := filepath.Join("testdata", "e2e_plugin.wasm")
+
+	const numInstances = 4
+	const callsPerInstance = 5
+
+	type instanceWork struct {
+		inst   *Instance
+		runID  string
+		file   string
+		expect string
+	}
+
+	works := make([]instanceWork, numInstances)
+	for i := 0; i < numInstances; i++ {
+		runID := fmt.Sprintf("run-concurrent-%d", i)
+		worktreeDir := t.TempDir()
+		registry.RegisterWorktree(runID, worktreeDir)
+
+		fileName := fmt.Sprintf("data-%d.txt", i)
+		content := fmt.Sprintf("concurrent payload %d", i)
+		if err := os.WriteFile(filepath.Join(worktreeDir, fileName), []byte(content), 0644); err != nil {
+			t.Fatalf("failed to create file for run %d: %v", i, err)
+		}
+
+		manifest := PluginManifest{
+			Name:       fmt.Sprintf("concurrent-plugin-%d", i),
+			Version:    "1.0.0",
+			Entrypoint: "execute",
+		}
+		inst, err := host.LoadPluginFromPath(ctx, manifest, wasmPath)
+		if err != nil {
+			t.Fatalf("failed to load instance %d: %v", i, err)
+		}
+		defer inst.Close()
+
+		works[i] = instanceWork{
+			inst:   inst,
+			runID:  runID,
+			file:   fileName,
+			expect: content,
+		}
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, numInstances*callsPerInstance)
+
+	for i := 0; i < numInstances; i++ {
+		w := works[i]
+		for j := 0; j < callsPerInstance; j++ {
+			wg.Add(1)
+			go func(iteration int) {
+				defer wg.Done()
+				pdkCtx := pdk.Context{
+					RunID:  w.runID,
+					TaskID: fmt.Sprintf("task-%d", iteration),
+					Configs: map[string]string{
+						"target_file": w.file,
+					},
+				}
+				res, err := w.inst.CallPDK(ctx, "execute", pdkCtx)
+				if err != nil {
+					errCh <- fmt.Errorf("instance %s call failed: %w", w.runID, err)
+					return
+				}
+				if !res.Success {
+					errCh <- fmt.Errorf("instance %s success was false", w.runID)
+					return
+				}
+				gotContent, _ := res.Data["file_content"].(string)
+				if gotContent != w.expect {
+					errCh <- fmt.Errorf("instance %s expected %q, got %q", w.runID, w.expect, gotContent)
+				}
+			}(j)
+		}
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("concurrency failure: %v", err)
+	}
+}
+
 
