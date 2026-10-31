@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -41,10 +42,14 @@ func (e *ConnectionError) Unwrap() error {
 // ArchitecturalRule represents an established architecture constraint or pattern.
 type ArchitecturalRule struct {
 	ID          string    `json:"id"`
+	RuleCode    string    `json:"rule_code"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Severity    string    `json:"severity"`
+	Embedding   []float32 `json:"embedding,omitempty"`
+	Distance    float32   `json:"distance,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // CodebaseKnowledge represents a semantic fragment or AST node stored in pgvector.
@@ -68,11 +73,32 @@ type TaskEpisode struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// DBPool abstracts database connection pooling operations for testing and production.
+type DBPool interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Ping(ctx context.Context) error
+	Close()
+}
+
 // Service provides access to the persistent memory layer (The Brain).
 type Service struct {
 	cfg  Config
 	pool *pgxpool.Pool
+	db   DBPool
 	mu   sync.RWMutex
+}
+
+func (s *Service) getDB() DBPool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.db != nil {
+		return s.db
+	}
+	if s.pool != nil {
+		return s.pool
+	}
+	return nil
 }
 
 // NewService constructs a new Brain service instance and establishes a connection pool.
@@ -116,6 +142,7 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 	svc := &Service{
 		cfg:  cfg,
 		pool: pool,
+		db:   pool,
 	}
 
 	return svc, nil
@@ -123,11 +150,8 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 
 // Ping checks if the PostgreSQL database connection is alive and healthy.
 func (s *Service) Ping(ctx context.Context) error {
-	s.mu.RLock()
-	pool := s.pool
-	s.mu.RUnlock()
-
-	if pool == nil {
+	db := s.getDB()
+	if db == nil {
 		return &ConnectionError{
 			Op:  "ping",
 			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
@@ -142,7 +166,7 @@ func (s *Service) Ping(ctx context.Context) error {
 		defer cancel()
 	}
 
-	if err := pool.Ping(pingCtx); err != nil {
+	if err := db.Ping(pingCtx); err != nil {
 		return &ConnectionError{
 			Op:  "ping",
 			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
@@ -164,7 +188,9 @@ func (s *Service) Pool() *pgxpool.Pool {
 func (s *Service) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.pool != nil {
+	if s.db != nil {
+		s.db.Close()
+	} else if s.pool != nil {
 		s.pool.Close()
 	}
 }
