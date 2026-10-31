@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gv-factory/gv-factory/pkg/schema"
 	"github.com/nats-io/nats.go"
 )
 
@@ -203,6 +204,45 @@ func (g *Gateway) Close() error {
 		}
 	})
 	return nil
+}
+
+// PublishTrigger normalizes and broadcasts a trigger event across active subscribers,
+// the WebSocket hub, and NATS JetStream (topic: factory.triggers.<source>).
+func (g *Gateway) PublishTrigger(ctx context.Context, ev schema.TriggerEvent) error {
+	topic := TriggerTopicForSource(ev.Source)
+	payload := ev.Payload
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+	payload["source"] = ev.Source
+	payload["event_type"] = ev.EventType
+	if ev.Repository != "" {
+		payload["repository"] = ev.Repository
+	}
+	if ev.Reference != "" {
+		payload["reference"] = ev.Reference
+	}
+	if ev.IssueNumber > 0 {
+		payload["issue_number"] = ev.IssueNumber
+	}
+	if ev.PRNumber > 0 {
+		payload["pr_number"] = ev.PRNumber
+	}
+	if ev.Sender != "" {
+		payload["sender"] = ev.Sender
+	}
+
+	ts := ev.UnixMilli()
+	if ts == 0 {
+		ts = time.Now().UnixMilli()
+	}
+
+	return g.PublishTaskEvent(ctx, Event{
+		Type:      topic,
+		RunID:     ev.ID,
+		Payload:   payload,
+		Timestamp: ts,
+	})
 }
 
 // HandleWebhook processes inbound webhooks from external providers.

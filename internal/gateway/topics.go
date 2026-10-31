@@ -21,7 +21,19 @@ const (
 	TopicMergerDivertedToPR   = "merger.diverted_to_pr"
 	TopicAllTasks             = "ov.task.*"
 	TopicAllEvents            = "ov.>"
+
+	// Inbound trigger topics
+	TopicTriggerPrefix = "factory.triggers."
+	TopicAllTriggers   = "factory.triggers.>"
 )
+
+// TriggerTopicForSource returns the NATS topic for triggers from a specific provider source (e.g. "factory.triggers.github").
+func TriggerTopicForSource(source string) string {
+	if source == "" {
+		return TopicTriggerPrefix + "unknown"
+	}
+	return TopicTriggerPrefix + source
+}
 
 // Event represents an internal messaging envelope passed over NATS / WebSockets.
 type Event struct {

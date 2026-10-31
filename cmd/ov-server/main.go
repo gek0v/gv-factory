@@ -14,7 +14,9 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
+	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
+
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/plugins"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
@@ -44,8 +46,15 @@ func main() {
 	_ = dag.NewEngine()
 	_ = sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
 	_ = plugins.NewHost()
-	_ = gateway.NewGateway()
+	gw := gateway.NewGateway()
 	_ = auth.NewService("secret-key")
+
+	webhookIngestor := inbound.NewIngestor(inbound.Config{
+		GitHubSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
+		GitLabSecret: os.Getenv("GITLAB_WEBHOOK_SECRET"),
+		SentrySecret: os.Getenv("SENTRY_WEBHOOK_SECRET"),
+	}, inbound.NewGatewayDispatcher(gw))
+	_ = webhookIngestor
 
 	log.Println("ov-server initialized successfully. Listening for orchestrations...")
 
