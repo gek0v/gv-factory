@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/pgvector/pgvector-go"
 )
 
 func TestTaskEpisode_Validate(t *testing.T) {
@@ -249,6 +250,7 @@ func TestEpisodes_MockDatabase(t *testing.T) {
 
 	t.Run("GetEpisodesByRunID success and query error", func(t *testing.T) {
 		fixedTime := time.Date(2026, 10, 31, 14, 0, 0, 0, time.UTC)
+		sampleVec := pgvector.NewVector(make([]float32, EpisodeVectorDimensions))
 
 		mock := &mockDB{
 			queryFn: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
@@ -258,8 +260,8 @@ func TestEpisodes_MockDatabase(t *testing.T) {
 				}
 				return &mockRows{
 					data: [][]any{
-						{"uuid-ep-1", runID, "task 1", "SUCCESS", "Summary 1", "Lesson 1", fixedTime},
-						{"uuid-ep-2", runID, "task 2", "REJECTED", "Summary 2", "Lesson 2", fixedTime},
+						{"uuid-ep-1", runID, "task 1", "SUCCESS", "Summary 1", "Lesson 1", &sampleVec, fixedTime},
+						{"uuid-ep-2", runID, "task 2", "REJECTED", "Summary 2", "Lesson 2", (*pgvector.Vector)(nil), fixedTime},
 					},
 				}, nil
 			},
@@ -276,6 +278,9 @@ func TestEpisodes_MockDatabase(t *testing.T) {
 		}
 		if len(episodes) != 2 {
 			t.Fatalf("expected 2 episodes, got %d", len(episodes))
+		}
+		if episodes[0].Embedding == nil || len(episodes[0].Embedding) != EpisodeVectorDimensions {
+			t.Fatalf("expected embedding to be populated for episode 0, got %v", episodes[0].Embedding)
 		}
 		if episodes[1].Outcome != "REJECTED" {
 			t.Fatalf("expected outcome REJECTED, got %s", episodes[1].Outcome)

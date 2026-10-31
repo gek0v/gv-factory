@@ -288,3 +288,138 @@ func (s *Service) QueryRelevantRulesByVector(ctx context.Context, embedding []fl
 
 	return rules, nil
 }
+
+// UpdateRule updates an existing architectural rule identified by its rule_code.
+func (s *Service) UpdateRule(ctx context.Context, rule ArchitecturalRule) (*ArchitecturalRule, error) {
+	if err := rule.Validate(); err != nil {
+		return nil, err
+	}
+
+	db := s.getDB()
+	if db == nil {
+		return nil, &ConnectionError{
+			Op:  "update_rule",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	var vec *pgvector.Vector
+	if len(rule.Embedding) > 0 {
+		v := pgvector.NewVector(rule.Embedding)
+		vec = &v
+	}
+
+	const query = `
+		UPDATE architectural_rules
+		SET title = $2,
+		    description = $3,
+		    severity = $4,
+		    embedding = CASE
+		        WHEN $5::vector IS NOT NULL THEN $5::vector
+		        ELSE architectural_rules.embedding
+		    END,
+		    updated_at = NOW()
+		WHERE rule_code = $1
+		RETURNING id, rule_code, title, description, severity, embedding, created_at, updated_at
+	`
+
+	var updated ArchitecturalRule
+	var retVec *pgvector.Vector
+	err := db.QueryRow(ctx, query,
+		rule.RuleCode,
+		rule.Title,
+		rule.Description,
+		rule.Severity,
+		vec,
+	).Scan(
+		&updated.ID,
+		&updated.RuleCode,
+		&updated.Title,
+		&updated.Description,
+		&updated.Severity,
+		&retVec,
+		&updated.CreatedAt,
+		&updated.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrRuleNotFound
+		}
+		return nil, &ConnectionError{
+			Op:  "update_rule",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+	if retVec != nil {
+		updated.Embedding = retVec.Slice()
+	} else {
+		updated.Embedding = rule.Embedding
+	}
+	return &updated, nil
+}
+
+// DeleteRule deletes an architectural rule by its primary key UUID.
+func (s *Service) DeleteRule(ctx context.Context, id string) error {
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return fmt.Errorf("%w: rule id cannot be empty", ErrInvalidRule)
+	}
+
+	db := s.getDB()
+	if db == nil {
+		return &ConnectionError{
+			Op:  "delete_rule",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	const query = `DELETE FROM architectural_rules WHERE id = $1 RETURNING id`
+	var deletedID string
+	err := db.QueryRow(ctx, query, trimmedID).Scan(&deletedID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRuleNotFound
+		}
+		return &ConnectionError{
+			Op:  "delete_rule",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+	return nil
+}
+
+// DeleteRuleByCode deletes an architectural rule by its unique rule_code.
+func (s *Service) DeleteRuleByCode(ctx context.Context, ruleCode string) error {
+	code := strings.TrimSpace(ruleCode)
+	if code == "" {
+		return fmt.Errorf("%w: rule code cannot be empty", ErrInvalidRule)
+	}
+
+	db := s.getDB()
+	if db == nil {
+		return &ConnectionError{
+			Op:  "delete_rule_by_code",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	const query = `DELETE FROM architectural_rules WHERE rule_code = $1 RETURNING id`
+	var deletedID string
+	err := db.QueryRow(ctx, query, code).Scan(&deletedID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrRuleNotFound
+		}
+		return &ConnectionError{
+			Op:  "delete_rule_by_code",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+	return nil
+}

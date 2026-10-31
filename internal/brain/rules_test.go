@@ -479,6 +479,95 @@ func TestRules_MockDatabase(t *testing.T) {
 			t.Fatal("expected error, got nil")
 		}
 	})
+
+	t.Run("UpdateRule success, not found, and db error", func(t *testing.T) {
+		fixedTime := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+		vec := pgvector.NewVector(make([]float32, RuleVectorDimensions))
+
+		mock := &mockDB{
+			queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+				code := args[0].(string)
+				switch code {
+				case "ARCH-UPDATED":
+					return &mockRow{
+						values: []any{"uuid-updated", code, "Updated Title", "Updated Desc", "WARNING", &vec, fixedTime, fixedTime},
+					}
+				case "ARCH-NOTFOUND":
+					return &mockRow{err: pgx.ErrNoRows}
+				default:
+					return &mockRow{err: errors.New("db update error")}
+				}
+			},
+		}
+
+		svc := &Service{
+			cfg: DefaultConfig(),
+			db:  mock,
+		}
+
+		upRule := ArchitecturalRule{
+			RuleCode:    "ARCH-UPDATED",
+			Title:       "Updated Title",
+			Description: "Updated Desc",
+			Severity:    "WARNING",
+		}
+		updated, err := svc.UpdateRule(ctx, upRule)
+		if err != nil {
+			t.Fatalf("unexpected error updating rule: %v", err)
+		}
+		if updated.Title != "Updated Title" {
+			t.Fatalf("expected Updated Title, got %s", updated.Title)
+		}
+
+		upRule.RuleCode = "ARCH-NOTFOUND"
+		_, err = svc.UpdateRule(ctx, upRule)
+		if !errors.Is(err, ErrRuleNotFound) {
+			t.Fatalf("expected ErrRuleNotFound, got %v", err)
+		}
+
+		upRule.RuleCode = "ARCH-ERR"
+		_, err = svc.UpdateRule(ctx, upRule)
+		if err == nil {
+			t.Fatal("expected error on DB failure, got nil")
+		}
+	})
+
+	t.Run("DeleteRule and DeleteRuleByCode success and not found", func(t *testing.T) {
+		mock := &mockDB{
+			queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+				arg := args[0].(string)
+				if arg == "uuid-to-delete" || arg == "ARCH-DEL" {
+					return &mockRow{values: []any{arg}}
+				}
+				return &mockRow{err: pgx.ErrNoRows}
+			},
+		}
+
+		svc := &Service{
+			cfg: DefaultConfig(),
+			db:  mock,
+		}
+
+		if err := svc.DeleteRule(ctx, "uuid-to-delete"); err != nil {
+			t.Fatalf("unexpected error deleting rule by ID: %v", err)
+		}
+		if err := svc.DeleteRule(ctx, "uuid-missing"); !errors.Is(err, ErrRuleNotFound) {
+			t.Fatalf("expected ErrRuleNotFound, got %v", err)
+		}
+		if err := svc.DeleteRule(ctx, ""); err == nil {
+			t.Fatal("expected error on empty ID, got nil")
+		}
+
+		if err := svc.DeleteRuleByCode(ctx, "ARCH-DEL"); err != nil {
+			t.Fatalf("unexpected error deleting rule by code: %v", err)
+		}
+		if err := svc.DeleteRuleByCode(ctx, "ARCH-MISSING"); !errors.Is(err, ErrRuleNotFound) {
+			t.Fatalf("expected ErrRuleNotFound, got %v", err)
+		}
+		if err := svc.DeleteRuleByCode(ctx, ""); err == nil {
+			t.Fatal("expected error on empty code, got nil")
+		}
+	})
 }
 
 func TestArchitecturalRules_LiveIntegration(t *testing.T) {

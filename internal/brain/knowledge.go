@@ -91,12 +91,16 @@ func (s *Service) UpsertCodebaseKnowledge(ctx context.Context, k CodebaseKnowled
 			symbol_type = EXCLUDED.symbol_type,
 			content = EXCLUDED.content,
 			content_hash = EXCLUDED.content_hash,
-			embedding = EXCLUDED.embedding,
+			embedding = CASE
+				WHEN EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedding
+				ELSE codebase_knowledge.embedding
+			END,
 			updated_at = NOW()
-		RETURNING id, file_path, symbol_name, symbol_type, content, content_hash, updated_at
+		RETURNING id, file_path, symbol_name, symbol_type, content, content_hash, embedding, updated_at
 	`
 
 	var upserted CodebaseKnowledge
+	var retVec *pgvector.Vector
 	err := db.QueryRow(ctx, query,
 		k.FilePath,
 		k.SymbolName,
@@ -111,6 +115,7 @@ func (s *Service) UpsertCodebaseKnowledge(ctx context.Context, k CodebaseKnowled
 		&upserted.SymbolType,
 		&upserted.Content,
 		&upserted.ContentHash,
+		&retVec,
 		&upserted.UpdatedAt,
 	)
 	if err != nil {
@@ -120,7 +125,11 @@ func (s *Service) UpsertCodebaseKnowledge(ctx context.Context, k CodebaseKnowled
 			Err: err,
 		}
 	}
-	upserted.Embedding = k.Embedding
+	if retVec != nil {
+		upserted.Embedding = retVec.Slice()
+	} else {
+		upserted.Embedding = k.Embedding
+	}
 	return &upserted, nil
 }
 

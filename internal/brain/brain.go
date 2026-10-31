@@ -199,13 +199,3 @@ func (s *Service) Close() {
 		s.pool.Close()
 	}
 }
-
-// QueryRelevantRules retrieves architectural rules matching the context query.
-func (s *Service) QueryRelevantRules(ctx context.Context, query string) ([]ArchitecturalRule, error) {
-	return []ArchitecturalRule{}, nil
-}
-
-// IndexFile parses and indexes a code file into AST fragments with embeddings.
-func (s *Service) IndexFile(ctx context.Context, filePath string, content []byte) error {
-	return nil
-}

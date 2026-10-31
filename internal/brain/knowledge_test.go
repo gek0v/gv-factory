@@ -218,6 +218,7 @@ func TestCodebaseKnowledge_MockDatabase(t *testing.T) {
 						k.SymbolType,
 						k.Content,
 						k.ContentHash,
+						(*pgvector.Vector)(nil),
 						fixedTime,
 					},
 				}

@@ -11,7 +11,7 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	const expectedDefaultURL = "postgres://ov_user:ov_password@localhost:5432/ov_factory?sslmode=disable"
+	const expectedDefaultURL = "postgres://localhost:5432/ov_factory?sslmode=disable"
 	if cfg.DatabaseURL != expectedDefaultURL {
 		t.Fatalf("expected default DatabaseURL %q, got %q", expectedDefaultURL, cfg.DatabaseURL)
 	}
@@ -29,7 +29,7 @@ func TestConfigFromEnv(t *testing.T) {
 		t.Setenv("DATABASE_URL", "")
 		cfg := ConfigFromEnv()
 
-		const expectedDefaultURL = "postgres://ov_user:ov_password@localhost:5432/ov_factory?sslmode=disable"
+		const expectedDefaultURL = "postgres://localhost:5432/ov_factory?sslmode=disable"
 		if cfg.DatabaseURL != expectedDefaultURL {
 			t.Fatalf("expected fallback URL %q, got %q", expectedDefaultURL, cfg.DatabaseURL)
 		}
@@ -84,6 +84,17 @@ func TestSanitizeDatabaseURL(t *testing.T) {
 		sanitized := SanitizeDatabaseURL(raw)
 		if sanitized != raw {
 			t.Fatalf("expected %q, got %q", raw, sanitized)
+		}
+	})
+
+	t.Run("strips password from key-value DSN string", func(t *testing.T) {
+		dsn := "host=localhost user=ov_user password=super_secret_pw dbname=ov_factory"
+		sanitized := SanitizeDatabaseURL(dsn)
+		if strings.Contains(sanitized, "super_secret_pw") {
+			t.Fatalf("sanitized DSN leaked password: %s", sanitized)
+		}
+		if !strings.Contains(sanitized, "password=*****") {
+			t.Fatalf("expected password=***** in sanitized DSN: %s", sanitized)
 		}
 	})
 }

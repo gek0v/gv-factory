@@ -119,7 +119,7 @@ func (s *Service) GetEpisodesByRunID(ctx context.Context, runID string) ([]TaskE
 	}
 
 	const query = `
-		SELECT id, run_id, task_name, outcome, summary, lessons_learned, created_at
+		SELECT id, run_id, task_name, outcome, summary, lessons_learned, embedding, created_at
 		FROM task_episodes
 		WHERE run_id = $1
 		ORDER BY created_at ASC
@@ -138,6 +138,7 @@ func (s *Service) GetEpisodesByRunID(ctx context.Context, runID string) ([]TaskE
 	var episodes []TaskEpisode
 	for rows.Next() {
 		var ep TaskEpisode
+		var vec *pgvector.Vector
 		if err := rows.Scan(
 			&ep.ID,
 			&ep.RunID,
@@ -145,6 +146,7 @@ func (s *Service) GetEpisodesByRunID(ctx context.Context, runID string) ([]TaskE
 			&ep.Outcome,
 			&ep.Summary,
 			&ep.LessonsLearned,
+			&vec,
 			&ep.CreatedAt,
 		); err != nil {
 			return nil, &ConnectionError{
@@ -152,6 +154,9 @@ func (s *Service) GetEpisodesByRunID(ctx context.Context, runID string) ([]TaskE
 				URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
 				Err: err,
 			}
+		}
+		if vec != nil {
+			ep.Embedding = vec.Slice()
 		}
 		episodes = append(episodes, ep)
 	}

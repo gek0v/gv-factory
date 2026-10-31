@@ -4,6 +4,7 @@
 package brain
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"regexp"
@@ -12,7 +13,7 @@ import (
 
 const (
 	// DefaultDatabaseURL matches the local PostgreSQL credentials in deployments/docker-compose.yml.
-	DefaultDatabaseURL = "postgres://ov_user:ov_password@localhost:5432/ov_factory?sslmode=disable"
+	DefaultDatabaseURL = "postgres://localhost:5432/ov_factory?sslmode=disable"
 
 	defaultMaxConns    = 10
 	defaultMinConns    = 2
@@ -21,7 +22,10 @@ const (
 	defaultConnTimeout = 5 * time.Second
 )
 
-var passwordRegex = regexp.MustCompile(`(?i)(://[^:]+:)([^@]+)(@)`)
+var (
+	passwordURLRegex = regexp.MustCompile(`(?i)(://[^:]+:)([^@]+)(@)`)
+	passwordDSNRegex = regexp.MustCompile(`(?i)(password\s*=\s*)(['"]?)[^\s'"]+(['"]?)`)
+)
 
 // Config defines connection and pooling settings for the Brain's PostgreSQL store.
 type Config struct {
@@ -50,11 +54,26 @@ func ConfigFromEnv() Config {
 	cfg := DefaultConfig()
 	if envURL := os.Getenv("DATABASE_URL"); envURL != "" {
 		cfg.DatabaseURL = envURL
+	} else if user := os.Getenv("POSTGRES_USER"); user != "" {
+		password := os.Getenv("POSTGRES_PASSWORD")
+		host := os.Getenv("POSTGRES_HOST")
+		if host == "" {
+			host = "localhost"
+		}
+		port := os.Getenv("POSTGRES_PORT")
+		if port == "" {
+			port = "5432"
+		}
+		db := os.Getenv("POSTGRES_DB")
+		if db == "" {
+			db = "ov_factory"
+		}
+		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, db)
 	}
 	return cfg
 }
 
-// SanitizeDatabaseURL strips sensitive passwords from connection strings.
+// SanitizeDatabaseURL strips sensitive passwords from connection strings and error messages.
 func SanitizeDatabaseURL(rawURL string) string {
 	if rawURL == "" {
 		return ""
@@ -66,6 +85,7 @@ func SanitizeDatabaseURL(rawURL string) string {
 		}
 		return parsed.String()
 	}
-	// Fallback regex masking for malformed or non-standard connection strings
-	return passwordRegex.ReplaceAllString(rawURL, "${1}*****${3}")
+	// Fallback regex masking for malformed or non-standard connection strings and DSNs
+	masked := passwordURLRegex.ReplaceAllString(rawURL, "${1}*****${3}")
+	return passwordDSNRegex.ReplaceAllString(masked, "${1}${2}*****${3}")
 }
