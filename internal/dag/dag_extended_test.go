@@ -161,16 +161,14 @@ func TestStep_EvaluationAndBlocking(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Initial Step(): task-1 should become RUNNING
-	if err := eng.Step(ctx, "step-test"); err != nil {
-		t.Fatalf("Step failed: %v", err)
-	}
-	t1, _ := eng.GetNode("step-test", "task-1")
-	if t1.Status != StatusRunning {
-		t.Fatalf("expected task-1 to be RUNNING, got %s", t1.Status)
+	// Initial check: task-1 should be ready
+	ready, err := eng.GetReadyNodes("step-test")
+	if err != nil || len(ready) != 1 || ready[0].ID != "task-1" {
+		t.Fatalf("expected task-1 to be ready, got %v", ready)
 	}
 
-	// Fail task-1
+	// Fail task-1 (PENDING -> RUNNING -> FAILED)
+	_ = eng.SetNodeStatus("step-test", "task-1", StatusRunning)
 	_ = eng.SetNodeStatus("step-test", "task-1", StatusFailed)
 
 	// Step() should notice failed dependency and mark task-2 as BLOCKED

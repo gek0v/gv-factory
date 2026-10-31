@@ -388,6 +388,8 @@ func (e *Engine) MutateNode(graphID string, node *Node) error {
 }
 
 // Step evaluates ready nodes and advances graph execution.
+// It checks for pending nodes whose dependencies have failed or become blocked,
+// and marks those pending nodes as StatusBlocked.
 func (e *Engine) Step(ctx context.Context, graphID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -407,25 +409,6 @@ func (e *Engine) Step(ctx context.Context, graphID string) error {
 				node.Status = StatusBlocked
 				break
 			}
-		}
-	}
-
-	for _, node := range g.Nodes {
-		if node.Status != StatusPending {
-			continue
-		}
-
-		allCompleted := true
-		for _, depID := range node.DependsOn {
-			depNode, exists := g.Nodes[depID]
-			if !exists || depNode.Status != StatusCompleted {
-				allCompleted = false
-				break
-			}
-		}
-
-		if allCompleted {
-			node.Status = StatusRunning
 		}
 	}
 
