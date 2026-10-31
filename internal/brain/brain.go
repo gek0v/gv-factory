@@ -5,8 +5,38 @@ package brain
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ConnectionError is a structured error containing sanitized details of a database connection failure.
+type ConnectionError struct {
+	Op  string
+	URL string
+	Err error
+}
+
+func (e *ConnectionError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	errMsg := ""
+	if e.Err != nil {
+		errMsg = SanitizeDatabaseURL(e.Err.Error())
+	}
+	return fmt.Sprintf("brain: %s failed for %s: %s", e.Op, e.URL, errMsg)
+}
+
+func (e *ConnectionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
 // ArchitecturalRule represents an established architecture constraint or pattern.
 type ArchitecturalRule struct {
@@ -39,11 +69,104 @@ type TaskEpisode struct {
 }
 
 // Service provides access to the persistent memory layer (The Brain).
-type Service struct{}
+type Service struct {
+	cfg  Config
+	pool *pgxpool.Pool
+	mu   sync.RWMutex
+}
 
-// NewService constructs a new Brain service instance.
-func NewService() *Service {
-	return &Service{}
+// NewService constructs a new Brain service instance and establishes a connection pool.
+// If the database is unreachable at startup, the service initializes gracefully in a degraded state.
+func NewService(ctx context.Context, cfg Config) (*Service, error) {
+	if cfg.DatabaseURL == "" {
+		cfg = ConfigFromEnv()
+	}
+
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, &ConnectionError{
+			Op:  "parse_config",
+			URL: SanitizeDatabaseURL(cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+
+	if cfg.MaxConns > 0 {
+		poolConfig.MaxConns = cfg.MaxConns
+	}
+	if cfg.MinConns > 0 {
+		poolConfig.MinConns = cfg.MinConns
+	}
+	if cfg.MaxConnIdle > 0 {
+		poolConfig.MaxConnIdleTime = cfg.MaxConnIdle
+	}
+	if cfg.MaxConnLife > 0 {
+		poolConfig.MaxConnLifetime = cfg.MaxConnLife
+	}
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, &ConnectionError{
+			Op:  "create_pool",
+			URL: SanitizeDatabaseURL(cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+
+	svc := &Service{
+		cfg:  cfg,
+		pool: pool,
+	}
+
+	return svc, nil
+}
+
+// Ping checks if the PostgreSQL database connection is alive and healthy.
+func (s *Service) Ping(ctx context.Context) error {
+	s.mu.RLock()
+	pool := s.pool
+	s.mu.RUnlock()
+
+	if pool == nil {
+		return &ConnectionError{
+			Op:  "ping",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	pingCtx := ctx
+	if s.cfg.ConnTimeout > 0 {
+		var cancel context.CancelFunc
+		pingCtx, cancel = context.WithTimeout(ctx, s.cfg.ConnTimeout)
+		defer cancel()
+	}
+
+	if err := pool.Ping(pingCtx); err != nil {
+		return &ConnectionError{
+			Op:  "ping",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+
+	return nil
+}
+
+// Pool returns the underlying *pgxpool.Pool instance.
+func (s *Service) Pool() *pgxpool.Pool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.pool
+}
+
+// Close gracefully closes all database connections in the pool.
+func (s *Service) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pool != nil {
+		s.pool.Close()
+	}
 }
 
 // QueryRelevantRules retrieves architectural rules matching the context query.

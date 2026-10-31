@@ -29,7 +29,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	_ = brain.NewService()
+	brainSvc, err := brain.NewService(ctx, brain.ConfigFromEnv())
+	if err != nil {
+		log.Printf("Warning: brain service failed to configure: %v", err)
+	} else {
+		defer brainSvc.Close()
+		if pingErr := brainSvc.Ping(ctx); pingErr != nil {
+			log.Printf("Warning: PostgreSQL (brain) unreachable at startup (degraded): %v", pingErr)
+		} else {
+			log.Println("PostgreSQL (brain) connected and healthy.")
+		}
+	}
+
 	_ = dag.NewEngine()
 	_ = sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
 	_ = plugins.NewHost()
