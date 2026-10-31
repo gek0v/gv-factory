@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate REUSE specification
-        uses: fsfe/reuse-action@514d69512c85b1a265e1286b7fa22485e9fa5a90 # v5.0.0
+        uses: fsfe/reuse-action@bb774aa972c2a89ff34781233d275075cbddf542 # v5.0.0
 
   lint-and-test-backend:
     name: Go Backend (Lint & Test)
@@ -32,14 +32,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Go environment
-        uses: actions/setup-go@3041bf56c941b39ced0ddda70fa4a34d133b3a0b # v5.2.0
+        uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version: '1.24'
           check-latest: true
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@2226f7cb6f94fad93e0d44fbf6732f77a1a1604b # v6.0.0
+        uses: golangci/golangci-lint-action@23faadfdeb23a6f9e511beaba149bb123b5b145a # v6.0.0
         with:
           version: v1.64.5
           args: --timeout=5m
@@ -66,7 +66,7 @@ jobs:
           node-version: '22'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@a3252b78c470c02df07e9d792dbb4137bef74010 # v3.0.0
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3.0.0
         with:
           version: 9
 
