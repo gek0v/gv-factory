@@ -62,3 +62,8 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Drafts
+.scratch
+.drafts
+.docs

@@ -256,3 +256,117 @@ func TestProvisionWorktree_ValidationErrors(t *testing.T) {
 		t.Errorf("expected error for duplicate runID, got nil")
 	}
 }
+
+func TestPrune(t *testing.T) {
+	repoDir := createTestGitRepo(t)
+	mgr := NewManager(Config{
+		RepoPath: repoDir,
+	})
+
+	ctx := context.Background()
+	if err := mgr.Prune(ctx); err != nil {
+		t.Fatalf("expected Prune to succeed, got %v", err)
+	}
+}
+
+func TestLifecycle_FullReclamation(t *testing.T) {
+	repoDir := createTestGitRepo(t)
+	worktreeBase := t.TempDir()
+
+	mgr := NewManager(Config{
+		RepoPath:        repoDir,
+		BaseWorktreeDir: worktreeBase,
+		BasePort:        40000,
+	})
+	ctx := context.Background()
+	runID := "run-lifecycle"
+
+	// 1. Provision
+	env, err := mgr.ProvisionWorktree(ctx, runID)
+	if err != nil {
+		t.Fatalf("unexpected provision error: %v", err)
+	}
+
+	// 2. Verify Isolated State
+	if _, err := os.Stat(env.WorktreePath); err != nil {
+		t.Fatalf("worktree path %q should exist, err: %v", env.WorktreePath, err)
+	}
+
+	branches := runGit(t, repoDir, "branch", "--list", "ov-run/"+runID)
+	if !strings.Contains(branches, "ov-run/"+runID) {
+		t.Fatalf("expected branch ov-run/%s to exist in git repo", runID)
+	}
+
+	worktrees := runGit(t, repoDir, "worktree", "list")
+	if !strings.Contains(filepath.ToSlash(worktrees), filepath.ToSlash(env.WorktreePath)) {
+		t.Fatalf("expected worktree %q to appear in git worktree list: %s", env.WorktreePath, worktrees)
+	}
+
+	// 3. Destroy
+	if err := mgr.Destroy(ctx, runID); err != nil {
+		t.Fatalf("unexpected destroy error: %v", err)
+	}
+
+	// 4. Verify Full Reclamation
+	if _, err := os.Stat(env.WorktreePath); !os.IsNotExist(err) {
+		t.Errorf("expected worktree path %q to be deleted, but stat err: %v", env.WorktreePath, err)
+	}
+
+	branchesAfter := runGit(t, repoDir, "branch", "--list", "ov-run/"+runID)
+	if strings.TrimSpace(branchesAfter) != "" {
+		t.Errorf("expected branch ov-run/%s to be deleted, got %q", runID, branchesAfter)
+	}
+
+	worktreesAfter := runGit(t, repoDir, "worktree", "list")
+	if strings.Contains(filepath.ToSlash(worktreesAfter), filepath.ToSlash(env.WorktreePath)) {
+		t.Errorf("expected worktree list to not contain %q, got: %s", env.WorktreePath, worktreesAfter)
+	}
+
+	mgr.mu.Lock()
+	_, exists := mgr.activeRuns[runID]
+	mgr.mu.Unlock()
+	if exists {
+		t.Errorf("expected active run %q to be removed from map", runID)
+	}
+}
+
+func TestDestroy_EdgeCases(t *testing.T) {
+	repoDir := createTestGitRepo(t)
+	worktreeBase := t.TempDir()
+
+	mgr := NewManager(Config{
+		RepoPath:        repoDir,
+		BaseWorktreeDir: worktreeBase,
+		BasePort:        40000,
+	})
+	ctx := context.Background()
+
+	// 1. Empty runID error
+	if err := mgr.Destroy(ctx, ""); err == nil {
+		t.Errorf("expected error when destroying empty runID, got nil")
+	}
+
+	// 2. Non-existent runID succeeds safely without panic
+	if err := mgr.Destroy(ctx, "non-existent-run"); err != nil {
+		t.Errorf("expected destroying non-existent run to succeed safely, got %v", err)
+	}
+
+	// 3. Worktree directory manually deleted before Destroy
+	env, err := mgr.ProvisionWorktree(ctx, "run-manual-del")
+	if err != nil {
+		t.Fatalf("unexpected provision error: %v", err)
+	}
+
+	if err := os.RemoveAll(env.WorktreePath); err != nil {
+		t.Fatalf("failed to delete worktree dir: %v", err)
+	}
+
+	if err := mgr.Destroy(ctx, "run-manual-del"); err != nil {
+		t.Errorf("expected Destroy to handle pre-deleted worktree cleanly, got %v", err)
+	}
+
+	branches := runGit(t, repoDir, "branch", "--list", "ov-run/run-manual-del")
+	if strings.TrimSpace(branches) != "" {
+		t.Errorf("expected branch to be deleted even if worktree dir was already gone")
+	}
+}

@@ -221,8 +221,52 @@ func (m *Manager) Destroy(ctx context.Context, runID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if runID == "" {
+		return fmt.Errorf("runID cannot be empty")
+	}
+
+	env, exists := m.activeRuns[runID]
+	worktreePath := filepath.Join(m.config.BaseWorktreeDir, runID)
+	if exists && env.WorktreePath != "" {
+		worktreePath = env.WorktreePath
+	}
+	branch := fmt.Sprintf("ov-run/%s", runID)
+
+	// 1. Safely remove the worktree via git worktree remove --force <worktree_path>
+	cmdRemove := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", worktreePath)
+	cmdRemove.Dir = m.config.RepoPath
+	_ = cmdRemove.Run()
+
+	// Guarantee disk cleanup if git worktree remove left residual files
+	_ = os.RemoveAll(worktreePath)
+
+	// 2. Delete the associated transient branch ov-run/<run_id>
+	cmdBranch := exec.CommandContext(ctx, "git", "branch", "-D", branch)
+	cmdBranch.Dir = m.config.RepoPath
+	_ = cmdBranch.Run()
+
+	// 3. Execute git worktree prune to clean administrative metadata
+	_ = m.prune(ctx)
+
+	// 4. Clean up internal state map
 	delete(m.activeRuns, runID)
 	return nil
+}
+
+func (m *Manager) prune(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "git", "worktree", "prune")
+	cmd.Dir = m.config.RepoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree prune failed: %w, output: %s", err, string(out))
+	}
+	return nil
+}
+
+// Prune cleans up dangling worktree administrative metadata.
+func (m *Manager) Prune(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.prune(ctx)
 }
 
 // MaskSecrets applies a mask to sensitive values in logs.
