@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,13 +16,16 @@ import (
 )
 
 func main() {
+	worktreeDir := flag.String("worktree-dir", "", "Base directory for sandbox git worktrees (defaults to OS temp directory or OV_WORKTREE_DIR)")
+	flag.Parse()
+
 	fmt.Println("Starting ov-worker (Hatchet Execution Agent & Sandbox Runner)...")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	sbManager := sandbox.NewManager(sandbox.Config{
-		BaseWorktreeDir: "/tmp/ov-worktrees",
+		BaseWorktreeDir: *worktreeDir,
 	})
 	_ = sbManager
 

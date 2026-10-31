@@ -6,9 +6,20 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 )
+
+// DefaultWorktreeDir returns the default base directory for worktrees.
+// It checks the OV_WORKTREE_DIR environment variable and falls back to
+// filepath.Join(os.TempDir(), "ov-worktrees").
+func DefaultWorktreeDir() string {
+	if env := os.Getenv("OV_WORKTREE_DIR"); env != "" {
+		return env
+	}
+	return filepath.Join(os.TempDir(), "ov-worktrees")
+}
 
 // Config sets global settings for sandbox management.
 type Config struct {
@@ -34,6 +45,9 @@ type Manager struct {
 
 // NewManager creates a sandbox manager instance.
 func NewManager(cfg Config) *Manager {
+	if cfg.BaseWorktreeDir == "" {
+		cfg.BaseWorktreeDir = DefaultWorktreeDir()
+	}
 	if cfg.BasePort == 0 {
 		cfg.BasePort = 40000
 	}
@@ -41,6 +55,20 @@ func NewManager(cfg Config) *Manager {
 		config:     cfg,
 		activeRuns: make(map[string]*Environment),
 	}
+}
+
+// Config returns a copy of the manager's configuration.
+func (m *Manager) Config() Config {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.config
+}
+
+// BaseWorktreeDir returns the configured base directory for worktrees.
+func (m *Manager) BaseWorktreeDir() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.config.BaseWorktreeDir
 }
 
 // CalculatePort implements the deterministic formula:

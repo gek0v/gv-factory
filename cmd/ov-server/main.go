@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -20,6 +21,9 @@ import (
 )
 
 func main() {
+	worktreeDir := flag.String("worktree-dir", "", "Base directory for sandbox git worktrees (defaults to OS temp directory or OV_WORKTREE_DIR)")
+	flag.Parse()
+
 	fmt.Println("Starting ov-server (Orchestrator & API Server)...")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -27,7 +31,7 @@ func main() {
 
 	_ = brain.NewService()
 	_ = dag.NewEngine()
-	_ = sandbox.NewManager(sandbox.Config{BaseWorktreeDir: "/tmp/ov-worktrees"})
+	_ = sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
 	_ = plugins.NewHost()
 	_ = gateway.NewGateway()
 	_ = auth.NewService("secret-key")
