@@ -9,6 +9,7 @@ dist/
 
 # Artefactos compilados WebAssembly (WASM)
 *.wasm
+!**/testdata/*.wasm
 
 # Dependencias y cachés de Node.js / Frontend
 node_modules/
