@@ -97,6 +97,18 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
     if (runId) {
       store.setActiveRun(runId, 'CANCELLED');
     }
+  } else if (type === 'ov.worker.heartbeat' || type === 'worker.heartbeat') {
+    const workerId = (payload.worker_id as string) || (event.task_id as string) || '';
+    if (workerId) {
+      store.updateWorkerHeartbeat({
+        worker_id: workerId,
+        active_tasks: Number(payload.active_tasks) || 0,
+        max_concurrency: Number(payload.max_concurrency) || 1,
+        uptime_seconds: Number(payload.uptime_seconds) || 0,
+        timestamp: Number(payload.timestamp) || (event.timestamp ? Math.floor(event.timestamp / 1000) : Math.floor(Date.now() / 1000)),
+        status: (payload.status as import('../types/worker').WorkerStatus) || (Number(payload.active_tasks) > 0 ? 'busy' : 'ready'),
+      });
+    }
   } else if (type === 'gate.approval_required' || type === 'ov.gate.approval_required') {
     const runId = event.run_id || (payload.run_id as string) || `run-${Date.now()}`;
     const token = (payload.token as string) || 'hmac-approval-token-xyz';
