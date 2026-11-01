@@ -125,4 +125,55 @@ func TestServer_StoreIntegration(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("GET /api/v1/runs/{id}/steps integration trace", func(t *testing.T) {
+		runID := "run-trace-steps"
+		_ = memStore.CreateRun(context.Background(), &store.Run{
+			ID:           runID,
+			TemplateName: "feature-pipeline",
+			Status:       store.RunStatusRunning,
+			CreatedAt:    time.Now().UTC(),
+		})
+
+		// Emit step events through the gateway
+		_ = gw.Publish(context.Background(), gateway.TopicTaskStarted, gateway.Event{
+			Type:      gateway.TopicTaskStarted,
+			RunID:     runID,
+			TaskID:    "step-lint",
+			Timestamp: time.Now().UnixMilli(),
+			Payload: map[string]any{
+				"step_name": "lint",
+			},
+		})
+
+		_ = gw.Publish(context.Background(), gateway.TopicTaskCompleted, gateway.Event{
+			Type:      gateway.TopicTaskCompleted,
+			RunID:     runID,
+			TaskID:    "step-lint",
+			Timestamp: time.Now().UnixMilli(),
+			Payload: map[string]any{
+				"step_name":   "lint",
+				"duration_ms": 150,
+				"output":      "ok",
+			},
+		})
+
+		time.Sleep(50 * time.Millisecond)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+runID+"/steps", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var steps []*store.Step
+		if err := json.NewDecoder(rec.Body).Decode(&steps); err != nil {
+			t.Fatalf("failed to decode steps JSON: %v", err)
+		}
+		if len(steps) != 2 {
+			t.Fatalf("expected 2 steps returned, got %d", len(steps))
+		}
+	})
 }

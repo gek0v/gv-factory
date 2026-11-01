@@ -353,6 +353,11 @@ func NewServerMux(
 	mux.HandleFunc("/api/gate/resolve", gateResolveHandler)
 	mux.HandleFunc("/api/v1/gates/resolve", gateResolveHandler)
 
+	// Step lifecycle tracker
+	if gw != nil && st != nil {
+		_ = NewStepLifecycleTracker(context.Background(), gw, st)
+	}
+
 	// Pending decision gates endpoint
 	pendingTracker := NewPendingGateTracker(context.Background(), gw, st)
 	mux.HandleFunc("/api/v1/gates/pending", func(w http.ResponseWriter, r *http.Request) {
@@ -556,11 +561,6 @@ func NewServerMux(
 	})
 
 	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
-		if orchestrator == nil {
-			http.Error(w, "Orchestrator not initialized", http.StatusServiceUnavailable)
-			return
-		}
-
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
 		parts := strings.Split(strings.Trim(path, "/"), "/")
 
@@ -578,18 +578,55 @@ func NewServerMux(
 				return
 			}
 
-			run, err := orchestrator.GetRun(runID)
-			if err != nil {
-				if st != nil {
-					storedRun, stErr := st.GetRun(r.Context(), runID)
-					if stErr == nil && storedRun != nil {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusOK)
-						_ = json.NewEncoder(w).Encode(storedRun)
-						return
-					}
+			if orchestrator != nil {
+				run, err := orchestrator.GetRun(runID)
+				if err == nil && run != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(run)
+					return
 				}
+			}
 
+			if st != nil {
+				storedRun, stErr := st.GetRun(r.Context(), runID)
+				if stErr == nil && storedRun != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_ = json.NewEncoder(w).Encode(storedRun)
+					return
+				}
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": fmt.Sprintf("run %q not found", runID),
+			})
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "steps" {
+			// GET /api/v1/runs/{id}/steps
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Validate run existence in orchestrator or store
+			runExists := false
+			if orchestrator != nil {
+				if _, err := orchestrator.GetRun(runID); err == nil {
+					runExists = true
+				}
+			}
+			if !runExists && st != nil {
+				if _, err := st.GetRun(r.Context(), runID); err == nil {
+					runExists = true
+				}
+			}
+
+			if !runExists {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusNotFound)
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -598,9 +635,30 @@ func NewServerMux(
 				return
 			}
 
+			if st == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode([]*store.Step{})
+				return
+			}
+
+			steps, err := st.ListStepsByRun(r.Context(), runID)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			if steps == nil {
+				steps = []*store.Step{}
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(run)
+			_ = json.NewEncoder(w).Encode(steps)
 			return
 		}
 
