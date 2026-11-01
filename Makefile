@@ -59,9 +59,8 @@ helm-template:
 
 release-check:
 	@echo "==> Validating GoReleaser configuration..."
-	@go run github.com/goreleaser/goreleaser/v2@latest check
+	@which goreleaser > /dev/null 2>&1 && goreleaser check || go run github.com/goreleaser/goreleaser/v2@v2.5.0 check
 
 release-snapshot:
 	@echo "==> Building GoReleaser snapshot release..."
-	@go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=sign,publish
-
+	@which goreleaser > /dev/null 2>&1 && goreleaser release --snapshot --clean --skip=sign,publish || go run github.com/goreleaser/goreleaser/v2@v2.5.0 release --snapshot --clean --skip=sign,publish
