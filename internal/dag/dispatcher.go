@@ -6,12 +6,16 @@ package dag
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // Dispatcher coordinates Hatchet/WASM task execution across DAG topologies.
@@ -20,6 +24,8 @@ type Dispatcher struct {
 	caller    PluginCaller
 	publisher EventPublisher
 	cfg       DispatcherConfig
+	tracer    trace.Tracer
+	metrics   *telemetry.Metrics
 }
 
 // NewDispatcher creates an initialized task dispatcher.
@@ -37,11 +43,18 @@ func NewDispatcher(engine *Engine, caller PluginCaller, pub EventPublisher, cfg 
 		cfg.StepPolicies = make(map[string]StepPolicy)
 	}
 
+	tracer := cfg.Tracer
+	if tracer == nil {
+		tracer = noop.NewTracerProvider().Tracer("dag.dispatcher")
+	}
+
 	return &Dispatcher{
 		engine:    engine,
 		caller:    caller,
 		publisher: pub,
 		cfg:       cfg,
+		tracer:    tracer,
+		metrics:   cfg.Metrics,
 	}
 }
 
@@ -71,6 +84,9 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 	for {
 		select {
 		case <-ctx.Done():
+			if d.metrics != nil {
+				d.metrics.RecordFactoryRun("CANCELLED")
+			}
 			return nil, ctx.Err()
 		default:
 		}
@@ -100,6 +116,9 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 			}
 
 			if allCompleted {
+				if d.metrics != nil {
+					d.metrics.RecordFactoryRun("COMPLETED")
+				}
 				if d.publisher != nil {
 					_ = d.publisher.PublishTaskEvent(ctx, gateway.Event{
 						Type:  gateway.TopicRunCompleted,
@@ -115,6 +134,9 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 				}, nil
 			}
 
+			if d.metrics != nil {
+				d.metrics.RecordFactoryRun("FAILED")
+			}
 			return &WorkflowReport{
 				RunID:          runID,
 				GraphID:        graphID,
@@ -186,10 +208,48 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 }
 
 func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID string, node *Node) (*pdk.Result, error) {
+	nodeType := "step"
+	if nt, ok := node.Inputs["node_type"].(string); ok && nt != "" {
+		nodeType = nt
+	} else if strings.Contains(strings.ToLower(node.PluginURI+node.ID), "tdd") {
+		nodeType = "tdd"
+	} else if strings.Contains(strings.ToLower(node.PluginURI+node.ID), "review") {
+		nodeType = "review"
+	} else if strings.Contains(strings.ToLower(node.PluginURI+node.ID), "gate") || strings.Contains(strings.ToLower(node.PluginURI+node.ID), "approv") {
+		nodeType = "gate"
+	} else if strings.Contains(strings.ToLower(node.PluginURI+node.ID), "spec") {
+		nodeType = "spec_writer"
+	}
+
+	gitCommit := ""
+	if gc, ok := node.Inputs["git_commit"].(string); ok {
+		gitCommit = gc
+	}
+	agentModel := "claude-3-5-sonnet"
+	if am, ok := node.Inputs["agent_model"].(string); ok && am != "" {
+		agentModel = am
+	} else if m, ok := node.Inputs["model"].(string); ok && m != "" {
+		agentModel = m
+	}
+
+	factoryID := graphID
+	if parts := strings.Split(graphID, "-"); len(parts) > 1 {
+		factoryID = parts[0]
+	}
+
+	stepCtx, _, done := telemetry.StartStepSpan(ctx, d.tracer, d.metrics, telemetry.StepSpanOpts{
+		FactoryID:  factoryID,
+		RunID:      runID,
+		NodeID:     node.ID,
+		NodeType:   nodeType,
+		GitCommit:  gitCommit,
+		AgentModel: agentModel,
+	})
+
 	_ = d.engine.SetNodeStatus(graphID, node.ID, StatusRunning)
 
 	if d.publisher != nil {
-		_ = d.publisher.PublishTaskEvent(ctx, gateway.Event{
+		_ = d.publisher.PublishTaskEvent(stepCtx, gateway.Event{
 			Type:   gateway.TopicTaskStarted,
 			RunID:  runID,
 			TaskID: node.ID,
@@ -224,11 +284,12 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 	}
 
 	for attempt := 0; attempt < policy.MaxRetries; attempt++ {
-		stepCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
-		res, err := d.caller.CallPDK(stepCtx, node.PluginURI, functionName, pdkCtx)
+		attemptCtx, cancel := context.WithTimeout(stepCtx, policy.Timeout)
+		res, err := d.caller.CallPDK(attemptCtx, node.PluginURI, functionName, pdkCtx)
 		cancel()
 
 		if err == nil && res != nil && res.Success {
+			done("COMPLETED", nil)
 			return res, nil
 		}
 
@@ -237,8 +298,9 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 
 		if attempt < policy.MaxRetries-1 {
 			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
+			case <-stepCtx.Done():
+				done("CANCELLED", stepCtx.Err())
+				return nil, stepCtx.Err()
 			case <-time.After(backoff):
 				backoff *= 2
 			}
@@ -246,7 +308,15 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 	}
 
 	if lastErr != nil {
+		done("FAILED", lastErr)
 		return lastRes, lastErr
 	}
+	if lastRes != nil && !lastRes.Success {
+		errFail := fmt.Errorf("step execution failed: %s", lastRes.Output)
+		done("FAILED", errFail)
+		return lastRes, errFail
+	}
+
+	done("COMPLETED", nil)
 	return lastRes, nil
 }

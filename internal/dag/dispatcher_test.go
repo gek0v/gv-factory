@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type mockPluginCaller struct {
@@ -189,5 +192,70 @@ func TestDispatcher_FailureAndBlockCascading(t *testing.T) {
 	}
 	if caller.callCount["step-2"] != 0 {
 		t.Fatalf("expected step-2 not to run, got %d", caller.callCount["step-2"])
+	}
+}
+
+func TestDispatcher_TelemetrySpansAndMetrics(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	tracer := tp.Tracer("dag-telemetry-test")
+	metrics := telemetry.NewMetrics()
+
+	engine := NewEngine()
+	caller := newMockPluginCaller()
+	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+	defer gw.Close()
+
+	dispatcher := NewDispatcher(engine, caller, gw, DispatcherConfig{
+		DefaultStepPolicy: StepPolicy{
+			MaxRetries: 1,
+			Timeout:    500 * time.Millisecond,
+		},
+		Tracer:  tracer,
+		Metrics: metrics,
+	})
+
+	tpl := schema.FactoryTemplate{
+		Metadata: schema.Metadata{Name: "telemetry-pipeline"},
+		Spec: schema.FactorySpec{
+			Steps: []schema.StepConfig{
+				{
+					ID:     "step-tdd",
+					Plugin: "plugin-tdd",
+					Config: map[string]any{"node_type": "tdd", "git_commit": "c0ffee"},
+				},
+				{
+					ID:        "step-review",
+					Plugin:    "plugin-reviewer",
+					DependsOn: []string{"step-tdd"},
+					Config:    map[string]any{"node_type": "review"},
+				},
+			},
+		},
+	}
+
+	report, err := dispatcher.ExecuteWorkflow(context.Background(), "run-tel-43", tpl)
+	if err != nil {
+		t.Fatalf("unexpected execution error: %v", err)
+	}
+	if report.Status != StatusCompleted {
+		t.Fatalf("expected StatusCompleted, got %s", report.Status)
+	}
+
+	spans := sr.Ended()
+	if len(spans) != 2 {
+		t.Fatalf("expected 2 spans, got %d", len(spans))
+	}
+
+	spanNames := make(map[string]bool)
+	for _, s := range spans {
+		spanNames[s.Name()] = true
+	}
+
+	if !spanNames["dag.step.tdd"] {
+		t.Errorf("missing expected span 'dag.step.tdd'")
+	}
+	if !spanNames["dag.step.review"] {
+		t.Errorf("missing expected span 'dag.step.review'")
 	}
 }

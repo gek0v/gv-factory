@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // PluginCaller abstracts execution of WASM plugins conforming to the PDK context contract.
@@ -34,6 +36,8 @@ type StepPolicy struct {
 type DispatcherConfig struct {
 	DefaultStepPolicy StepPolicy
 	StepPolicies      map[string]StepPolicy
+	Tracer            trace.Tracer
+	Metrics           *telemetry.Metrics
 }
 
 // WorkflowReport summarizes the outcome of a dispatched template workflow execution.
