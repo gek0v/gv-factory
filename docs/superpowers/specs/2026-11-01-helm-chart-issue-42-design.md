@@ -302,5 +302,7 @@ podDisruptionBudget:
    - `make helm-template`
 3. **REUSE & License Compliance:**
    - Every file begins with standard SPDX header:
-     `# SPDX-License-Identifier: Apache-2.0`
-     `# SPDX-FileCopyrightText: 2026 gv-factory contributors`
+     ```yaml
+     # SPDX-License-Identifier: Apache-2.0
+     # SPDX-FileCopyrightText: 2026 gv-factory contributors
+     ```

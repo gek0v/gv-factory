@@ -1,3 +1,8 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 gv-factory contributors
+-->
+
 # OpenTelemetry and Prometheus Telemetry Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -13,8 +18,10 @@
 ## Global Constraints
 
 - Every new Go file must contain the SPDX header:
-  `// SPDX-License-Identifier: Apache-2.0`
-  `// SPDX-FileCopyrightText: 2026 gv-factory contributors`
+  ```text
+  // SPDX-License-Identifier: Apache-2.0
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors
+  ```
 - Code formatting: Tabulation (`\t`) for Go code, Unix line endings (`LF`).
 - Conventional commits: `feat(telemetry): ...` or `test(telemetry): ...` referencing Issue #43.
 - Isolated registries: Prometheus metrics must use dedicated `*prometheus.Registry` per instance, never mutating the global default registry.

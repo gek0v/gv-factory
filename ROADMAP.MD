@@ -76,7 +76,7 @@ flowchart TD
 
 2. **Marco Legal y Conformidad REUSE:**
    - Archivo `LICENSE` con Apache-2.0.
-   - Declaraciones de cabecera SPDX en cada archivo (`SPDX-License-Identifier: Apache-2.0`).
+   - Declaraciones de cabecera SPDX en cada archivo (SPDX-License-Identifier Apache-2.0).
    - Configuración del linter oficial de la FSFE (`reuse lint`) en integración continua.
 
 3. **Archivos de Salud Comunitaria y Gobernanza:**

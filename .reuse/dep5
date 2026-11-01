@@ -9,7 +9,7 @@ Copyright: 2026 OV-Factory Contributors
 License: Apache-2.0
 
 # Archivos de datos, esquemas y especificaciones JSON/YAML
-Files: *.json **/*.json *.yaml **/*.yaml *.yml **/*.yml
+Files: *.json **/*.json *.yaml **/*.yaml *.yml **/*.yml *.jsonc **/*.jsonc
 Copyright: 2026 OV-Factory Contributors
 License: Apache-2.0
 

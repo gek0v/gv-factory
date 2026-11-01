@@ -18,8 +18,10 @@ SPDX-FileCopyrightText: 2026 gv-factory contributors
 ## Global Constraints
 
 - Header requirement:
-  `// SPDX-License-Identifier: Apache-2.0`
-  `// SPDX-FileCopyrightText: 2026 gv-factory contributors`
+  ```text
+  // SPDX-License-Identifier: Apache-2.0
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors
+  ```
 - Line endings must be `LF`.
 - Indentation:
   - Tabs (`\t`) for Go code (`pkg/version/goreleaser_test.go`).
