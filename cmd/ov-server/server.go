@@ -21,6 +21,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/connectors/chat"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 	"github.com/gv-factory/gv-factory/pkg/schema"
 )
@@ -107,8 +108,12 @@ func NewServerMux(
 	chatHandler *chat.ChatHandler,
 	orchestrator PipelineOrchestrator,
 	authSvc *auth.Service,
+	st store.Store,
 	tel ...*telemetry.Telemetry,
 ) http.Handler {
+	if st == nil {
+		st = store.NewMemoryStore()
+	}
 	var t *telemetry.Telemetry
 	if len(tel) > 0 && tel[0] != nil {
 		t = tel[0]
@@ -313,6 +318,17 @@ func NewServerMux(
 		recordAuditAndPublish(auth.AuditStatusSuccess, "Gate resolution approved cryptographically")
 		log.Printf("ov-server: gate resolved for run %q with decision %q", payload.RunID, payload.Decision)
 
+		if st != nil {
+			_, _ = st.ResolveGate(r.Context(), payload.Token, store.GateResolution{
+				Decision: payload.Decision,
+				Actor:    clientIP,
+				Reason:   "Resolved via REST API",
+				Metadata: map[string]any{
+					"user_agent": userAgent,
+				},
+			})
+		}
+
 		if gw != nil {
 			_ = gw.Publish(r.Context(), gateway.TopicGateResolved, gateway.Event{
 				Type:      gateway.TopicGateResolved,
@@ -338,7 +354,7 @@ func NewServerMux(
 	mux.HandleFunc("/api/v1/gates/resolve", gateResolveHandler)
 
 	// Pending decision gates endpoint
-	pendingTracker := NewPendingGateTracker(context.Background(), gw)
+	pendingTracker := NewPendingGateTracker(context.Background(), gw, st)
 	mux.HandleFunc("/api/v1/gates/pending", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -510,6 +526,22 @@ func NewServerMux(
 				return
 			}
 
+			if st != nil {
+				_ = st.CreateRun(r.Context(), &store.Run{
+					ID:           run.ID,
+					TemplateName: run.TemplateName,
+					Status:       store.RunStatus(run.State),
+					InitiatedBy:  getClientIP(r),
+					Metadata: map[string]any{
+						"repo_path":   req.RepoPath,
+						"branch":      req.Branch,
+						"base_branch": req.BaseBranch,
+						"priority":    int(req.Priority),
+					},
+					CreatedAt: run.QueuedAt,
+				})
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -548,6 +580,16 @@ func NewServerMux(
 
 			run, err := orchestrator.GetRun(runID)
 			if err != nil {
+				if st != nil {
+					storedRun, stErr := st.GetRun(r.Context(), runID)
+					if stErr == nil && storedRun != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusOK)
+						_ = json.NewEncoder(w).Encode(storedRun)
+						return
+					}
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusNotFound)
 				_ = json.NewEncoder(w).Encode(map[string]any{
