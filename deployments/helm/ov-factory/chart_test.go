@@ -154,4 +154,42 @@ func TestCoreWorkloadDeployments(t *testing.T) {
 	}
 }
 
+func TestScalingAndResilienceManifests(t *testing.T) {
+	requiredFiles := []struct {
+		path     string
+		patterns []string
+	}{
+		{
+			path:     filepath.Join(".", "templates", "pvc.yaml"),
+			patterns: []string{"kind: PersistentVolumeClaim", "accessModes:", "storage:"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "server-hpa.yaml"),
+			patterns: []string{"apiVersion: autoscaling/v2", "kind: HorizontalPodAutoscaler", "scaleTargetRef:", "server"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "worker-hpa.yaml"),
+			patterns: []string{"apiVersion: autoscaling/v2", "kind: HorizontalPodAutoscaler", "scaleTargetRef:", "worker"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "pdb.yaml"),
+			patterns: []string{"kind: PodDisruptionBudget", "minAvailable:"},
+		},
+	}
+
+	for _, req := range requiredFiles {
+		data, err := os.ReadFile(req.path)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", req.path, err)
+		}
+		content := string(data)
+		for _, pat := range req.patterns {
+			if !strings.Contains(content, pat) {
+				t.Errorf("File %s missing expected pattern %q", req.path, pat)
+			}
+		}
+	}
+}
+
+
 

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if and .Values.worker.enabled .Values.worker.persistence.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-sandboxes
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  accessModes:
+    {{- toYaml .Values.worker.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.persistence.size }}
+  {{- if or .Values.worker.persistence.storageClass .Values.global.storageClass }}
+  storageClassName: {{ default .Values.global.storageClass .Values.worker.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}
