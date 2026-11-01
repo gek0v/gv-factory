@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+# Stage 1: Build worker binary with CGO and build toolchain
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /workspace
+
+# Install CGO build dependencies and utilities
+RUN apk add --no-cache ca-certificates git tzdata gcc musl-dev
+
+# Leverage module caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source tree
+COPY . .
+
+# Compile optimized worker binary
+ENV CGO_ENABLED=0
+RUN go build -ldflags="-s -w" -o /bin/ov-worker ./cmd/ov-worker
+
+# Stage 2: Hardened worker runtime with Git CLI for worktree operations
+FROM alpine:3.21
+
+# Install runtime dependencies: git for worktree operations, ca-certificates, tzdata, and wget for health checks
+RUN apk add --no-cache ca-certificates git tzdata wget \
+    && addgroup -g 10001 -S nonroot \
+    && adduser -u 10001 -S -G nonroot -h /home/nonroot nonroot \
+    && mkdir -p /tmp/ov-sandboxes /tmp/ov-worktrees \
+    && chown -R 10001:10001 /tmp/ov-sandboxes /tmp/ov-worktrees /home/nonroot
+
+WORKDIR /home/nonroot
+
+# Copy application binary
+COPY --from=builder /bin/ov-worker /usr/local/bin/ov-worker
+
+# Default worktree path for ephemeral sandboxes
+ENV OV_WORKTREE_DIR=/tmp/ov-sandboxes
+
+# Switch to unprivileged UID 10001
+USER 10001:10001
+
+# Worker internal health check port
+EXPOSE 8081
+
+# Health check configuration probing worker health endpoint
+HEALTHCHECK --interval=5s --timeout=5s --retries=5 --start-period=5s \
+  CMD wget -q --spider http://localhost:8081/healthz || exit 1
+
+ENTRYPOINT ["/usr/local/bin/ov-worker"]

@@ -5,12 +5,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
@@ -25,10 +28,19 @@ import (
 )
 
 func main() {
+	portFlag := flag.String("port", "", "HTTP listen port (defaults to PORT env var or 8080)")
 	worktreeDir := flag.String("worktree-dir", "", "Base directory for sandbox git worktrees (defaults to OS temp directory or OV_WORKTREE_DIR)")
 	flag.Parse()
 
-	fmt.Println("Starting ov-server (Orchestrator & API Server)...")
+	port := *portFlag
+	if port == "" {
+		port = os.Getenv("PORT")
+	}
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("Starting ov-server (Orchestrator & API Server) on port %s...\n", port)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -94,8 +106,29 @@ func main() {
 		defer unsubChat()
 	}
 
-	log.Println("ov-server initialized successfully. Listening for orchestrations...")
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler)
+
+	httpServer := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		log.Printf("ov-server HTTP server listening on :%s", port)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("ov-server HTTP server error: %v", err)
+		}
+	}()
+
+	log.Printf("ov-server initialized successfully on port %s. Listening for orchestrations...", port)
 
 	<-ctx.Done()
 	log.Println("Shutting down ov-server gracefully...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Error during ov-server HTTP shutdown: %v", err)
+	}
 }

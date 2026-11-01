@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 gv-factory contributors
 
-.PHONY: all build test lint dev clean web-install web-build
+.PHONY: all build test lint dev clean web-install web-build compose-up compose-down compose-check
 
 BIN_DIR := bin
 
@@ -25,6 +25,18 @@ dev:
 	@echo "==> Starting local infrastructure with Docker Compose..."
 	@docker compose -f deployments/docker-compose.yml up -d
 
+compose-up:
+	@echo "==> Starting full OV-Factory stack..."
+	@docker compose -f deployments/docker-compose.yml up -d --build
+
+compose-down:
+	@echo "==> Stopping OV-Factory stack..."
+	@docker compose -f deployments/docker-compose.yml down -v
+
+compose-check:
+	@echo "==> Checking OV-Factory stack status and health..."
+	@docker compose -f deployments/docker-compose.yml ps
+
 clean:
 	@echo "==> Cleaning built artifacts..."
 	@rm -rf $(BIN_DIR)
@@ -36,3 +48,4 @@ web-install:
 web-build:
 	@echo "==> Building frontend SPA..."
 	@cd web && pnpm build
+
