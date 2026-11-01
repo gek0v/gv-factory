@@ -66,11 +66,44 @@ func main() {
 		}
 	}
 
-	_ = dag.NewEngine()
-	_ = sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
-	_ = plugins.NewHost()
+	dagEngine := dag.NewEngine()
+	sbMgr := sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
+	pluginHost := plugins.NewHost()
 	gw := gateway.NewGateway()
 	_ = auth.NewService("secret-key")
+
+	tel, err := telemetry.New(ctx, telemetry.ConfigFromEnv())
+	if err != nil {
+		log.Printf("Warning: telemetry provider failed to configure: %v", err)
+	} else {
+		log.Printf("Telemetry subsystem initialized (status: %s)", tel.Status())
+	}
+
+	dispatcherCfg := dag.DispatcherConfig{
+		DefaultStepPolicy: dag.StepPolicy{
+			MaxRetries:     3,
+			InitialBackoff: 25 * time.Millisecond,
+			Timeout:        5 * time.Minute,
+		},
+	}
+	if tel != nil {
+		dispatcherCfg.Tracer = tel.Tracer
+		dispatcherCfg.Metrics = tel.Metrics
+	}
+
+	orchestrator := dag.NewMultiFactoryOrchestrator(
+		dag.OrchestratorConfig{
+			MaxConcurrentRuns:    4,
+			MaxConcurrentPerRepo: 2,
+			DefaultTimeout:       5 * time.Minute,
+		},
+		sbMgr,
+		dagEngine,
+		pluginHost,
+		gw,
+		dispatcherCfg,
+	)
+	defer orchestrator.Stop()
 
 	webhookIngestor := inbound.NewIngestor(inbound.Config{
 		GitHubSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
@@ -115,14 +148,7 @@ func main() {
 		defer unsubChat()
 	}
 
-	tel, err := telemetry.New(ctx, telemetry.ConfigFromEnv())
-	if err != nil {
-		log.Printf("Warning: telemetry provider failed to configure: %v", err)
-	} else {
-		log.Printf("Telemetry subsystem initialized (status: %s)", tel.Status())
-	}
-
-	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, tel)
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, tel)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,

@@ -33,7 +33,7 @@ func setupTestMux(t *testing.T) (http.Handler, *gateway.Gateway) {
 		SlackSigningSecret: "test-slack-secret",
 	})
 
-	mux := NewServerMux(nil, gw, webhookIngestor, chatHandler)
+	mux := NewServerMux(nil, gw, webhookIngestor, chatHandler, nil)
 	return mux, gw
 }
 
