@@ -64,7 +64,10 @@ export interface FactoryFlowState {
   setActiveApproval: (approval: GateApprovalPayload | null) => void;
   setShowGateModal: (show: boolean) => void;
   setActiveRun: (runId: string | null, state?: RunLifecycleState | null) => void;
-  resolveApproval: (decision: 'APPROVE' | 'REJECT') => Promise<{ success: boolean; message: string }>;
+  resolveApproval: (
+    decision: 'APPROVE' | 'REJECT',
+    rejectionReason?: string
+  ) => Promise<{ success: boolean; message: string }>;
   setNodes: (nodes: Node<FactoryNodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
 }
@@ -272,7 +275,7 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
     }
   },
 
-  resolveApproval: async (decision: 'APPROVE' | 'REJECT') => {
+  resolveApproval: async (decision: 'APPROVE' | 'REJECT', rejectionReason?: string) => {
     const { activeApproval } = get();
     if (!activeApproval) {
       return { success: false, message: 'No active approval request found' };
@@ -280,31 +283,60 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
 
     try {
       try {
-        await fetch('/api/gate/resolve', {
+        const response = await fetch('/api/gate/resolve', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             run_id: activeApproval.runId,
             token: activeApproval.token,
-            decision,
+            decision: decision === 'APPROVE' ? 'approved' : 'rejected',
+            ...(decision === 'REJECT' && rejectionReason ? { rejection_reason: rejectionReason } : {}),
+            ...(activeApproval.toolName ? { tool_name: activeApproval.toolName } : {}),
           }),
         });
-      } catch {
-        // Fallback for standalone / disconnected environment
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = (errData as { message?: string })?.message || `Server returned status ${response.status}`;
+          return {
+            success: false,
+            message: `Failed to resolve approval: ${errMsg}`,
+          };
+        }
+      } catch (networkErr) {
+        // Fallback for standalone / disconnected dev environment when fetch fails entirely (e.g. ECONNREFUSED)
+        if (networkErr instanceof TypeError && networkErr.message.includes('fetch')) {
+          // offline mode
+        }
+      }
+
+      const targetNodeId = activeApproval.callerId || activeApproval.stepId;
+      if (targetNodeId) {
+        const targetNode = get().nodes.find(
+          (n) => n.id === targetNodeId || (n.data as { stepId?: string })?.stepId === targetNodeId
+        );
+        if (targetNode) {
+          get().updateNodeStatus(targetNode.id, decision === 'APPROVE' ? 'completed' : 'failed');
+        }
       }
 
       const approverNode = get().nodes.find(
         (n) => n.data.role === 'approver' || n.id.includes('approver') || n.id.includes('gate')
       );
-      if (approverNode) {
+      if (approverNode && (!targetNodeId || targetNodeId === approverNode.id)) {
         get().updateNodeStatus(approverNode.id, decision === 'APPROVE' ? 'completed' : 'failed');
       }
+
+      const isToolGate = activeApproval.gateType === 'tool' || Boolean(activeApproval.toolName);
 
       set({ activeApproval: null, showGateModal: false });
       return {
         success: true,
-        message:
-          decision === 'APPROVE'
+        message: isToolGate
+          ? decision === 'APPROVE'
+            ? `Tool call '${activeApproval.toolName || 'tool'}' approved and authorized for execution.`
+            : `Tool call '${activeApproval.toolName || 'tool'}' rejected.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`
+          : decision === 'APPROVE'
             ? `Run ${activeApproval.runId} approved and enqueued to sequential merge queue.`
             : `Run ${activeApproval.runId} rejected. Diverting to GitHub Pull Request.`,
       };

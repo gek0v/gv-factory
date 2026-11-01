@@ -118,14 +118,20 @@ export const NodeInspector: React.FC = () => {
 
             {currentStatus === 'awaiting_approval' && (
               <div className="gate-action-prompt-box">
-                <div className="prompt-title">⚠ Human Decision Gate Required</div>
-                <p className="prompt-desc">This gate node is awaiting manual reviewer confirmation.</p>
+                <div className="prompt-title">
+                  {selectedNode.data.role === 'approver' || !selectedNode.id.includes('builder')
+                    ? '⚠ Human Decision Gate Required'
+                    : '⚙️ Sensitive MCP Tool Gate Approval Required'}
+                </div>
+                <p className="prompt-desc">
+                  This execution node is suspended awaiting operator authorization.
+                </p>
                 <button
                   type="button"
                   className="resolve-gate-btn"
                   onClick={() => setShowGateModal(true)}
                 >
-                  Open Decision Gate Modal
+                  Inspect &amp; Resolve Gate Modal
                 </button>
               </div>
             )}
