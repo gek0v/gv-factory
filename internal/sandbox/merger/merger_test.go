@@ -5,6 +5,8 @@ package merger
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -369,5 +371,275 @@ func TestQueue_ThreadSafeFIFOOrderAndRace(t *testing.T) {
 
 	if q.Len() != 50 {
 		t.Errorf("expected 50 items in queue, got %d", q.Len())
+	}
+}
+
+// legacyGitExecutor simulates Git < 2.43 by returning exit status 129 with an unknown option error when --merge-base is passed.
+type legacyGitExecutor struct {
+	realGit GitExecutor
+}
+
+func (l *legacyGitExecutor) Run(ctx context.Context, dir string, args ...string) (string, error) {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--merge-base=") || arg == "--merge-base" {
+			return fmt.Sprintf("error: unknown option `merge-base=%s'\nusage: git merge-tree [--write-tree] [<options>] <branch1> <branch2>\n", strings.TrimPrefix(arg, "--merge-base=")), errors.New("exit status 129")
+		}
+	}
+	return l.realGit.Run(ctx, dir, args...)
+}
+
+func TestSimulateMergeTree_LegacyGitFallback_ConflictFree(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	runGit("checkout", "-b", "feat/clean-legacy", "main")
+	newFile := filepath.Join(repoDir, "feature-legacy.txt")
+	_ = os.WriteFile(newFile, []byte("clean legacy feature\n"), 0644)
+	runGit("add", "feature-legacy.txt")
+	runGit("commit", "-m", "add clean legacy feature")
+	runGit("checkout", "main")
+
+	legacyGit := &legacyGitExecutor{realGit: &OSGitExecutor{}}
+	q := NewQueue(legacyGit, nil, nil, nil, Config{RepoPath: repoDir, BaseBranch: "main"})
+
+	sim := q.SimulateMergeTree(context.Background(), repoDir, "main", "feat/clean-legacy")
+	if !sim.ConflictFree {
+		t.Fatalf("expected conflict-free simulation under legacy git fallback, got conflicts: %v (raw: %s)", sim.ConflictFiles, sim.RawOutput)
+	}
+	if sim.TreeSHA == "" {
+		t.Errorf("expected non-empty tree SHA under legacy git fallback")
+	}
+}
+
+func TestQueue_LegacyGitFallback_HappyPathFastForward(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+		return string(out)
+	}
+
+	runGit("checkout", "-b", "ov-run/run-legacy-01", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "legacy_service.go"), []byte("package main\n\nfunc LegacyService() string { return \"ok\" }\n"), 0644)
+	runGit("add", "legacy_service.go")
+	runGit("commit", "-m", "feat: add legacy_service.go")
+
+	runGit("checkout", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "notes.txt"), []byte("some notes\n"), 0644)
+	runGit("add", "notes.txt")
+	runGit("commit", "-m", "docs: update notes")
+
+	legacyGit := &legacyGitExecutor{realGit: &OSGitExecutor{}}
+	pub := &mockMergerPublisher{}
+	pr := &mockMergerPRCreator{}
+
+	q := NewQueue(legacyGit, pub, pr, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+
+	_ = q.Enqueue(&MergeRequest{
+		RunID:        "run-legacy-01",
+		SourceBranch: "ov-run/run-legacy-01",
+		TargetBranch: "main",
+	})
+
+	res, err := q.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error processing merge: %v", err)
+	}
+
+	if res.Status != StatusMerged {
+		t.Fatalf("expected StatusMerged, got %s (err: %s)", res.Status, res.Error)
+	}
+}
+
+func TestSimulateMergeTree_LegacyGitFallback_DetectsConflicts(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	// Create feature branch that modifies Line 2 in README.md
+	runGit("checkout", "-b", "feat/conflict-legacy", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Initial Project\nLine 1: baseline\nLine 2: LEGACY FEATURE EDIT\n"), 0644)
+	runGit("commit", "-am", "feature edit to line 2")
+
+	// On main, also edit Line 2 in conflicting way
+	runGit("checkout", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Initial Project\nLine 1: baseline\nLine 2: MAIN EDIT COLLISION\n"), 0644)
+	runGit("commit", "-am", "main edit collision on line 2")
+
+	legacyGit := &legacyGitExecutor{realGit: &OSGitExecutor{}}
+	q := NewQueue(legacyGit, nil, nil, nil, Config{RepoPath: repoDir, BaseBranch: "main"})
+	sim := q.SimulateMergeTree(context.Background(), repoDir, "main", "feat/conflict-legacy")
+
+	if sim.ConflictFree {
+		t.Fatalf("expected merge conflicts under legacy git fallback, but simulation reported conflict free")
+	}
+	if len(sim.ConflictFiles) == 0 {
+		t.Errorf("expected conflict files list to include README.md, got empty list")
+	}
+
+	foundReadme := false
+	for _, f := range sim.ConflictFiles {
+		if strings.Contains(f, "README.md") {
+			foundReadme = true
+			break
+		}
+	}
+	if !foundReadme {
+		t.Errorf("expected README.md in conflict files under legacy git fallback, got: %v", sim.ConflictFiles)
+	}
+}
+
+func TestQueue_LegacyGitFallback_ConflictPathDivertedToPR(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	// Conflicting changes
+	runGit("checkout", "-b", "ov-run/run-conflict-legacy", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("CONFLICT BRANCH CONTENT"), 0644)
+	runGit("commit", "-am", "branch edit")
+
+	runGit("checkout", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("CONFLICT MAIN CONTENT"), 0644)
+	runGit("commit", "-am", "main edit")
+
+	legacyGit := &legacyGitExecutor{realGit: &OSGitExecutor{}}
+	pub := &mockMergerPublisher{}
+	pr := &mockMergerPRCreator{}
+
+	q := NewQueue(legacyGit, pub, pr, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+
+	_ = q.Enqueue(&MergeRequest{
+		RunID:        "run-conflict-legacy",
+		SourceBranch: "ov-run/run-conflict-legacy",
+		TargetBranch: "main",
+	})
+
+	res, err := q.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error during conflict processing: %v", err)
+	}
+
+	if res.Status != StatusDivertedToPR {
+		t.Errorf("expected StatusDivertedToPR, got %s", res.Status)
+	}
+	if res.PRURL == "" {
+		t.Errorf("expected PR URL to be set")
+	}
+
+	pr.mu.Lock()
+	if len(pr.created) != 1 {
+		t.Errorf("expected 1 PR created, got %d", len(pr.created))
+	} else {
+		desc := pr.created[0].Description
+		if !strings.Contains(desc, "README.md") {
+			t.Errorf("expected PR description to mention conflicting file README.md, got:\n%s", desc)
+		}
+	}
+	pr.mu.Unlock()
+}
+
+func TestIsUnknownOption(t *testing.T) {
+	tests := []struct {
+		name     string
+		output   string
+		err      error
+		option   string
+		expected bool
+	}{
+		{
+			name:     "backtick unknown option format (git 2.39)",
+			output:   "error: unknown option `merge-base=c123456'\nusage: git merge-tree [--write-tree]",
+			err:      errors.New("exit status 129"),
+			option:   "merge-base",
+			expected: true,
+		},
+		{
+			name:     "single quote unknown option format",
+			output:   "error: unknown option 'merge-base=c123456'",
+			err:      errors.New("exit status 129"),
+			option:   "merge-base",
+			expected: true,
+		},
+		{
+			name:     "unrecognized option format",
+			output:   "fatal: unrecognized option '--merge-base=c123456'",
+			err:      errors.New("exit status 129"),
+			option:   "merge-base",
+			expected: true,
+		},
+		{
+			name:     "error in err string rather than output",
+			output:   "",
+			err:      errors.New("error: unknown option `merge-base'"),
+			option:   "merge-base",
+			expected: true,
+		},
+		{
+			name:     "normal conflict output",
+			output:   "Auto-merging README.md\nCONFLICT (content): Merge conflict in README.md",
+			err:      errors.New("exit status 1"),
+			option:   "merge-base",
+			expected: false,
+		},
+		{
+			name:     "fatal non-option error",
+			output:   "fatal: Not a valid object name main",
+			err:      errors.New("exit status 128"),
+			option:   "merge-base",
+			expected: false,
+		},
+		{
+			name:     "different option reported unknown",
+			output:   "error: unknown option `some-other-option'",
+			err:      errors.New("exit status 129"),
+			option:   "merge-base",
+			expected: false,
+		},
+		{
+			name:     "clean execution nil error",
+			output:   "3a4b5c6d7e8f",
+			err:      nil,
+			option:   "merge-base",
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := isUnknownOption(tc.output, tc.err, tc.option)
+			if actual != tc.expected {
+				t.Errorf("isUnknownOption(%q, %v, %q) = %v; expected %v",
+					tc.output, tc.err, tc.option, actual, tc.expected)
+			}
+		})
 	}
 }
