@@ -168,6 +168,18 @@ func TestMCPToolRegistry(t *testing.T) {
 	if _, err := registry.CallTool(cancelCtx, "git_status", nil); err == nil {
 		t.Errorf("Expected context canceled error")
 	}
+
+	// CallTool with explicit ExecutionContext
+	ecExplicit := ExecutionContext{RunID: "run-explicit"}
+	resExplicit, err := registry.CallToolWithContext(context.Background(), ecExplicit, "linter", nil)
+	if err != nil || resExplicit.TextContent() != "0 issues found" {
+		t.Fatalf("CallToolWithContext failed: %v", err)
+	}
+
+	// Close registry twice to test closeOnce
+	if err := registry.Close(); err != nil {
+		t.Fatalf("registry.Close failed: %v", err)
+	}
 }
 
 func TestRegistryValidationAndDefaults(t *testing.T) {
