@@ -12,8 +12,8 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
-	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -152,7 +152,7 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 			wg.Add(1)
 			go func(n *Node) {
 				defer wg.Done()
-				res, execErr := d.executeNodeWithPolicy(ctx, runID, graphID, n)
+				res, durationMS, execErr := d.executeNodeWithPolicy(ctx, runID, graphID, n)
 				mu.Lock()
 				if res != nil {
 					stepResults[n.ID] = res
@@ -173,7 +173,8 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 							RunID:  runID,
 							TaskID: n.ID,
 							Payload: map[string]any{
-								"error": errMsg,
+								"error":       errMsg,
+								"duration_ms": durationMS,
 							},
 						})
 					}
@@ -191,8 +192,9 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 							RunID:  runID,
 							TaskID: n.ID,
 							Payload: map[string]any{
-								"output": output,
-								"data":   data,
+								"output":      output,
+								"data":        data,
+								"duration_ms": durationMS,
 							},
 						})
 					}
@@ -207,7 +209,8 @@ func (d *Dispatcher) ExecuteWorkflow(ctx context.Context, runID string, tpl sche
 	}
 }
 
-func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID string, node *Node) (*pdk.Result, error) {
+func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID string, node *Node) (*pdk.Result, int64, error) {
+	startTime := time.Now()
 	nodeType := "step"
 	if nt, ok := node.Inputs["node_type"].(string); ok && nt != "" {
 		nodeType = nt
@@ -237,7 +240,7 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 		factoryID = parts[0]
 	}
 
-	stepCtx, _, done := telemetry.StartStepSpan(ctx, d.tracer, d.metrics, telemetry.StepSpanOpts{
+	stepCtx, span, done := telemetry.StartStepSpan(ctx, d.tracer, d.metrics, telemetry.StepSpanOpts{
 		FactoryID:  factoryID,
 		RunID:      runID,
 		NodeID:     node.ID,
@@ -245,6 +248,13 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 		GitCommit:  gitCommit,
 		AgentModel: agentModel,
 	})
+
+	traceID := ""
+	spanID := ""
+	if span != nil && span.SpanContext().IsValid() {
+		traceID = span.SpanContext().TraceID().String()
+		spanID = span.SpanContext().SpanID().String()
+	}
 
 	_ = d.engine.SetNodeStatus(graphID, node.ID, StatusRunning)
 
@@ -283,14 +293,17 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 		functionName = fn
 	}
 
+	var completedRes *pdk.Result
+	var completedErr error
+
 	for attempt := 0; attempt < policy.MaxRetries; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(stepCtx, policy.Timeout)
 		res, err := d.caller.CallPDK(attemptCtx, node.PluginURI, functionName, pdkCtx)
 		cancel()
 
 		if err == nil && res != nil && res.Success {
-			done("COMPLETED", nil)
-			return res, nil
+			completedRes = res
+			break
 		}
 
 		lastErr = err
@@ -299,24 +312,104 @@ func (d *Dispatcher) executeNodeWithPolicy(ctx context.Context, runID, graphID s
 		if attempt < policy.MaxRetries-1 {
 			select {
 			case <-stepCtx.Done():
-				done("CANCELLED", stepCtx.Err())
-				return nil, stepCtx.Err()
+				completedErr = stepCtx.Err()
+				break
 			case <-time.After(backoff):
 				backoff *= 2
 			}
 		}
 	}
 
-	if lastErr != nil {
-		done("FAILED", lastErr)
-		return lastRes, lastErr
-	}
-	if lastRes != nil && !lastRes.Success {
-		errFail := fmt.Errorf("step execution failed: %s", lastRes.Output)
-		done("FAILED", errFail)
-		return lastRes, errFail
+	if completedRes == nil && completedErr == nil {
+		if lastErr != nil {
+			completedErr = lastErr
+			completedRes = lastRes
+		} else if lastRes != nil && !lastRes.Success {
+			completedErr = fmt.Errorf("step execution failed: %s", lastRes.Output)
+			completedRes = lastRes
+		} else {
+			completedRes = lastRes
+		}
 	}
 
-	done("COMPLETED", nil)
-	return lastRes, nil
+	durationMS := time.Since(startTime).Milliseconds()
+	status := "COMPLETED"
+	if completedErr != nil || (completedRes != nil && !completedRes.Success) {
+		status = "FAILED"
+		done("FAILED", completedErr)
+	} else {
+		done("COMPLETED", nil)
+	}
+
+	// Extract tokens if present in result data
+	var tokens int64
+	if completedRes != nil && completedRes.Data != nil {
+		if t, ok := completedRes.Data["tokens"].(int); ok {
+			tokens = int64(t)
+		} else if t, ok := completedRes.Data["tokens"].(float64); ok {
+			tokens = int64(t)
+		} else if t, ok := completedRes.Data["tokens"].(int64); ok {
+			tokens = t
+		} else if t, ok := completedRes.Data["token_count"].(int); ok {
+			tokens = int64(t)
+		} else if t, ok := completedRes.Data["token_count"].(float64); ok {
+			tokens = int64(t)
+		} else if t, ok := completedRes.Data["token_count"].(int64); ok {
+			tokens = t
+		}
+	}
+
+	// Emit stdout logs
+	if d.publisher != nil && completedRes != nil && completedRes.Output != "" {
+		normalizedOutput := strings.ReplaceAll(completedRes.Output, "\r\n", "\n")
+		lines := strings.Split(normalizedOutput, "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			_ = d.publisher.PublishTaskEvent(stepCtx, gateway.Event{
+				Type:   gateway.TopicTaskLog,
+				RunID:  runID,
+				TaskID: node.ID,
+				Payload: map[string]any{
+					"stream":    "stdout",
+					"message":   line,
+					"timestamp": time.Now().UnixMilli(),
+				},
+			})
+		}
+	}
+
+	// Emit stderr logs if there's an error
+	if d.publisher != nil && completedErr != nil {
+		_ = d.publisher.PublishTaskEvent(stepCtx, gateway.Event{
+			Type:   gateway.TopicTaskLog,
+			RunID:  runID,
+			TaskID: node.ID,
+			Payload: map[string]any{
+				"stream":    "stderr",
+				"message":   completedErr.Error(),
+				"timestamp": time.Now().UnixMilli(),
+			},
+		})
+	}
+
+	// Emit TopicTaskSpan
+	if d.publisher != nil {
+		_ = d.publisher.PublishTaskEvent(stepCtx, gateway.Event{
+			Type:   gateway.TopicTaskSpan,
+			RunID:  runID,
+			TaskID: node.ID,
+			Payload: map[string]any{
+				"duration_ms": durationMS,
+				"trace_id":    traceID,
+				"span_id":     spanID,
+				"node_type":   nodeType,
+				"status":      status,
+				"tokens":      tokens,
+			},
+		})
+	}
+
+	return completedRes, durationMS, completedErr
 }

@@ -12,8 +12,8 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
-	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -257,5 +257,141 @@ func TestDispatcher_TelemetrySpansAndMetrics(t *testing.T) {
 	}
 	if !spanNames["dag.step.review"] {
 		t.Errorf("missing expected span 'dag.step.review'")
+	}
+}
+
+func TestDispatcher_EmitsTaskLogStdoutAndStderr(t *testing.T) {
+	engine := NewEngine()
+	caller := newMockPluginCaller()
+	caller.outputs["step-log"] = "line 1\nline 2\r\nline 3"
+
+	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+	defer gw.Close()
+
+	eventsCh := make(chan gateway.Event, 50)
+	unsub, _ := gw.SubscribeTaskEvents(context.Background(), gateway.TopicAllEvents, eventsCh)
+	defer unsub()
+
+	dispatcher := NewDispatcher(engine, caller, gw, DispatcherConfig{
+		DefaultStepPolicy: StepPolicy{
+			MaxRetries: 1,
+			Timeout:    2 * time.Second,
+		},
+	})
+
+	tpl := schema.FactoryTemplate{
+		Metadata: schema.Metadata{Name: "log-factory"},
+		Spec: schema.FactorySpec{
+			Steps: []schema.StepConfig{
+				{ID: "step-log", Plugin: "extism://plugins/log.wasm"},
+			},
+		},
+	}
+
+	_, err := dispatcher.ExecuteWorkflow(context.Background(), "run-log", tpl)
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+
+	var stdoutLogs []string
+	var spanFound bool
+	var completedDurationFound bool
+
+	close(eventsCh) // wait for channel drainage
+	for ev := range eventsCh {
+		if ev.Type == gateway.TopicTaskLog {
+			if stream, ok := ev.Payload["stream"].(string); ok && stream == "stdout" {
+				if msg, ok := ev.Payload["message"].(string); ok {
+					stdoutLogs = append(stdoutLogs, msg)
+				}
+			}
+		}
+		if ev.Type == gateway.TopicTaskSpan {
+			spanFound = true
+		}
+		if ev.Type == gateway.TopicTaskCompleted {
+			if _, ok := ev.Payload["duration_ms"]; ok {
+				completedDurationFound = true
+			}
+		}
+	}
+
+	if len(stdoutLogs) != 3 {
+		t.Errorf("expected 3 stdout log lines, got %d (%v)", len(stdoutLogs), stdoutLogs)
+	} else {
+		if stdoutLogs[0] != "line 1" || stdoutLogs[1] != "line 2" || stdoutLogs[2] != "line 3" {
+			t.Errorf("unexpected stdout log lines: %v", stdoutLogs)
+		}
+	}
+
+	if !spanFound {
+		t.Errorf("expected TopicTaskSpan to be emitted")
+	}
+	if !completedDurationFound {
+		t.Errorf("expected duration_ms in TopicTaskCompleted payload")
+	}
+}
+
+func TestDispatcher_EmitsTaskSpanTelemetry(t *testing.T) {
+	engine := NewEngine()
+	caller := newMockPluginCaller()
+	caller.outputs["step-span"] = "ok"
+
+	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+	defer gw.Close()
+
+	eventsCh := make(chan gateway.Event, 50)
+	unsub, _ := gw.SubscribeTaskEvents(context.Background(), gateway.TopicAllEvents, eventsCh)
+	defer unsub()
+
+	dispatcher := NewDispatcher(engine, caller, gw, DispatcherConfig{
+		DefaultStepPolicy: StepPolicy{
+			MaxRetries: 1,
+			Timeout:    2 * time.Second,
+		},
+	})
+
+	tpl := schema.FactoryTemplate{
+		Metadata: schema.Metadata{Name: "span-factory"},
+		Spec: schema.FactorySpec{
+			Steps: []schema.StepConfig{
+				{
+					ID:     "step-span",
+					Plugin: "extism://plugins/tdd.wasm",
+					Config: map[string]any{
+						"node_type": "tdd",
+					},
+				},
+			},
+		},
+	}
+
+	_, err := dispatcher.ExecuteWorkflow(context.Background(), "run-span", tpl)
+	if err != nil {
+		t.Fatalf("workflow failed: %v", err)
+	}
+
+	close(eventsCh)
+	var spanEv *gateway.Event
+	for ev := range eventsCh {
+		if ev.Type == gateway.TopicTaskSpan && ev.TaskID == "step-span" {
+			spanCopy := ev
+			spanEv = &spanCopy
+			break
+		}
+	}
+
+	if spanEv == nil {
+		t.Fatalf("expected TopicTaskSpan event for step-span")
+	}
+
+	if spanEv.Payload["node_type"] != "tdd" {
+		t.Errorf("expected node_type 'tdd', got %v", spanEv.Payload["node_type"])
+	}
+	if spanEv.Payload["status"] != "COMPLETED" {
+		t.Errorf("expected status 'COMPLETED', got %v", spanEv.Payload["status"])
+	}
+	if _, ok := spanEv.Payload["duration_ms"].(int64); !ok {
+		t.Errorf("expected duration_ms int64, got %T (%v)", spanEv.Payload["duration_ms"], spanEv.Payload["duration_ms"])
 	}
 }

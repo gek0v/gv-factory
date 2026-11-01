@@ -542,6 +542,31 @@ func NewServerMux(
 			return
 		}
 
+		if len(parts) == 2 && parts[1] == "events" {
+			// GET /api/v1/runs/{id}/events
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			if _, err := orchestrator.GetRun(runID); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf("run %q not found", runID),
+				})
+				return
+			}
+
+			if gw == nil || gw.Hub() == nil {
+				http.Error(w, "Gateway hub not initialized", http.StatusServiceUnavailable)
+				return
+			}
+
+			gw.Hub().ServeHTTPRun(w, r, runID)
+			return
+		}
+
 		if len(parts) == 2 && parts[1] == "cancel" {
 			// POST /api/v1/runs/{id}/cancel
 			if r.Method != http.MethodPost {
