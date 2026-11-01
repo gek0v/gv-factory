@@ -74,6 +74,19 @@ export interface GateApprovalPayload {
 
 export type GatewayConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
+export type SandboxRuntime = 'auto' | 'host' | 'oci' | 'microvm';
+export type SandboxNetworkPolicy = 'none' | 'bridge' | 'host';
+export type SandboxSecurityLevel = 'standard' | 'strict';
+
+export interface NodeSandboxConfig {
+  runtime?: SandboxRuntime;
+  cpuLimit?: string;       // e.g. "0.5", "1.0", "2.0", "4.0"
+  memoryLimit?: string;    // e.g. "256m", "512m", "1024m", "2048m"
+  pidsLimit?: number;      // e.g. 128, 256, 512, 1024
+  networkPolicy?: SandboxNetworkPolicy;
+  securityLevel?: SandboxSecurityLevel;
+}
+
 export interface NodeTelemetryUpdate {
   status?: ExecutionStatus;
   executionDurationMs?: number;
@@ -102,6 +115,8 @@ export interface BaseNodeData {
   gitDiff?: string;
   output?: Record<string, unknown>;
   errorMessage?: string;
+  sandboxEnabled?: boolean;
+  sandboxConfig?: NodeSandboxConfig;
   [key: string]: unknown;
 }
 

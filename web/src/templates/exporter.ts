@@ -47,15 +47,18 @@ export function canvasToTemplate(
     const data = node.data;
     const pluginTag = (data.pluginTag as string) || `extism://plugins/${node.id}.wasm`;
 
+    const stepConfig: Record<string, unknown> = {
+      ...(data.config && typeof data.config === 'object' ? (data.config as Record<string, unknown>) : {}),
+      ...(data.sandboxConfig ? { sandbox: data.sandboxConfig } : {}),
+    };
+
     const step: StepConfig = {
       id: node.id,
       name: data.label || node.id,
       plugin: pluginTag,
       ...(deps.length > 0 ? { depends_on: deps } : {}),
       ...(data.parallel ? { parallel: true } : {}),
-      ...(data.config && typeof data.config === 'object' && Object.keys(data.config).length > 0
-        ? { config: data.config as Record<string, unknown> }
-        : {}),
+      ...(Object.keys(stepConfig).length > 0 ? { config: stepConfig } : {}),
     };
 
     steps.push(step);
