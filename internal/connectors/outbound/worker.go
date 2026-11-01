@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
 // workerLoop drains delivery jobs from the channel and executes deliveries.
@@ -101,6 +103,9 @@ func (d *Dispatcher) executeDelivery(ctx context.Context, deliveryID string, sub
 		}
 
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, reqTimeout)
+		if payload.Data != nil {
+			attemptCtx = telemetry.ExtractPayload(attemptCtx, payload.Data)
+		}
 
 		req, reqErr := http.NewRequestWithContext(attemptCtx, http.MethodPost, sub.URL, bytes.NewReader(serialized))
 		if reqErr != nil {
@@ -114,6 +119,9 @@ func (d *Dispatcher) executeDelivery(ctx context.Context, deliveryID string, sub
 		req.Header.Set(HeaderTimestamp, timestampStr)
 		req.Header.Set(HeaderDelivery, deliveryID)
 		req.Header.Set(HeaderEvent, payload.Event)
+
+		// Inject W3C TraceContext headers for outbound webhook request
+		telemetry.InjectHTTP(attemptCtx, req.Header)
 
 		for k, v := range sub.Headers {
 			req.Header.Set(k, v)

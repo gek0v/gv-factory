@@ -4,7 +4,9 @@
 package inbound
 
 import (
+	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -267,5 +269,43 @@ func TestSentryProvider_Normalization(t *testing.T) {
 	}
 	if ev.Sender != "sentry-alert-rule" {
 		t.Errorf("expected sender sentry-alert-rule, got %s", ev.Sender)
+	}
+}
+
+func TestIngestor_TraceContextPropagation(t *testing.T) {
+	ch := make(chan schema.TriggerEvent, 1)
+	dispatcher := NewChannelDispatcher(ch)
+	ing := NewIngestor(Config{
+		GitHubSecret:          testGitHubSecret,
+		DisableFreshnessCheck: true,
+	}, dispatcher)
+
+	body := []byte(fixtureGitHubIssueOpened)
+	sig := computeHMAC([]byte(testGitHubSecret), body)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "issues")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+
+	rec := httptest.NewRecorder()
+	ing.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202 Accepted, got %d", rec.Code)
+	}
+
+	select {
+	case ev := <-ch:
+		traceData, ok := ev.Payload["_trace"].(map[string]string)
+		if !ok || traceData == nil {
+			t.Fatalf("expected '_trace' in payload, got %v", ev.Payload["_trace"])
+		}
+		if traceData["traceparent"] != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
+			t.Errorf("expected traceparent preserved, got %q", traceData["traceparent"])
+		}
+	default:
+		t.Fatal("expected event dispatched to channel")
 	}
 }
