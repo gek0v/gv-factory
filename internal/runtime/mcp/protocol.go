@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Standard JSON-RPC 2.0 version.
@@ -34,14 +35,19 @@ const (
 )
 
 var (
-	ErrClientClosed       = errors.New("mcp: client is closed")
-	ErrTransportClosed    = errors.New("mcp: transport closed")
-	ErrTimeout            = errors.New("mcp: operation timed out")
-	ErrToolNotFound       = errors.New("mcp: tool not found")
-	ErrServerNotFound     = errors.New("mcp: server not found")
-	ErrExecutionLimit     = errors.New("mcp: execution limit exceeded")
-	ErrInvalidResponse    = errors.New("mcp: invalid response")
-	ErrNilRequest         = errors.New("mcp: nil request")
+	ErrClientClosed            = errors.New("mcp: client is closed")
+	ErrTransportClosed         = errors.New("mcp: transport closed")
+	ErrTimeout                 = errors.New("mcp: operation timed out")
+	ErrToolNotFound            = errors.New("mcp: tool not found")
+	ErrServerNotFound          = errors.New("mcp: server not found")
+	ErrExecutionLimit          = errors.New("mcp: execution limit exceeded")
+	ErrInvalidResponse         = errors.New("mcp: invalid response")
+	ErrNilRequest              = errors.New("mcp: nil request")
+	ErrToolExecutionRejected   = errors.New("mcp: tool execution rejected by gate approval")
+	ErrToolApprovalTimeout     = errors.New("mcp: tool approval timed out")
+	ErrMissingExecutionContext = errors.New("mcp: missing execution context (run_id) for protected tool")
+	ErrMissingAuthService      = errors.New("mcp: auth service required for tool approval gate")
+	ErrMissingGateway          = errors.New("mcp: gateway required for tool approval gate")
 )
 
 // Request represents a JSON-RPC 2.0 request or notification.
@@ -173,9 +179,11 @@ type InitializeResult struct {
 
 // ToolDefinition represents an MCP tool definition.
 type ToolDefinition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	InputSchema ToolInputSchema `json:"inputSchema"`
+	Name             string          `json:"name"`
+	Description      string          `json:"description,omitempty"`
+	InputSchema      ToolInputSchema `json:"inputSchema"`
+	RequiresApproval bool            `json:"requiresApproval,omitempty"`
+	ApprovalTimeout  time.Duration   `json:"approvalTimeout,omitempty"`
 }
 
 // ToolInputSchema defines JSON Schema for tool inputs.

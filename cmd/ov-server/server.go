@@ -205,7 +205,7 @@ func NewServerMux(
 	}
 
 	// Gate approval resolution endpoint from frontend or integrations
-	mux.HandleFunc("/api/gate/resolve", func(w http.ResponseWriter, r *http.Request) {
+	gateResolveHandler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
@@ -331,6 +331,26 @@ func NewServerMux(
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"success": true,
 			"message": "Gate decision recorded",
+		})
+	}
+
+	mux.HandleFunc("/api/gate/resolve", gateResolveHandler)
+	mux.HandleFunc("/api/v1/gates/resolve", gateResolveHandler)
+
+	// Pending decision gates endpoint
+	pendingTracker := NewPendingGateTracker(context.Background(), gw)
+	mux.HandleFunc("/api/v1/gates/pending", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		gates := pendingTracker.ListPending()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"gates": gates,
+			"total": len(gates),
 		})
 	})
 
