@@ -222,11 +222,19 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   },
 
   appendNodeLog: (nodeId, stream, message, timestamp) => {
-    const entry: NodeLogEntry = {
-      timestamp: timestamp || new Date().toISOString(),
+    const rawLines = message.split(/\r?\n/);
+    const validLines =
+      rawLines.length > 1 && rawLines[rawLines.length - 1] === ''
+        ? rawLines.slice(0, -1)
+        : rawLines;
+
+    const baseTs = timestamp || new Date().toISOString();
+    const entries: NodeLogEntry[] = validLines.map((line) => ({
+      timestamp: baseTs,
       stream,
-      message,
-    };
+      message: line,
+    }));
+
     set({
       nodes: get().nodes.map((node) => {
         const stepId = (node.data as { stepId?: string })?.stepId;
@@ -236,7 +244,7 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
             ...node,
             data: {
               ...node.data,
-              logs: [...existingLogs, entry],
+              logs: [...existingLogs, ...entries],
             } as FactoryNodeData,
           };
         }

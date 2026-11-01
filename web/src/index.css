@@ -1575,6 +1575,11 @@ body,
 
 .log-stream-tag {
   font-size: 0.62rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
 /* Git Diff Viewer */
 .diff-container {
   background: #020617;
@@ -2093,11 +2098,6 @@ body,
   background: #059669;
 }
 
-  padding: 0.05rem 0.3rem;
-  border-radius: 3px;
-  font-weight: 600;
-}
-
 .stream-stdout {
   background: rgba(56, 189, 248, 0.15);
   color: #38bdf8;
@@ -2111,6 +2111,261 @@ body,
 .log-message {
   color: #e2e8f0;
   word-break: break-all;
+}
+
+/* Interactive LogViewer Styles */
+.log-viewer-container {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  height: 100%;
+  gap: 0.5rem;
+}
+
+.log-viewer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.log-stream-tabs {
+  display: flex;
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.log-tab-btn {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  font-size: 0.7rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.log-tab-btn:hover {
+  color: #cbd5e1;
+}
+
+.log-tab-btn.active {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.log-tab-btn.stream-stdout-tab.active {
+  color: #38bdf8;
+}
+
+.log-tab-btn.stream-stderr-tab.active {
+  color: #f87171;
+}
+
+.log-tab-count {
+  font-size: 0.65rem;
+  opacity: 0.8;
+}
+
+.log-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.log-action-btn {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  color: #94a3b8;
+  font-size: 0.7rem;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 0.15s ease;
+}
+
+.log-action-btn:hover {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.log-clear-action-btn:hover {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.log-search-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.log-search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.log-search-icon {
+  position: absolute;
+  left: 0.5rem;
+  color: #475569;
+  pointer-events: none;
+}
+
+.log-search-input {
+  width: 100%;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 5px;
+  padding: 0.25rem 1.6rem 0.25rem 1.8rem;
+  font-size: 0.72rem;
+  color: #e2e8f0;
+  outline: none;
+}
+
+.log-search-input:focus {
+  border-color: #38bdf8;
+}
+
+.log-search-clear-btn {
+  position: absolute;
+  right: 0.4rem;
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.log-search-clear-btn:hover {
+  color: #f8fafc;
+}
+
+.log-match-counter {
+  font-size: 0.68rem;
+  color: #38bdf8;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.log-timestamp {
+  color: #475569;
+  font-size: 0.65rem;
+  user-select: none;
+}
+
+.log-jump-bottom-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  background: #0284c7;
+  color: #ffffff;
+  border: none;
+  border-radius: 20px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: all 0.15s ease;
+  z-index: 10;
+}
+
+.log-jump-bottom-btn:hover {
+  background: #0369a1;
+  transform: translateY(-1px);
+}
+
+.log-unread-badge {
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.05rem 0.35rem;
+  border-radius: 10px;
+}
+
+.logs-no-filter-match {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+/* ANSI Sequence Styling Classes */
+.ansi-bold { font-weight: 700; }
+.ansi-dim { opacity: 0.65; }
+.ansi-italic { font-style: italic; }
+.ansi-underline { text-decoration: underline; }
+
+/* Foreground colors */
+.ansi-fg-black { color: #475569; }
+.ansi-fg-red { color: #f87171; }
+.ansi-fg-green { color: #4ade80; }
+.ansi-fg-yellow { color: #facc15; }
+.ansi-fg-blue { color: #60a5fa; }
+.ansi-fg-magenta { color: #c084fc; }
+.ansi-fg-cyan { color: #38bdf8; }
+.ansi-fg-white { color: #f8fafc; }
+
+/* Bright foreground colors */
+.ansi-fg-bright-black { color: #64748b; }
+.ansi-fg-bright-red { color: #ef4444; }
+.ansi-fg-bright-green { color: #22c55e; }
+.ansi-fg-bright-yellow { color: #eab308; }
+.ansi-fg-bright-blue { color: #3b82f6; }
+.ansi-fg-bright-magenta { color: #a855f7; }
+.ansi-fg-bright-cyan { color: #06b6d4; }
+.ansi-fg-bright-white { color: #ffffff; }
+
+/* Background colors */
+.ansi-bg-black { background-color: #0f172a; }
+.ansi-bg-red { background-color: rgba(239, 68, 68, 0.3); }
+.ansi-bg-green { background-color: rgba(34, 197, 94, 0.3); }
+.ansi-bg-yellow { background-color: rgba(234, 179, 8, 0.3); }
+.ansi-bg-blue { background-color: rgba(59, 130, 246, 0.3); }
+.ansi-bg-magenta { background-color: rgba(168, 85, 247, 0.3); }
+.ansi-bg-cyan { background-color: rgba(6, 182, 212, 0.3); }
+.ansi-bg-white { background-color: rgba(248, 250, 252, 0.3); }
+
+/* Bright background colors */
+.ansi-bg-bright-black { background-color: #1e293b; }
+.ansi-bg-bright-red { background-color: rgba(239, 68, 68, 0.45); }
+.ansi-bg-bright-green { background-color: rgba(34, 197, 94, 0.45); }
+.ansi-bg-bright-yellow { background-color: rgba(234, 179, 8, 0.45); }
+.ansi-bg-bright-blue { background-color: rgba(59, 130, 246, 0.45); }
+.ansi-bg-bright-magenta { background-color: rgba(168, 85, 247, 0.45); }
+.ansi-bg-bright-cyan { background-color: rgba(6, 182, 212, 0.45); }
+.ansi-bg-bright-white { background-color: rgba(255, 255, 255, 0.45); }
+
+/* Search Match Highlight */
+.log-search-match {
+  background-color: #fbbf24;
+  color: #020617;
+  font-weight: 700;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .logs-empty-state,

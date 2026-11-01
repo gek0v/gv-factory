@@ -55,6 +55,30 @@ describe('dispatchGatewayEvent for logs, spans, and run lifecycle', () => {
     expect(node?.data.logs?.[1].stream).toBe('stderr');
   });
 
+  it('handles ov.worker.logs and worker.logs with multiline chunks', () => {
+    const targetNode = useFactoryFlowStore.getState().nodes[0];
+    expect(targetNode).toBeTruthy();
+
+    const workerLogEvent: GatewayEvent = {
+      type: 'ov.worker.logs',
+      task_id: targetNode.id,
+      payload: {
+        run_id: 'run-101',
+        stream: 'stdout',
+        chunk: '\x1b[32m[PASS]\x1b[0m test_worker_pool\n\x1b[31m[FAIL]\x1b[0m test_timeout\n',
+        timestamp: '2026-11-02T10:05:00Z',
+      },
+    };
+
+    dispatchGatewayEvent(workerLogEvent, useFactoryFlowStore.getState());
+
+    const node = useFactoryFlowStore.getState().nodes.find((n) => n.id === targetNode.id);
+    expect(node?.data.logs?.length).toBe(2);
+    expect(node?.data.logs?.[0].message).toBe('\x1b[32m[PASS]\x1b[0m test_worker_pool');
+    expect(node?.data.logs?.[0].stream).toBe('stdout');
+    expect(node?.data.logs?.[1].message).toBe('\x1b[31m[FAIL]\x1b[0m test_timeout');
+  });
+
   it('handles ov.task.span and task.span updating node telemetry with duration and tokens', () => {
     const targetNode = useFactoryFlowStore.getState().nodes[0];
     expect(targetNode).toBeTruthy();

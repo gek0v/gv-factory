@@ -142,6 +142,21 @@ describe('useFactoryFlowStore', () => {
     expect(updatedNode?.data.logs?.[1].timestamp).toBe('2026-11-01T12:00:00Z');
   });
 
+  it('appendNodeLog splits multiline chunk messages into individual log entries', () => {
+    const firstNode = useFactoryFlowStore.getState().nodes[0];
+    expect(firstNode).toBeTruthy();
+
+    useFactoryFlowStore.getState().clearNodeLogs(firstNode.id);
+    const chunk = 'Line 1: building module\nLine 2: downloading crates\r\nLine 3: finished\n';
+    useFactoryFlowStore.getState().appendNodeLog(firstNode.id, 'stdout', chunk, '2026-11-02T10:00:00Z');
+
+    const updatedNode = useFactoryFlowStore.getState().nodes.find((n) => n.id === firstNode.id);
+    expect(updatedNode?.data.logs?.length).toBe(3);
+    expect(updatedNode?.data.logs?.[0].message).toBe('Line 1: building module');
+    expect(updatedNode?.data.logs?.[1].message).toBe('Line 2: downloading crates');
+    expect(updatedNode?.data.logs?.[2].message).toBe('Line 3: finished');
+  });
+
   it('updateNodeTelemetry updates durations, tokens, and outputs', () => {
     const firstNode = useFactoryFlowStore.getState().nodes[0];
     expect(firstNode).toBeTruthy();
