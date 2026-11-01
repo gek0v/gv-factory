@@ -140,6 +140,7 @@ brews:
       name: homebrew-tap
       branch: main
     directory: Formula
+    skip_upload: auto
     homepage: "https://github.com/gek0v/gv-factory"
     description: "Official developer CLI and workflow runner for OV-Factory"
     license: "Apache-2.0"
