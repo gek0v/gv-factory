@@ -7,7 +7,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Enable Corepack to manage pnpm deterministically
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 # Leverage caching for package dependencies
 COPY web/package.json web/pnpm-lock.yaml ./

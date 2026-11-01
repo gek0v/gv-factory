@@ -5,6 +5,7 @@ package version
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -97,5 +98,91 @@ func TestDependencyVulnerabilitiesGoMod(t *testing.T) {
 	// Verificar que no sea v0.21.0 y sea >= v0.34.0 (versión no vulnerable a GO-2026-6629 compatible con Go 1.24)
 	if version == "0.21.0" || strings.Compare(version, "0.34.0") < 0 {
 		t.Errorf("golang.org/x/text en versión vulnerable %s (GO-2026-6629). Se requiere >= v0.34.0", version)
+	}
+}
+
+// TestDockerfileWebPnpmPinning valida que Dockerfile.web no utilice pnpm@latest
+// y que web/package.json defina packageManager fijado a pnpm v9.
+func TestDockerfileWebPnpmPinning(t *testing.T) {
+	// 1. Validar build/package/Dockerfile.web
+	dockerfilePath := filepath.Join("..", "..", "build", "package", "Dockerfile.web")
+	dockerfileBytes, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("error leyendo Dockerfile.web en %q: %v", dockerfilePath, err)
+	}
+	dockerfileContent := string(dockerfileBytes)
+
+	if strings.Contains(dockerfileContent, "pnpm@latest") {
+		t.Errorf("Dockerfile.web no debe utilizar 'pnpm@latest'; causa rotura con lockfile v9.0")
+	}
+
+	pnpm9Regex := regexp.MustCompile(`pnpm@9(?:\.[0-9]+(?:\.[0-9]+)?)?`)
+	if !pnpm9Regex.MatchString(dockerfileContent) {
+		t.Errorf("Dockerfile.web debe fijar explícitamente una versión pnpm v9 (ej. pnpm@9.15.4 o pnpm@9)")
+	}
+
+	// 2. Validar web/package.json
+	pkgJSONPath := filepath.Join("..", "..", "web", "package.json")
+	pkgJSONBytes, err := os.ReadFile(pkgJSONPath)
+	if err != nil {
+		t.Fatalf("error leyendo web/package.json en %q: %v", pkgJSONPath, err)
+	}
+
+	var pkgMeta struct {
+		PackageManager string `json:"packageManager"`
+	}
+	if err := json.Unmarshal(pkgJSONBytes, &pkgMeta); err != nil {
+		t.Fatalf("error deserializando web/package.json: %v", err)
+	}
+
+	if pkgMeta.PackageManager == "" {
+		t.Errorf("web/package.json debe definir el campo 'packageManager'")
+	} else if !strings.HasPrefix(pkgMeta.PackageManager, "pnpm@9") {
+		t.Errorf("web/package.json 'packageManager' esperado iniciando con 'pnpm@9', obtenido: %q", pkgMeta.PackageManager)
+	}
+}
+
+// TestReleaseWorkflowAttestProvenanceResilience valida que el paso de atestación SLSA
+// en .github/workflows/release.yml contenga 'continue-on-error: true' para soportar
+// repositorios privados no-Enterprise.
+func TestReleaseWorkflowAttestProvenanceResilience(t *testing.T) {
+	workflowPath := filepath.Join("..", "..", ".github", "workflows", "release.yml")
+	workflowBytes, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("error leyendo release.yml en %q: %v", workflowPath, err)
+	}
+	content := string(workflowBytes)
+
+	if !strings.Contains(content, "actions/attest-build-provenance@v2") {
+		t.Fatalf("release.yml no referencia actions/attest-build-provenance@v2")
+	}
+
+	// Verificar que el bloque de attest-build-provenance tenga continue-on-error: true
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	inAttestStep := false
+	hasContinueOnError := false
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "- name:") && strings.Contains(line, "Attest Build Provenance") {
+			inAttestStep = true
+			continue
+		}
+
+		if inAttestStep {
+			if strings.HasPrefix(trimmed, "- name:") {
+				// Inicio del siguiente paso
+				break
+			}
+			if strings.HasPrefix(trimmed, "continue-on-error:") && strings.Contains(trimmed, "true") {
+				hasContinueOnError = true
+			}
+		}
+	}
+
+	if !hasContinueOnError {
+		t.Errorf("release.yml: el paso 'Attest Build Provenance (SLSA Level 3)' debe tener 'continue-on-error: true' para evitar abortos en repositorios de usuario")
 	}
 }
