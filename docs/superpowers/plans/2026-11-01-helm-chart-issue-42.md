@@ -18,8 +18,10 @@ SPDX-FileCopyrightText: 2026 gv-factory contributors
 ## Global Constraints
 
 - Every new file (`.yaml`, `.tpl`, `.go`) must start with the REUSE SPDX Apache-2.0 header:
-  `# SPDX-License-Identifier: Apache-2.0`
-  `# SPDX-FileCopyrightText: 2026 gv-factory contributors`
+  ```yaml
+  # SPDX-License-Identifier: Apache-2.0
+  # SPDX-FileCopyrightText: 2026 gv-factory contributors
+  ```
 - Line endings must be LF across all created files.
 - YAML files must use 2-space indentation.
 - Standard Kubernetes UID `10001` and GID `10001` for all non-root container workloads.
