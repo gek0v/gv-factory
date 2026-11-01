@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+# Patterns to ignore when packaging a chart.
+.DS_Store
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+
+.project
+.idea/
+.vscode/
+
+*.go
+*_test.go

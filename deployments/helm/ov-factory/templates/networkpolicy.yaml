@@ -1,0 +1,189 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-default-deny
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "ov-factory.name" . }}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-server-netpol
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ov-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress controller and web proxy
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: web
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.server.service.port }}
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow Postgres
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    # Allow NATS
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: nats
+      ports:
+        - protocol: TCP
+          port: {{ .Values.nats.service.clientPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-worker-netpol
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ov-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Health checks
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.worker.service.port }}
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow Postgres
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+    # Allow NATS
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: nats
+      ports:
+        - protocol: TCP
+          port: {{ .Values.nats.service.clientPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-postgres-netpol
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ov-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: server
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: hatchet
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgres.service.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-nats-netpol
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ov-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: server
+        - podSelector:
+            matchLabels:
+              {{- include "ov-factory.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: {{ .Values.nats.service.clientPort }}
+{{- end }}

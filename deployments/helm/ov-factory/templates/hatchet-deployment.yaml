@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if .Values.hatchet.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-hatchet
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hatchet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ov-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: hatchet
+  template:
+    metadata:
+      labels:
+        {{- include "ov-factory.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: hatchet
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: hatchet
+          image: "{{ if .Values.global.imageRegistry }}{{ .Values.global.imageRegistry }}/{{ end }}{{ .Values.hatchet.image.repository }}:{{ .Values.hatchet.image.tag }}"
+          imagePullPolicy: {{ .Values.hatchet.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.hatchet.service.port }}
+              protocol: TCP
+          env:
+            - name: SERVER_ENCRYPTION_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-secrets" (include "ov-factory.fullname" .)) .Values.secret.existingSecret }}
+                  key: HATCHET_JWT_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ov-factory.fullname" . }}-config
+                  key: DATABASE_URL
+          resources:
+            {{- toYaml .Values.hatchet.resources | nindent 12 }}
+{{- end }}
