@@ -180,6 +180,12 @@ func (q *Queue) SimulateMergeTree(ctx context.Context, repoPath, targetBranch, s
 	var err error
 	if baseErr == nil && base != "" {
 		out, err = q.git.Run(ctx, repoPath, "merge-tree", "--write-tree", "--merge-base="+base, targetBranch, sourceBranch)
+		// Git < 2.43 does not support --merge-base with git merge-tree and fails with an unknown option error.
+		// In this case, fall back gracefully to git merge-tree --write-tree targetBranch sourceBranch,
+		// where Git automatically determines the common merge base.
+		if err != nil && isUnknownOption(out, err, "merge-base") {
+			out, err = q.git.Run(ctx, repoPath, "merge-tree", "--write-tree", targetBranch, sourceBranch)
+		}
 	} else {
 		out, err = q.git.Run(ctx, repoPath, "merge-tree", "--write-tree", targetBranch, sourceBranch)
 	}
@@ -201,6 +207,20 @@ func (q *Queue) SimulateMergeTree(ctx context.Context, repoPath, targetBranch, s
 		ConflictFiles: conflicts,
 		RawOutput:     out,
 	}
+}
+
+// isUnknownOption checks whether the output or error string indicates that Git rejected an unrecognized option.
+func isUnknownOption(output string, err error, option string) bool {
+	combined := output
+	if err != nil {
+		combined += " " + err.Error()
+	}
+	lower := strings.ToLower(combined)
+	optLower := strings.ToLower(option)
+	hasUnknown := strings.Contains(lower, "unknown option") ||
+		strings.Contains(lower, "unrecognized option") ||
+		strings.Contains(lower, "unknown switch")
+	return hasUnknown && strings.Contains(lower, optLower)
 }
 
 // parseConflicts extracts conflicted file paths from git merge-tree output.
