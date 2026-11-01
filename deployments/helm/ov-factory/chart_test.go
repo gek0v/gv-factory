@@ -236,6 +236,54 @@ func TestPersistenceAndMessagingManifests(t *testing.T) {
 	}
 }
 
+func TestIngressAndNetworkPolicyManifests(t *testing.T) {
+	requiredFiles := []struct {
+		path     string
+		patterns []string
+	}{
+		{
+			path:     filepath.Join(".", "templates", "ingress.yaml"),
+			patterns: []string{"kind: Ingress", "ingress.annotations", "paths:", "path: {{ .path }}"},
+		},
+		{
+			path:     filepath.Join(".", "values.yaml"),
+			patterns: []string{"proxy-buffering", "path: /api", "path: /events", "path: /"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "networkpolicy.yaml"),
+			patterns: []string{"kind: NetworkPolicy", "policyTypes:", "- Ingress", "- Egress", "postgres", "nats"},
+		},
+	}
+
+	for _, req := range requiredFiles {
+		data, err := os.ReadFile(req.path)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", req.path, err)
+		}
+		content := string(data)
+		for _, pat := range req.patterns {
+			if !strings.Contains(content, pat) {
+				t.Errorf("File %s missing expected pattern %q", req.path, pat)
+			}
+		}
+	}
+
+	// Verify Makefile integration
+	makefilePath := filepath.Join("..", "..", "..", "Makefile")
+	makeData, err := os.ReadFile(makefilePath)
+	if err != nil {
+		t.Fatalf("Failed to read Makefile: %v", err)
+	}
+	makeContent := string(makeData)
+	if !strings.Contains(makeContent, "helm-lint:") {
+		t.Errorf("Makefile missing 'helm-lint:' target")
+	}
+	if !strings.Contains(makeContent, "helm-template:") {
+		t.Errorf("Makefile missing 'helm-template:' target")
+	}
+}
+
+
 
 
 

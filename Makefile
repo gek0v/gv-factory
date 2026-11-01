@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 gv-factory contributors
 
-.PHONY: all build test lint dev clean web-install web-build compose-up compose-down compose-check
+.PHONY: all build test lint dev clean web-install web-build compose-up compose-down compose-check helm-lint helm-template
 
 BIN_DIR := bin
 
@@ -48,4 +48,12 @@ web-install:
 web-build:
 	@echo "==> Building frontend SPA..."
 	@cd web && pnpm build
+
+helm-lint:
+	@echo "==> Linting Helm chart..."
+	@which helm > /dev/null 2>&1 && helm lint deployments/helm/ov-factory || go test -v ./deployments/helm/ov-factory/...
+
+helm-template:
+	@echo "==> Rendering Helm templates..."
+	@which helm > /dev/null 2>&1 && helm template ov-factory deployments/helm/ov-factory || go test -v ./deployments/helm/ov-factory/...
 
