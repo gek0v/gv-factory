@@ -70,7 +70,11 @@ func main() {
 	_ = sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
 	_ = plugins.NewHost()
 	gw := gateway.NewGateway()
-	_ = auth.NewService("secret-key")
+	authSecret := os.Getenv("AUTH_SECRET_KEY")
+	if authSecret == "" {
+		authSecret = "factory-default-secret-key-change-in-production"
+	}
+	authSvc := auth.NewService(authSecret)
 
 	webhookIngestor := inbound.NewIngestor(inbound.Config{
 		GitHubSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
@@ -122,7 +126,7 @@ func main() {
 		log.Printf("Telemetry subsystem initialized (status: %s)", tel.Status())
 	}
 
-	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, tel)
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, authSvc, tel)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,

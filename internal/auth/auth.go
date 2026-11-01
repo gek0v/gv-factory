@@ -15,14 +15,27 @@ import (
 
 // Service provides authentication and cryptographic verification for gate approvals.
 type Service struct {
-	secretKey []byte
+	secretKey   []byte
+	auditLogger AuditLogger
 }
 
 // NewService constructs an Auth service with the provided signing key.
-func NewService(secret string) *Service {
-	return &Service{
-		secretKey: []byte(secret),
+func NewService(secret string, auditLoggers ...AuditLogger) *Service {
+	var al AuditLogger
+	if len(auditLoggers) > 0 && auditLoggers[0] != nil {
+		al = auditLoggers[0]
+	} else {
+		al = NewMemoryAuditLogger(1000)
 	}
+	return &Service{
+		secretKey:   []byte(secret),
+		auditLogger: al,
+	}
+}
+
+// AuditLogger returns the configured audit logger instance.
+func (s *Service) AuditLogger() AuditLogger {
+	return s.auditLogger
 }
 
 // GenerateApprovalToken generates an opaque HMAC-signed token for Human-in-the-Loop approval.
