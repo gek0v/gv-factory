@@ -8,6 +8,14 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.2.0](https://github.com/gek0v/gv-factory/compare/v1.1.0...v1.2.0) (2026-11-01)
+
+
+### Features
+
+* **store:** implement PostgreSQL persistence repository and schema migrations ([#81](https://github.com/gek0v/gv-factory/issues/81)) ([#83](https://github.com/gek0v/gv-factory/issues/83)) ([39df588](https://github.com/gek0v/gv-factory/commit/39df588a35dd109989c024bc8173df70b406e963))
+* **worker:** implement distributed task queue consumer and NATS JetStream worker ([#82](https://github.com/gek0v/gv-factory/issues/82)) ([#84](https://github.com/gek0v/gv-factory/issues/84)) ([64fe03a](https://github.com/gek0v/gv-factory/commit/64fe03a8c86413fa89d04614435f85f372372f51))
+
 ## [1.1.0](https://github.com/gek0v/gv-factory/compare/v1.0.0...v1.1.0) (2026-11-01)
 
 
