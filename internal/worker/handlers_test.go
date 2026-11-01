@@ -4,9 +4,11 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -521,6 +523,78 @@ func TestGitSandboxHandler_CommandFailure_ExitCode(t *testing.T) {
 	if res.Data["exit_code"] != 1 {
 		t.Fatalf("expected exit_code 1, got %v", res.Data["exit_code"])
 	}
+}
+
+func TestGitSandboxHandler_RuntimeMetadataEnrichment(t *testing.T) {
+	mgr := &mockSandboxManager{worktreePath: "/tmp/wt"}
+	exec := &mockStreamingExecutor{
+		executeStreamFunc: func(ctx context.Context, dir, name string, args, env []string, stdout, stderr io.Writer) (int, error) {
+			_, _ = stdout.Write([]byte("container run completed\n"))
+			return 0, nil
+		},
+		metaFunc: func() map[string]any {
+			return map[string]any{
+				"sandbox_runtime": "oci",
+				"runtime_engine":  "podman",
+				"image":           "alpine:3.20",
+				"resource_limits": map[string]any{
+					"cpu_limit": "2.0",
+				},
+			}
+		},
+	}
+
+	handler := NewGitSandboxHandler(mgr, WithCommandExecutor(exec))
+	payload, _ := json.Marshal(GitSandboxPayload{
+		Command: "echo",
+		Args:    []string{"hello"},
+	})
+	task := &TaskMessage{
+		TaskID:   "t-meta",
+		RunID:    "r-meta",
+		StepID:   "s-meta",
+		TaskType: TaskTypeGitSandbox,
+		Payload:  payload,
+	}
+
+	res, err := handler.HandleTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Data["sandbox_runtime"] != "oci" {
+		t.Errorf("expected sandbox_runtime oci, got %v", res.Data["sandbox_runtime"])
+	}
+	if res.Data["runtime_engine"] != "podman" {
+		t.Errorf("expected runtime_engine podman, got %v", res.Data["runtime_engine"])
+	}
+	if res.Data["image"] != "alpine:3.20" {
+		t.Errorf("expected image alpine:3.20, got %v", res.Data["image"])
+	}
+}
+
+type mockStreamingExecutor struct {
+	executeStreamFunc func(ctx context.Context, dir, name string, args, env []string, stdout, stderr io.Writer) (int, error)
+	metaFunc          func() map[string]any
+}
+
+func (m *mockStreamingExecutor) ExecuteCommand(ctx context.Context, dir string, name string, args []string, env []string) (string, string, int, error) {
+	var out, errOut bytes.Buffer
+	code, err := m.ExecuteCommandStreaming(ctx, dir, name, args, env, &out, &errOut)
+	return out.String(), errOut.String(), code, err
+}
+
+func (m *mockStreamingExecutor) ExecuteCommandStreaming(ctx context.Context, dir string, name string, args []string, env []string, stdoutWriter io.Writer, stderrWriter io.Writer) (int, error) {
+	if m.executeStreamFunc != nil {
+		return m.executeStreamFunc(ctx, dir, name, args, env, stdoutWriter, stderrWriter)
+	}
+	return 0, nil
+}
+
+func (m *mockStreamingExecutor) GetRuntimeMetadata() map[string]any {
+	if m.metaFunc != nil {
+		return m.metaFunc()
+	}
+	return nil
 }
 
 func TestGitSandboxHandler_TransientLock_Retryable(t *testing.T) {

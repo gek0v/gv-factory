@@ -54,6 +54,11 @@ type StreamingCommandExecutor interface {
 	) (exitCode int, err error)
 }
 
+// RuntimeMetadataProvider optionally exposes execution engine details for task result metadata.
+type RuntimeMetadataProvider interface {
+	GetRuntimeMetadata() map[string]any
+}
+
 // DefaultCommandExecutor executes commands via standard OS subprocesses.
 type DefaultCommandExecutor struct{}
 
@@ -510,6 +515,16 @@ func (h *GitSandboxHandler) HandleTask(ctx context.Context, task *TaskMessage) (
 		},
 	}
 
+	// Populate runtime metadata (oci/host, engine, cgroups limits)
+	if metaProv, ok := h.executor.(RuntimeMetadataProvider); ok {
+		for k, v := range metaProv.GetRuntimeMetadata() {
+			res.Data[k] = v
+		}
+	} else {
+		res.Data["sandbox_runtime"] = "host"
+		res.Data["runtime_engine"] = "host"
+	}
+
 	if !success {
 		errMsg := stderr
 		if errMsg == "" && cmdErr != nil {
@@ -526,6 +541,7 @@ type AgentStepConfig struct {
 	Caller    WasmCaller
 	Sandbox   SandboxManager
 	Executor  AgentStepExecutor
+	Command   CommandExecutor
 	Publisher EventPublisher
 	WorkerID  string
 }
@@ -595,7 +611,7 @@ func (h *AgentStepHandler) HandleTask(ctx context.Context, task *TaskMessage) (*
 		_ = chunker.Flush()
 	}
 
-	return &TaskResult{
+	res := &TaskResult{
 		Success: true,
 		Output:  output,
 		Data: map[string]any{
@@ -604,7 +620,20 @@ func (h *AgentStepHandler) HandleTask(ctx context.Context, task *TaskMessage) (*
 			"action":    action,
 			"context":   payload.Context,
 		},
-	}, nil
+	}
+
+	if h.cfg.Command != nil {
+		if metaProv, ok := h.cfg.Command.(RuntimeMetadataProvider); ok {
+			for k, v := range metaProv.GetRuntimeMetadata() {
+				res.Data[k] = v
+			}
+		} else {
+			res.Data["sandbox_runtime"] = "host"
+			res.Data["runtime_engine"] = "host"
+		}
+	}
+
+	return res, nil
 }
 
 func isTransientGitError(err error) bool {
