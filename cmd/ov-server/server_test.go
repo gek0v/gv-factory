@@ -1,0 +1,504 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gv-factory/gv-factory/internal/dag"
+	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/pkg/schema"
+)
+
+type mockOrchestrator struct {
+	mu        sync.RWMutex
+	runs      map[string]*dag.FactoryRun
+	submitErr error
+	cancelErr error
+}
+
+func newMockOrchestrator() *mockOrchestrator {
+	return &mockOrchestrator{
+		runs: make(map[string]*dag.FactoryRun),
+	}
+}
+
+func (m *mockOrchestrator) SubmitRun(ctx context.Context, req dag.RunRequest) (*dag.FactoryRun, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.submitErr != nil {
+		return nil, m.submitErr
+	}
+
+	if _, exists := m.runs[req.RunID]; exists {
+		return nil, fmt.Errorf("run %q already exists", req.RunID)
+	}
+
+	run := &dag.FactoryRun{
+		ID:           req.RunID,
+		TemplateName: req.Template.Metadata.Name,
+		Branch:       req.Branch,
+		State:        dag.FactoryRunStateQueued,
+		TotalSteps:   len(req.Template.Spec.Steps),
+		QueuedAt:     time.Now(),
+		RepoPath:     req.RepoPath,
+		Labels:       req.Labels,
+	}
+
+	m.runs[req.RunID] = run
+	return run, nil
+}
+
+func (m *mockOrchestrator) ListRuns() []*dag.FactoryRun {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	runs := make([]*dag.FactoryRun, 0, len(m.runs))
+	for _, r := range m.runs {
+		copied := *r
+		runs = append(runs, &copied)
+	}
+	return runs
+}
+
+func (m *mockOrchestrator) GetRun(runID string) (*dag.FactoryRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	r, exists := m.runs[runID]
+	if !exists {
+		return nil, dag.ErrRunNotFound
+	}
+
+	copied := *r
+	return &copied, nil
+}
+
+func (m *mockOrchestrator) CancelRun(runID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.cancelErr != nil {
+		return m.cancelErr
+	}
+
+	r, exists := m.runs[runID]
+	if !exists {
+		return dag.ErrRunNotFound
+	}
+
+	r.State = dag.FactoryRunStateCancelled
+	return nil
+}
+
+func validTestTemplate() *schema.FactoryTemplate {
+	return &schema.FactoryTemplate{
+		APIVersion: "factory.ov.io/v1alpha1",
+		Kind:       "FactoryTemplate",
+		Metadata: schema.Metadata{
+			Name: "test-pipeline",
+		},
+		Spec: schema.FactorySpec{
+			Entrypoint: "step-1",
+			Steps: []schema.StepConfig{
+				{
+					ID:     "step-1",
+					Name:   "Trigger",
+					Plugin: "extism://plugins/ingest.wasm",
+				},
+				{
+					ID:        "step-2",
+					Name:      "Build",
+					Plugin:    "extism://plugins/builder.wasm",
+					DependsOn: []string{"step-1"},
+				},
+			},
+		},
+	}
+}
+
+func cyclicTestTemplate() *schema.FactoryTemplate {
+	return &schema.FactoryTemplate{
+		APIVersion: "factory.ov.io/v1alpha1",
+		Kind:       "FactoryTemplate",
+		Metadata: schema.Metadata{
+			Name: "cyclic-pipeline",
+		},
+		Spec: schema.FactorySpec{
+			Entrypoint: "step-1",
+			Steps: []schema.StepConfig{
+				{
+					ID:        "step-1",
+					Name:      "Step 1",
+					Plugin:    "extism://plugins/step1.wasm",
+					DependsOn: []string{"step-2"},
+				},
+				{
+					ID:        "step-2",
+					Name:      "Step 2",
+					Plugin:    "extism://plugins/step2.wasm",
+					DependsOn: []string{"step-1"},
+				},
+			},
+		},
+	}
+}
+
+func setupAPITestServer(t *testing.T, orch PipelineOrchestrator) (http.Handler, *gateway.Gateway) {
+	t.Helper()
+	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+	mux := NewServerMux(nil, gw, nil, nil, orch, nil)
+	return mux, gw
+}
+
+func TestServer_PipelineValidate(t *testing.T) {
+	orch := newMockOrchestrator()
+	mux, gw := setupAPITestServer(t, orch)
+	defer gw.Close()
+
+	t.Run("Valid FactoryTemplate returns valid:true", func(t *testing.T) {
+		reqBody := map[string]any{
+			"template": validTestTemplate(),
+		}
+		data, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines/validate", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if resp["valid"] != true {
+			t.Errorf("expected valid=true, got %v", resp["valid"])
+		}
+	})
+
+	t.Run("Cyclic FactoryTemplate returns valid:false with errors", func(t *testing.T) {
+		reqBody := map[string]any{
+			"template": cyclicTestTemplate(),
+		}
+		data, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines/validate", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if resp["valid"] != false {
+			t.Errorf("expected valid=false, got %v", resp["valid"])
+		}
+		errorsArr, ok := resp["errors"].([]any)
+		if !ok || len(errorsArr) == 0 {
+			t.Errorf("expected errors array, got %v", resp["errors"])
+		}
+	})
+
+	t.Run("Valid CanvasGraph returns valid:true", func(t *testing.T) {
+		cg, err := dag.TemplateToCanvas(validTestTemplate())
+		if err != nil {
+			t.Fatalf("failed to convert template to canvas: %v", err)
+		}
+
+		reqBody := map[string]any{
+			"canvas_graph": cg,
+		}
+		data, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines/validate", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if resp["valid"] != true {
+			t.Errorf("expected valid=true, got %v", resp["valid"])
+		}
+	})
+
+	t.Run("Empty payload returns 400 Bad Request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/pipelines/validate", bytes.NewReader([]byte("{}")))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Method Not Allowed on GET", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/pipelines/validate", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
+		}
+	})
+}
+
+func TestServer_RunsLifecycle(t *testing.T) {
+	orch := newMockOrchestrator()
+	mux, gw := setupAPITestServer(t, orch)
+	defer gw.Close()
+
+	var createdRunID string
+
+	t.Run("POST /api/v1/runs submits valid pipeline returning 201 Created", func(t *testing.T) {
+		reqBody := map[string]any{
+			"run_id":   "test-run-001",
+			"template": validTestTemplate(),
+			"repo_path": "/tmp/repo",
+			"branch":    "feat/test-001",
+		}
+		data, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created, got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		if resp["run_id"] != "test-run-001" {
+			t.Errorf("expected run_id test-run-001, got %v", resp["run_id"])
+		}
+		if resp["state"] != "QUEUED" {
+			t.Errorf("expected state QUEUED, got %v", resp["state"])
+		}
+
+		createdRunID = "test-run-001"
+	})
+
+	t.Run("POST /api/v1/runs with canvas_graph generates run", func(t *testing.T) {
+		cg, err := dag.TemplateToCanvas(validTestTemplate())
+		if err != nil {
+			t.Fatalf("failed to convert template to canvas: %v", err)
+		}
+
+		reqBody := map[string]any{
+			"canvas_graph": cg,
+		}
+		data, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201 Created, got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse JSON: %v", err)
+		}
+
+		runID, ok := resp["run_id"].(string)
+		if !ok || runID == "" {
+			t.Errorf("expected generated run_id, got %v", resp["run_id"])
+		}
+	})
+
+	t.Run("POST /api/v1/runs with cyclic DAG returns 400 Bad Request", func(t *testing.T) {
+		reqBody := map[string]any{
+			"template": cyclicTestTemplate(),
+		}
+		data, _ := json.Marshal(reqBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("POST /api/v1/runs with malformed JSON returns 400 Bad Request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs", bytes.NewReader([]byte("{invalid-json")))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request, got %d", rec.Code)
+		}
+	})
+
+	t.Run("GET /api/v1/runs lists active/recent runs", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var runs []*dag.FactoryRun
+		if err := json.Unmarshal(rec.Body.Bytes(), &runs); err != nil {
+			t.Fatalf("failed to decode runs array: %v", err)
+		}
+
+		if len(runs) < 2 {
+			t.Errorf("expected at least 2 runs, got %d", len(runs))
+		}
+	})
+
+	t.Run("GET /api/v1/runs/{id} returns run details", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/"+createdRunID, nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		var run dag.FactoryRun
+		if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+			t.Fatalf("failed to decode run JSON: %v", err)
+		}
+
+		if run.ID != createdRunID {
+			t.Errorf("expected run ID %q, got %q", createdRunID, run.ID)
+		}
+	})
+
+	t.Run("GET /api/v1/runs/{id} returns 404 for non-existent run", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/non-existent-id", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 Not Found, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/v1/runs/{id}/cancel cancels active run returning 200 OK", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+createdRunID+"/cancel", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		// Verify state cancelled
+		r, err := orch.GetRun(createdRunID)
+		if err != nil {
+			t.Fatalf("failed to get run: %v", err)
+		}
+		if r.State != dag.FactoryRunStateCancelled {
+			t.Errorf("expected run state CANCELLED, got %s", r.State)
+		}
+	})
+
+	t.Run("POST /api/v1/runs/{id}/cancel returns 404 for non-existent run", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/non-existent-id/cancel", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 Not Found, got %d", rec.Code)
+		}
+	})
+}
+
+func TestServer_CORS(t *testing.T) {
+	orch := newMockOrchestrator()
+	mux, gw := setupAPITestServer(t, orch)
+	defer gw.Close()
+
+	t.Run("OPTIONS preflight returns 204 with CORS headers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/runs", nil)
+		req.Header.Set("Origin", "http://localhost:5173")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected 204 No Content, got %d", rec.Code)
+		}
+
+		origin := rec.Header().Get("Access-Control-Allow-Origin")
+		if origin != "http://localhost:5173" {
+			t.Errorf("expected Access-Control-Allow-Origin http://localhost:5173, got %q", origin)
+		}
+
+		methods := rec.Header().Get("Access-Control-Allow-Methods")
+		if !bytes.Contains([]byte(methods), []byte("POST")) {
+			t.Errorf("expected POST in Allow-Methods, got %q", methods)
+		}
+	})
+
+	t.Run("Wildcard origin allowed for other origins", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req.Header.Set("Origin", "http://example.com")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		origin := rec.Header().Get("Access-Control-Allow-Origin")
+		if origin != "*" {
+			t.Errorf("expected Access-Control-Allow-Origin *, got %q", origin)
+		}
+	})
+}

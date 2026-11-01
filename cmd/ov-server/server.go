@@ -5,7 +5,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -15,9 +19,69 @@ import (
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/chat"
+	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
+	"github.com/gv-factory/gv-factory/pkg/schema"
 )
+
+// PipelineOrchestrator represents the subset of dag.MultiFactoryOrchestrator methods required by ov-server.
+type PipelineOrchestrator interface {
+	SubmitRun(ctx context.Context, req dag.RunRequest) (*dag.FactoryRun, error)
+	ListRuns() []*dag.FactoryRun
+	GetRun(runID string) (*dag.FactoryRun, error)
+	CancelRun(runID string) error
+}
+
+func generateRandomRunID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("run-%d", time.Now().UnixNano())
+	}
+	return "run-" + hex.EncodeToString(b[:])
+}
+
+// corsMiddleware adds CORS headers permitting frontend development and preflight OPTIONS.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "http://localhost:3000" || origin == "http://localhost:5173" || origin == "http://127.0.0.1:3000" || origin == "http://127.0.0.1:5173" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, traceparent, baggage")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Type, traceparent")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// APIValidateRequest represents the payload for POST /api/v1/pipelines/validate.
+type APIValidateRequest struct {
+	Template    *schema.FactoryTemplate `json:"template,omitempty"`
+	CanvasGraph *dag.CanvasGraph        `json:"canvas_graph,omitempty"`
+}
+
+// APIRunRequest represents the payload accepted by POST /api/v1/runs.
+type APIRunRequest struct {
+	RunID       string                  `json:"run_id,omitempty"`
+	Template    *schema.FactoryTemplate `json:"template,omitempty"`
+	CanvasGraph *dag.CanvasGraph        `json:"canvas_graph,omitempty"`
+	RepoPath    string                  `json:"repo_path,omitempty"`
+	Branch      string                  `json:"branch,omitempty"`
+	BaseBranch  string                  `json:"base_branch,omitempty"`
+	Priority    dag.Priority            `json:"priority,omitempty"`
+	MaxMemoryMB int                     `json:"max_memory_mb,omitempty"`
+	Labels      map[string]string       `json:"labels,omitempty"`
+}
 
 // getClientIP extracts the client IP address from standard proxy headers or RemoteAddr.
 func getClientIP(r *http.Request) string {
@@ -41,6 +105,7 @@ func NewServerMux(
 	gw *gateway.Gateway,
 	webhookIngestor http.Handler,
 	chatHandler *chat.ChatHandler,
+	orchestrator PipelineOrchestrator,
 	authSvc *auth.Service,
 	tel ...*telemetry.Telemetry,
 ) http.Handler {
@@ -269,9 +334,249 @@ func NewServerMux(
 		})
 	})
 
-	var handler http.Handler = mux
+	// Pipeline validation endpoint (/api/v1/pipelines/validate)
+	mux.HandleFunc("/api/v1/pipelines/validate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req APIValidateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"valid":  false,
+				"errors": []string{fmt.Sprintf("invalid JSON payload: %v", err)},
+			})
+			return
+		}
+
+		var targetTpl *schema.FactoryTemplate
+		if req.Template != nil {
+			targetTpl = req.Template
+		} else if req.CanvasGraph != nil {
+			var err error
+			targetTpl, err = dag.CanvasToTemplate(req.CanvasGraph)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"valid":  false,
+					"errors": []string{fmt.Sprintf("failed to convert canvas to template: %v", err)},
+				})
+				return
+			}
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"valid":  false,
+				"errors": []string{"either 'template' or 'canvas_graph' must be provided"},
+			})
+			return
+		}
+
+		issues, err := dag.ValidateTemplate(targetTpl)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err != nil || len(issues) > 0 {
+			if len(issues) == 0 && err != nil {
+				issues = []string{err.Error()}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"valid":  false,
+				"errors": issues,
+			})
+			return
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"valid": true,
+		})
+	})
+
+	// Runs endpoints (/api/v1/runs and /api/v1/runs/)
+	mux.HandleFunc("/api/v1/runs", func(w http.ResponseWriter, r *http.Request) {
+		if orchestrator == nil {
+			http.Error(w, "Orchestrator not initialized", http.StatusServiceUnavailable)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			runs := orchestrator.ListRuns()
+			if runs == nil {
+				runs = []*dag.FactoryRun{}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(runs)
+
+		case http.MethodPost:
+			var req APIRunRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf("invalid JSON payload: %v", err),
+				})
+				return
+			}
+
+			var targetTpl *schema.FactoryTemplate
+			if req.Template != nil {
+				targetTpl = req.Template
+			} else if req.CanvasGraph != nil {
+				var err error
+				targetTpl, err = dag.CanvasToTemplate(req.CanvasGraph)
+				if err != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"error": fmt.Sprintf("failed to convert canvas to template: %v", err),
+					})
+					return
+				}
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": "either 'template' or 'canvas_graph' must be provided",
+				})
+				return
+			}
+
+			// Validate acyclicity and integrity
+			if issues, err := dag.ValidateTemplate(targetTpl); err != nil || len(issues) > 0 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				errMsg := "template validation failed"
+				if len(issues) > 0 {
+					errMsg = strings.Join(issues, "; ")
+				} else if err != nil {
+					errMsg = err.Error()
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error":  errMsg,
+					"issues": issues,
+				})
+				return
+			}
+
+			runID := req.RunID
+			if runID == "" {
+				runID = generateRandomRunID()
+			}
+
+			runReq := dag.RunRequest{
+				RunID:       runID,
+				Template:    *targetTpl,
+				RepoPath:    req.RepoPath,
+				Branch:      req.Branch,
+				BaseBranch:  req.BaseBranch,
+				Priority:    req.Priority,
+				MaxMemoryMB: req.MaxMemoryMB,
+				Labels:      req.Labels,
+			}
+
+			run, err := orchestrator.SubmitRun(r.Context(), runReq)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"run_id": run.ID,
+				"state":  run.State,
+				"run":    run,
+			})
+
+		default:
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
+		if orchestrator == nil {
+			http.Error(w, "Orchestrator not initialized", http.StatusServiceUnavailable)
+			return
+		}
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+
+		if len(parts) == 0 || parts[0] == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		runID := parts[0]
+
+		if len(parts) == 1 {
+			// GET /api/v1/runs/{id}
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			run, err := orchestrator.GetRun(runID)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf("run %q not found", runID),
+				})
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(run)
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "cancel" {
+			// POST /api/v1/runs/{id}/cancel
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			if err := orchestrator.CancelRun(runID); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				if errors.Is(err, dag.ErrRunNotFound) {
+					w.WriteHeader(http.StatusNotFound)
+				} else {
+					w.WriteHeader(http.StatusBadRequest)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": err.Error(),
+				})
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"message": fmt.Sprintf("run %q cancelled", runID),
+			})
+			return
+		}
+
+		http.NotFound(w, r)
+	})
+
+	var handler http.Handler = corsMiddleware(mux)
 	if t != nil && t.Metrics != nil {
-		handler = telemetry.NewHTTPMiddleware(t.Metrics, t.Tracer)(mux)
+		handler = corsMiddleware(telemetry.NewHTTPMiddleware(t.Metrics, t.Tracer)(mux))
 	}
 
 	return handler
