@@ -130,14 +130,22 @@ export const NodeInspector: React.FC = () => {
               </div>
             )}
 
-            {nodeData.executionDurationMs !== undefined && (
+            {(nodeData.executionDurationMs !== undefined || nodeData.tokensUsed !== undefined) && (
               <div className="inspector-field">
                 <label className="inspector-label">Execution Telemetry</label>
                 <div className="telemetry-grid">
-                  <div className="telemetry-card">
-                    <span className="telemetry-label">Duration</span>
-                    <span className="telemetry-val">{(nodeData.executionDurationMs / 1000).toFixed(2)}s</span>
-                  </div>
+                  {nodeData.executionDurationMs !== undefined && (
+                    <div className="telemetry-card">
+                      <span className="telemetry-label">Duration</span>
+                      <span className="telemetry-val">{(nodeData.executionDurationMs / 1000).toFixed(2)}s</span>
+                    </div>
+                  )}
+                  {nodeData.tokensUsed !== undefined && (
+                    <div className="telemetry-card">
+                      <span className="telemetry-label">Tokens</span>
+                      <span className="telemetry-val">{nodeData.tokensUsed.toLocaleString()}</span>
+                    </div>
+                  )}
                   {nodeData.startedAt && (
                     <div className="telemetry-card">
                       <span className="telemetry-label">Started</span>

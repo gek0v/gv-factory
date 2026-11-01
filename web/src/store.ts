@@ -20,6 +20,8 @@ import type {
   GateApprovalPayload,
   GatewayConnectionStatus,
   NodeLogEntry,
+  NodeTelemetryUpdate,
+  RunLifecycleState,
 } from './types/flow';
 import { validateConnection } from './utils/validation';
 import { initialNodes, initialEdges } from './initialFlow';
@@ -34,6 +36,8 @@ export interface FactoryFlowState {
   gatewayStatus: GatewayConnectionStatus;
   activeApproval: GateApprovalPayload | null;
   showGateModal: boolean;
+  activeRunId: string | null;
+  activeRunState: RunLifecycleState | null;
   onNodesChange: OnNodesChange<Node<FactoryNodeData>>;
   onEdgesChange: OnEdgesChange;
   onConnect: (connection: Connection) => void;
@@ -45,18 +49,13 @@ export interface FactoryFlowState {
   deleteNode: (nodeId: string) => void;
   updateNodeData: (nodeId: string, data: Partial<FactoryNodeData>) => void;
   updateNodeStatus: (nodeId: string, status: ExecutionStatus) => void;
-  updateNodeTelemetry: (
+  updateNodeTelemetry: (nodeId: string, telemetry: NodeTelemetryUpdate) => void;
+  appendNodeLog: (
     nodeId: string,
-    telemetry: {
-      status?: ExecutionStatus;
-      executionDurationMs?: number;
-      startedAt?: string;
-      completedAt?: string;
-      output?: Record<string, unknown>;
-      errorMessage?: string;
-    }
+    stream: 'stdout' | 'stderr',
+    message: string,
+    timestamp?: string
   ) => void;
-  appendNodeLog: (nodeId: string, stream: 'stdout' | 'stderr', message: string) => void;
   clearNodeLogs: (nodeId: string) => void;
   setNodeGitDiff: (nodeId: string, diff: string) => void;
   setSelectedNodeId: (nodeId: string | null) => void;
@@ -64,6 +63,7 @@ export interface FactoryFlowState {
   setGatewayStatus: (status: GatewayConnectionStatus) => void;
   setActiveApproval: (approval: GateApprovalPayload | null) => void;
   setShowGateModal: (show: boolean) => void;
+  setActiveRun: (runId: string | null, state?: RunLifecycleState | null) => void;
   resolveApproval: (decision: 'APPROVE' | 'REJECT') => Promise<{ success: boolean; message: string }>;
   setNodes: (nodes: Node<FactoryNodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
@@ -77,6 +77,8 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   gatewayStatus: 'disconnected',
   activeApproval: null,
   showGateModal: false,
+  activeRunId: null,
+  activeRunState: null,
 
   onNodesChange: (changes) => {
     for (const change of changes) {
@@ -186,13 +188,17 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   updateNodeTelemetry: (nodeId, telemetry) => {
     set({
       nodes: get().nodes.map((node) => {
-        if (node.id === nodeId) {
+        const stepId = (node.data as { stepId?: string })?.stepId;
+        if (node.id === nodeId || (stepId && stepId === nodeId)) {
           return {
             ...node,
             data: {
               ...node.data,
               ...(telemetry.status ? { status: telemetry.status } : {}),
               ...(telemetry.executionDurationMs !== undefined ? { executionDurationMs: telemetry.executionDurationMs } : {}),
+              ...(telemetry.tokensUsed !== undefined ? { tokensUsed: telemetry.tokensUsed } : {}),
+              ...(telemetry.promptTokens !== undefined ? { promptTokens: telemetry.promptTokens } : {}),
+              ...(telemetry.completionTokens !== undefined ? { completionTokens: telemetry.completionTokens } : {}),
               ...(telemetry.startedAt ? { startedAt: telemetry.startedAt } : {}),
               ...(telemetry.completedAt ? { completedAt: telemetry.completedAt } : {}),
               ...(telemetry.output ? { output: telemetry.output } : {}),
@@ -205,15 +211,16 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
     });
   },
 
-  appendNodeLog: (nodeId, stream, message) => {
+  appendNodeLog: (nodeId, stream, message, timestamp) => {
     const entry: NodeLogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp: timestamp || new Date().toISOString(),
       stream,
       message,
     };
     set({
       nodes: get().nodes.map((node) => {
-        if (node.id === nodeId) {
+        const stepId = (node.data as { stepId?: string })?.stepId;
+        if (node.id === nodeId || (stepId && stepId === nodeId)) {
           const existingLogs = (node.data.logs as NodeLogEntry[]) || [];
           return {
             ...node,
@@ -231,7 +238,8 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   clearNodeLogs: (nodeId) => {
     set({
       nodes: get().nodes.map((node) => {
-        if (node.id === nodeId) {
+        const stepId = (node.data as { stepId?: string })?.stepId;
+        if (node.id === nodeId || (stepId && stepId === nodeId)) {
           return {
             ...node,
             data: {
@@ -252,6 +260,17 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   setGatewayStatus: (status) => set({ gatewayStatus: status }),
   setActiveApproval: (approval) => set({ activeApproval: approval, showGateModal: approval !== null }),
   setShowGateModal: (show) => set({ showGateModal: show }),
+
+  setActiveRun: (runId, state) => {
+    if (runId === null) {
+      set({ activeRunId: null, activeRunState: null });
+    } else {
+      set({
+        activeRunId: runId,
+        ...(state !== undefined ? { activeRunState: state } : {}),
+      });
+    }
+  },
 
   resolveApproval: async (decision: 'APPROVE' | 'REJECT') => {
     const { activeApproval } = get();

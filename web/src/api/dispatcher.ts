@@ -23,6 +23,29 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
         startedAt: new Date().toISOString(),
       });
     }
+  } else if (type === 'ov.task.log' || type === 'task.log') {
+    if (stepId) {
+      const stream = (payload.stream as 'stdout' | 'stderr') || 'stdout';
+      const msg = (payload.message as string) || (payload.log as string) || (payload.line as string) || '';
+      const ts = (payload.timestamp as string) || (event.timestamp ? String(event.timestamp) : undefined);
+      if (msg) {
+        store.appendNodeLog(stepId, stream, msg, ts);
+      }
+    }
+  } else if (type === 'ov.task.span' || type === 'task.span') {
+    if (stepId) {
+      const duration = (payload.duration_ms as number) ?? (payload.duration as number);
+      const tokensUsed = (payload.tokens_used as number) ?? (payload.tokens as number);
+      const promptTokens = (payload.prompt_tokens as number);
+      const completionTokens = (payload.completion_tokens as number);
+      store.updateNodeTelemetry(stepId, {
+        ...(duration !== undefined ? { executionDurationMs: duration } : {}),
+        ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+        ...(promptTokens !== undefined ? { promptTokens } : {}),
+        ...(completionTokens !== undefined ? { completionTokens } : {}),
+        attributes: payload,
+      });
+    }
   } else if (type === 'step.completed' || type === 'ov.task.completed') {
     if (stepId) {
       const duration = (payload.duration_ms as number) || (payload.duration as number) || 0;
@@ -44,6 +67,35 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
         errorMessage: (payload.error as string) || 'Execution failed',
         completedAt: new Date().toISOString(),
       });
+    }
+  } else if (type === 'ov.run.queued' || type === 'run.queued') {
+    const runId = event.run_id || (payload.run_id as string) || '';
+    if (runId) {
+      store.setActiveRun(runId, 'QUEUED');
+    }
+  } else if (type === 'ov.run.started' || type === 'run.started') {
+    const runId = event.run_id || (payload.run_id as string) || '';
+    if (runId) {
+      store.setActiveRun(runId, 'RUNNING');
+    }
+  } else if (type === 'ov.run.completed' || type === 'run.completed' || type === 'merger.completed') {
+    const runId = event.run_id || (payload.run_id as string) || '';
+    if (runId) {
+      store.setActiveRun(runId, 'COMPLETED');
+    }
+    const actionNode = store.nodes.find((n) => n.data.nodeType === 'action' || n.id.includes('merger'));
+    if (actionNode) {
+      store.updateNodeStatus(actionNode.id, 'completed');
+    }
+  } else if (type === 'ov.run.failed' || type === 'run.failed') {
+    const runId = event.run_id || (payload.run_id as string) || '';
+    if (runId) {
+      store.setActiveRun(runId, 'FAILED');
+    }
+  } else if (type === 'ov.run.cancelled' || type === 'run.cancelled') {
+    const runId = event.run_id || (payload.run_id as string) || '';
+    if (runId) {
+      store.setActiveRun(runId, 'CANCELLED');
     }
   } else if (type === 'gate.approval_required' || type === 'ov.gate.approval_required') {
     const runId = event.run_id || (payload.run_id as string) || `run-${Date.now()}`;

@@ -10,6 +10,13 @@ export type ExecutionStatus =
   | 'failed'
   | 'awaiting_approval';
 
+export type RunLifecycleState =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
 export type FactoryNodeType = 'trigger' | 'agent' | 'logic' | 'action';
 
 export type TriggerSubtype = 'webhook' | 'github_issue' | 'chat_listener' | 'cron';
@@ -56,12 +63,28 @@ export interface GateApprovalPayload {
 
 export type GatewayConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
+export interface NodeTelemetryUpdate {
+  status?: ExecutionStatus;
+  executionDurationMs?: number;
+  startedAt?: string;
+  completedAt?: string;
+  tokensUsed?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  attributes?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  errorMessage?: string;
+}
+
 export interface BaseNodeData {
   label: string;
   description?: string;
   status: ExecutionStatus;
   nodeType: FactoryNodeType;
   executionDurationMs?: number;
+  tokensUsed?: number;
+  promptTokens?: number;
+  completionTokens?: number;
   startedAt?: string;
   completedAt?: string;
   logs?: NodeLogEntry[];

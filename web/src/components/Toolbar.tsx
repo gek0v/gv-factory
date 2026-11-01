@@ -7,7 +7,7 @@ import { CANONICAL_TEMPLATES } from '../templates/catalog';
 import { templateToCanvas } from '../templates/parser';
 import { canvasToTemplate, exportTemplateToYaml, exportTemplateToJson } from '../templates/exporter';
 import { validateFactoryTemplate } from '../templates/validator';
-import { submitPipelineRun } from '../api/runs';
+import { submitPipelineRun, cancelPipelineRun } from '../api/runs';
 import { simulatePipelineRun } from '../api/simulator';
 
 export interface ToolbarNotification {
@@ -16,7 +16,15 @@ export interface ToolbarNotification {
 }
 
 export const Toolbar: React.FC = () => {
-  const { nodes, edges, setNodes, setEdges } = useFactoryFlowStore();
+  const {
+    nodes,
+    edges,
+    setNodes,
+    setEdges,
+    activeRunId,
+    activeRunState,
+    setActiveRun,
+  } = useFactoryFlowStore();
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('feature-complete');
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [exportFormat, setExportFormat] = useState<'yaml' | 'json'>('json');
@@ -24,6 +32,7 @@ export const Toolbar: React.FC = () => {
 
   // Execution state
   const [isRunningServer, setIsRunningServer] = useState<boolean>(false);
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [runDropdownOpen, setRunDropdownOpen] = useState<boolean>(false);
   const [notification, setNotification] = useState<ToolbarNotification | null>(null);
@@ -116,6 +125,7 @@ export const Toolbar: React.FC = () => {
       });
 
       const response = await submitPipelineRun(nodes, edges);
+      setActiveRun(response.run_id, response.state);
       setNotification({
         type: 'success',
         message: `Run ${response.run_id} initiated (${response.state}). Streaming execution live over SSE.`,
@@ -127,6 +137,27 @@ export const Toolbar: React.FC = () => {
       });
     } finally {
       setIsRunningServer(false);
+    }
+  };
+
+  const handleCancelRun = async () => {
+    if (!activeRunId) return;
+
+    try {
+      setIsCancelling(true);
+      const res = await cancelPipelineRun(activeRunId);
+      setActiveRun(activeRunId, 'CANCELLED');
+      setNotification({
+        type: 'info',
+        message: res.message || `Run ${activeRunId} cancelled by user.`,
+      });
+    } catch (err) {
+      setNotification({
+        type: 'error',
+        message: `Failed to cancel run: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -237,6 +268,44 @@ export const Toolbar: React.FC = () => {
             ))}
           </select>
         </div>
+
+        {/* Active Run Lifecycle Pill & Controls */}
+        {activeRunId && (
+          <div className="active-run-pill-group" role="status" aria-label="Active Run Lifecycle Tracker">
+            <div className={`active-run-pill run-state-${activeRunState?.toLowerCase() || 'unknown'}`}>
+              <span className={`run-state-dot dot-${activeRunState?.toLowerCase() || 'unknown'}`} />
+              <span className="run-id-label" title={activeRunId}>
+                Run: {activeRunId.length > 14 ? `${activeRunId.slice(0, 12)}…` : activeRunId}
+              </span>
+              <span className="run-state-badge">[{activeRunState || 'UNKNOWN'}]</span>
+            </div>
+
+            {(activeRunState === 'QUEUED' || activeRunState === 'RUNNING') && (
+              <button
+                type="button"
+                className="cancel-run-btn"
+                title="Cancel running pipeline on server"
+                disabled={isCancelling}
+                onClick={handleCancelRun}
+                aria-label="Cancel Active Run"
+              >
+                {isCancelling ? 'Cancelling…' : '■ Cancel Run'}
+              </button>
+            )}
+
+            {(activeRunState === 'COMPLETED' || activeRunState === 'FAILED' || activeRunState === 'CANCELLED') && (
+              <button
+                type="button"
+                className="clear-run-btn"
+                title="Clear run tracker"
+                onClick={() => setActiveRun(null)}
+                aria-label="Dismiss Run"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Validation Status Pill */}
         <div className="template-validation-pill-container" title={validation.errors.join('\n')}>
