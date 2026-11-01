@@ -70,7 +70,11 @@ func main() {
 	sbMgr := sandbox.NewManager(sandbox.Config{BaseWorktreeDir: *worktreeDir})
 	pluginHost := plugins.NewHost()
 	gw := gateway.NewGateway()
-	_ = auth.NewService("secret-key")
+	authSecret := os.Getenv("AUTH_SECRET_KEY")
+	if authSecret == "" {
+		authSecret = "factory-default-secret-key-change-in-production"
+	}
+	authSvc := auth.NewService(authSecret)
 
 	tel, err := telemetry.New(ctx, telemetry.ConfigFromEnv())
 	if err != nil {
@@ -148,7 +152,7 @@ func main() {
 		defer unsubChat()
 	}
 
-	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, tel)
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, authSvc, tel)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,

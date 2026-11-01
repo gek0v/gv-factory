@@ -157,7 +157,7 @@ func cyclicTestTemplate() *schema.FactoryTemplate {
 func setupAPITestServer(t *testing.T, orch PipelineOrchestrator) (http.Handler, *gateway.Gateway) {
 	t.Helper()
 	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
-	mux := NewServerMux(nil, gw, nil, nil, orch)
+	mux := NewServerMux(nil, gw, nil, nil, orch, nil)
 	return mux, gw
 }
 

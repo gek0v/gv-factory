@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/connectors/chat"
 	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/gateway"
@@ -21,7 +22,7 @@ func TestServer_Smoke(t *testing.T) {
 	// Smoke test ensuring ov-server package compiles and executes test suite
 }
 
-func setupTestMux(t *testing.T) (http.Handler, *gateway.Gateway) {
+func setupTestMux(t *testing.T, authSvcs ...*auth.Service) (http.Handler, *gateway.Gateway, *auth.Service) {
 	t.Helper()
 	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
 
@@ -33,12 +34,19 @@ func setupTestMux(t *testing.T) (http.Handler, *gateway.Gateway) {
 		SlackSigningSecret: "test-slack-secret",
 	})
 
-	mux := NewServerMux(nil, gw, webhookIngestor, chatHandler, nil)
-	return mux, gw
+	var authSvc *auth.Service
+	if len(authSvcs) > 0 {
+		authSvc = authSvcs[0]
+	} else {
+		authSvc = auth.NewService("test-gate-secret-key")
+	}
+
+	mux := NewServerMux(nil, gw, webhookIngestor, chatHandler, nil, authSvc)
+	return mux, gw, authSvc
 }
 
 func TestServer_HealthCheck(t *testing.T) {
-	mux, gw := setupTestMux(t)
+	mux, gw, _ := setupTestMux(t)
 	defer gw.Close()
 
 	endpoints := []string{"/healthz", "/health", "/api/v1/health"}
@@ -73,21 +81,89 @@ func TestServer_HealthCheck(t *testing.T) {
 }
 
 func TestServer_GateResolve(t *testing.T) {
-	mux, gw := setupTestMux(t)
+	mux, gw, authSvc := setupTestMux(t)
 	defer gw.Close()
 
-	subCh := make(chan gateway.Event, 10)
-	unsub, err := gw.SubscribeTaskEvents(context.Background(), "gate.resolved", subCh)
+	resolvedCh := make(chan gateway.Event, 10)
+	unsubResolved, err := gw.SubscribeTaskEvents(context.Background(), "gate.resolved", resolvedCh)
 	if err != nil {
 		t.Fatalf("failed to subscribe to gate.resolved: %v", err)
 	}
-	defer unsub()
+	defer unsubResolved()
 
-	t.Run("Valid resolution emits event", func(t *testing.T) {
+	auditCh := make(chan gateway.Event, 10)
+	unsubAudit, err := gw.SubscribeTaskEvents(context.Background(), "gate.audit", auditCh)
+	if err != nil {
+		t.Fatalf("failed to subscribe to gate.audit: %v", err)
+	}
+	defer unsubAudit()
+
+	t.Run("Valid approved resolution emits gate.resolved and gate.audit", func(t *testing.T) {
+		runID := "run-valid-123"
+		validToken := authSvc.GenerateApprovalToken(runID, time.Now().Add(1*time.Hour))
 		payload := map[string]string{
-			"run_id":   "run-123",
-			"token":    "tok-abc",
-			"decision": "APPROVE",
+			"run_id":   runID,
+			"token":    validToken,
+			"decision": "approved",
+		}
+		data, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/gate/resolve", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "AuditTestClient/1.0")
+		req.RemoteAddr = "192.168.1.50:54321"
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected HTTP 200, got %d. Body: %s", rec.Code, rec.Body.String())
+		}
+
+		select {
+		case ev := <-resolvedCh:
+			m := ev.Payload
+			if m["run_id"] != runID || m["decision"] != "approved" {
+				t.Errorf("unexpected gate.resolved payload: %v", m)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.resolved event")
+		}
+
+		select {
+		case ev := <-auditCh:
+			m := ev.Payload
+			if m["run_id"] != runID || m["decision"] != "approved" || m["status"] != "SUCCESS" {
+				t.Errorf("unexpected gate.audit payload: %v", m)
+			}
+			if m["client_ip"] != "192.168.1.50" {
+				t.Errorf("expected client_ip 192.168.1.50, got %v", m["client_ip"])
+			}
+			if m["user_agent"] != "AuditTestClient/1.0" {
+				t.Errorf("expected user_agent AuditTestClient/1.0, got %v", m["user_agent"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.audit event")
+		}
+
+		// Verify record in audit logger
+		records := authSvc.AuditLogger().GetRecords()
+		if len(records) == 0 {
+			t.Fatal("expected audit logger to have records")
+		}
+		lastRec := records[len(records)-1]
+		if lastRec.RunID != runID || lastRec.Status != auth.AuditStatusSuccess {
+			t.Errorf("expected audit record to match, got: %+v", lastRec)
+		}
+	})
+
+	t.Run("Valid rejected resolution emits gate.resolved and gate.audit", func(t *testing.T) {
+		runID := "run-reject-456"
+		validToken := authSvc.GenerateApprovalToken(runID, time.Now().Add(1*time.Hour))
+		payload := map[string]string{
+			"run_id":   runID,
+			"token":    validToken,
+			"decision": "rejected",
 		}
 		data, _ := json.Marshal(payload)
 
@@ -98,17 +174,166 @@ func TestServer_GateResolve(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK {
-			t.Fatalf("expected HTTP 200, got %d", rec.Code)
+			t.Fatalf("expected HTTP 200, got %d. Body: %s", rec.Code, rec.Body.String())
 		}
 
 		select {
-		case ev := <-subCh:
+		case ev := <-resolvedCh:
 			m := ev.Payload
-			if m["run_id"] != "run-123" || m["decision"] != "APPROVE" {
-				t.Errorf("unexpected event payload: %v", m)
+			if m["run_id"] != runID || m["decision"] != "rejected" {
+				t.Errorf("unexpected gate.resolved payload: %v", m)
 			}
 		case <-time.After(500 * time.Millisecond):
 			t.Fatal("timed out waiting for gate.resolved event")
+		}
+
+		select {
+		case ev := <-auditCh:
+			m := ev.Payload
+			if m["run_id"] != runID || m["decision"] != "rejected" || m["status"] != "SUCCESS" {
+				t.Errorf("unexpected gate.audit payload: %v", m)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.audit event on rejected")
+		}
+	})
+
+	t.Run("Rejects invalid HMAC signature with 401", func(t *testing.T) {
+		runID := "run-tampered-123"
+		tamperedToken := "run-tampered-123:1800000000:invalidhmacsignature"
+		payload := map[string]string{
+			"run_id":   runID,
+			"token":    tamperedToken,
+			"decision": "approved",
+		}
+		data, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/gate/resolve", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected HTTP 401 Unauthorized, got %d", rec.Code)
+		}
+
+		var resp map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp["error"] != "invalid or expired approval token" {
+			t.Errorf("expected 'invalid or expired approval token', got %q", resp["error"])
+		}
+
+		// Ensure audit event was published
+		select {
+		case ev := <-auditCh:
+			m := ev.Payload
+			if m["status"] != "INVALID_SIGNATURE" {
+				t.Errorf("expected audit status INVALID_SIGNATURE, got %v", m["status"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.audit event on invalid HMAC")
+		}
+	})
+
+	t.Run("Rejects expired token with 401", func(t *testing.T) {
+		runID := "run-expired-123"
+		expiredToken := authSvc.GenerateApprovalToken(runID, time.Now().Add(-10*time.Minute))
+		payload := map[string]string{
+			"run_id":   runID,
+			"token":    expiredToken,
+			"decision": "approved",
+		}
+		data, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/gate/resolve", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected HTTP 401 Unauthorized, got %d", rec.Code)
+		}
+
+		select {
+		case ev := <-auditCh:
+			m := ev.Payload
+			if m["status"] != "INVALID_SIGNATURE" {
+				t.Errorf("expected audit status INVALID_SIGNATURE, got %v", m["status"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.audit event on expired token")
+		}
+	})
+
+	t.Run("Rejects token run ID mismatch with 401", func(t *testing.T) {
+		tokenRunID := "run-actual-123"
+		validToken := authSvc.GenerateApprovalToken(tokenRunID, time.Now().Add(1*time.Hour))
+		payload := map[string]string{
+			"run_id":   "run-spoofed-456",
+			"token":    validToken,
+			"decision": "approved",
+		}
+		data, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/gate/resolve", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("expected HTTP 401 Unauthorized, got %d", rec.Code)
+		}
+
+		var resp map[string]string
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		if resp["error"] != "invalid or expired approval token" {
+			t.Errorf("expected 'invalid or expired approval token', got %q", resp["error"])
+		}
+
+		select {
+		case ev := <-auditCh:
+			m := ev.Payload
+			if m["status"] != "RUN_ID_MISMATCH" {
+				t.Errorf("expected audit status RUN_ID_MISMATCH, got %v", m["status"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.audit event on run ID mismatch")
+		}
+	})
+
+	t.Run("Rejects invalid decision with 400 Bad Request", func(t *testing.T) {
+		runID := "run-invalid-decision"
+		validToken := authSvc.GenerateApprovalToken(runID, time.Now().Add(1*time.Hour))
+		payload := map[string]string{
+			"run_id":   runID,
+			"token":    validToken,
+			"decision": "MAYBE",
+		}
+		data, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/gate/resolve", bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected HTTP 400 Bad Request, got %d", rec.Code)
+		}
+
+		select {
+		case ev := <-auditCh:
+			m := ev.Payload
+			if m["status"] != "INVALID_DECISION" {
+				t.Errorf("expected audit status INVALID_DECISION, got %v", m["status"])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for gate.audit event on invalid decision")
 		}
 	})
 
@@ -132,7 +357,7 @@ func TestServer_GateResolve(t *testing.T) {
 }
 
 func TestServer_SSEEvents(t *testing.T) {
-	mux, gw := setupTestMux(t)
+	mux, gw, _ := setupTestMux(t)
 	defer gw.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -158,7 +383,7 @@ func TestServer_SSEEvents(t *testing.T) {
 }
 
 func TestServer_TelemetryAndObservability(t *testing.T) {
-	mux, gw := setupTestMux(t)
+	mux, gw, _ := setupTestMux(t)
 	defer gw.Close()
 
 	t.Run("Metrics endpoint returns Prometheus format", func(t *testing.T) {
