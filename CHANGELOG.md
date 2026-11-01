@@ -8,6 +8,16 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.3.0](https://github.com/gek0v/gv-factory/compare/v1.2.0...v1.3.0) (2026-11-01)
+
+
+### Features
+
+* **dag,server:** implement distributed step dispatcher via NATS JetStream and persist run steps in store ([#87](https://github.com/gek0v/gv-factory/issues/87)) ([#89](https://github.com/gek0v/gv-factory/issues/89)) ([1fa8778](https://github.com/gek0v/gv-factory/commit/1fa87785da11d259ae14921d17828f12e606adcb))
+* **server:** implement worker pool monitoring endpoint and heartbeat aggregator ([#91](https://github.com/gek0v/gv-factory/issues/91)) ([#93](https://github.com/gek0v/gv-factory/issues/93)) ([a1eacbc](https://github.com/gek0v/gv-factory/commit/a1eacbc805c804039d645dbc2865c34ecf332d6e))
+* **web:** add granular step execution inspection and real-time worker cluster dashboard ([#92](https://github.com/gek0v/gv-factory/issues/92)) ([#94](https://github.com/gek0v/gv-factory/issues/94)) ([b7c7ec6](https://github.com/gek0v/gv-factory/commit/b7c7ec69e6bcf3b09c0d78a9c22490996777dafc))
+* **worker:** integrate execution sub-engines with task router ([#86](https://github.com/gek0v/gv-factory/issues/86)) ([#88](https://github.com/gek0v/gv-factory/issues/88)) ([e7421b2](https://github.com/gek0v/gv-factory/commit/e7421b27b8a9227bef31840e86e276d679f99c25))
+
 ## [1.2.0](https://github.com/gek0v/gv-factory/compare/v1.1.0...v1.2.0) (2026-11-01)
 
 
