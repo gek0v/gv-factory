@@ -38,6 +38,12 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
+func (r *statusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
 // NewHTTPMiddleware wraps an http.Handler with OpenTelemetry tracing and Prometheus RED metrics.
 func NewHTTPMiddleware(metrics *Metrics, tracer trace.Tracer) func(http.Handler) http.Handler {
 	if tracer == nil {

@@ -25,6 +25,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/plugins"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
 func main() {
@@ -106,7 +107,14 @@ func main() {
 		defer unsubChat()
 	}
 
-	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler)
+	tel, err := telemetry.New(ctx, telemetry.ConfigFromEnv())
+	if err != nil {
+		log.Printf("Warning: telemetry provider failed to configure: %v", err)
+	} else {
+		log.Printf("Telemetry subsystem initialized (status: %s)", tel.Status())
+	}
+
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, tel)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,
@@ -130,5 +138,10 @@ func main() {
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("Error during ov-server HTTP shutdown: %v", err)
+	}
+	if tel != nil {
+		if err := tel.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Error during telemetry shutdown: %v", err)
+		}
 	}
 }

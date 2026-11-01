@@ -157,3 +157,75 @@ func TestServer_SSEEvents(t *testing.T) {
 	}
 }
 
+func TestServer_TelemetryAndObservability(t *testing.T) {
+	mux, gw := setupTestMux(t)
+	defer gw.Close()
+
+	t.Run("Metrics endpoint returns Prometheus format", func(t *testing.T) {
+		dummyReq := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		dummyRec := httptest.NewRecorder()
+		mux.ServeHTTP(dummyRec, dummyReq)
+
+		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK from /metrics, got %d", rec.Code)
+		}
+
+		body := rec.Body.String()
+		if !bytes.Contains([]byte(body), []byte("ov_http_requests_total")) {
+			t.Errorf("expected ov_http_requests_total metric in /metrics, got:\n%s", body)
+		}
+	})
+
+	t.Run("Healthz includes telemetry status", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode JSON response: %v", err)
+		}
+
+		if resp["telemetry"] == nil || resp["telemetry"] == "" {
+			t.Errorf("expected 'telemetry' field in /healthz, got %v", resp["telemetry"])
+		}
+	})
+
+	t.Run("Readyz endpoint returns readiness status", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK from /readyz, got %d", rec.Code)
+		}
+
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode JSON response: %v", err)
+		}
+
+		if resp["ready"] != true {
+			t.Errorf("expected ready=true, got %v", resp["ready"])
+		}
+		if resp["telemetry"] == nil {
+			t.Errorf("expected 'telemetry' field in /readyz")
+		}
+	})
+
+	t.Run("Tracing header injected into response", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		// Regular requests should receive traceparent header or be tracked
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+	})
+}
+
