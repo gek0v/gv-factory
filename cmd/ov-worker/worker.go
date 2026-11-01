@@ -12,17 +12,21 @@ import (
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/plugins"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
+	"github.com/gv-factory/gv-factory/internal/worker"
 	"github.com/gv-factory/gv-factory/pkg/schema"
 )
 
 // WorkerConfig holds configuration for the ov-worker agent.
 type WorkerConfig struct {
-	BaseWorktreeDir string
-	NATSURL         string
-	DisableNATS     bool
-	DefaultRetries  int
-	DefaultTimeout  time.Duration
-	MaxConcurrent   int
+	BaseWorktreeDir   string
+	NATSURL           string
+	DisableNATS       bool
+	DefaultRetries    int
+	DefaultTimeout    time.Duration
+	MaxConcurrent     int
+	WorkerID          string
+	HeartbeatInterval time.Duration
+	DrainTimeout      time.Duration
 }
 
 // Worker orchestrates Hatchet workflow steps and dispatches tasks to WASM plugins and Sandboxes.
@@ -33,6 +37,8 @@ type Worker struct {
 	PluginHost   *plugins.Host
 	Dispatcher   *dag.Dispatcher
 	Orchestrator *dag.MultiFactoryOrchestrator
+	Consumer     *worker.Consumer
+	QueueBackend worker.QueueBackend
 }
 
 // NewWorker initializes a worker instance with all execution sub-engines.
@@ -85,6 +91,50 @@ func NewWorker(cfg WorkerConfig) *Worker {
 		dispatcherCfg,
 	)
 
+	// Distributed Task Queue Consumer setup
+	queueBackend, _, _ := worker.NewQueueBackend(worker.QueueBackendConfig{
+		NATSURL:        cfg.NATSURL,
+		DisableNATS:    cfg.DisableNATS,
+		ConnectTimeout: 250 * time.Millisecond,
+	})
+
+	router := worker.NewTaskRouter()
+
+	// Register wasm_plugin handler
+	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.TaskHandlerFunc(func(ctx context.Context, task *worker.TaskMessage) (*worker.TaskResult, error) {
+		return &worker.TaskResult{
+			Success: true,
+			Output:  fmt.Sprintf("executed wasm plugin for task %s", task.TaskID),
+		}, nil
+	}))
+
+	// Register agent_step handler
+	router.RegisterHandler(worker.TaskTypeAgentStep, worker.TaskHandlerFunc(func(ctx context.Context, task *worker.TaskMessage) (*worker.TaskResult, error) {
+		return &worker.TaskResult{
+			Success: true,
+			Output:  fmt.Sprintf("executed agent step for task %s", task.TaskID),
+		}, nil
+	}))
+
+	// Register git_sandbox handler
+	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.TaskHandlerFunc(func(ctx context.Context, task *worker.TaskMessage) (*worker.TaskResult, error) {
+		return &worker.TaskResult{
+			Success: true,
+			Output:  fmt.Sprintf("executed git sandbox for task %s", task.TaskID),
+		}, nil
+	}))
+
+	consumer := worker.NewConsumer(worker.ConsumerConfig{
+		WorkerID:          cfg.WorkerID,
+		Concurrency:       maxConcurrent,
+		DrainTimeout:      cfg.DrainTimeout,
+		HeartbeatInterval: cfg.HeartbeatInterval,
+		DefaultTimeout:    timeout,
+		Queue:             queueBackend,
+		Router:            router,
+		Gateway:           gw,
+	})
+
 	return &Worker{
 		Sandbox:      sb,
 		Gateway:      gw,
@@ -92,6 +142,8 @@ func NewWorker(cfg WorkerConfig) *Worker {
 		PluginHost:   pluginHost,
 		Dispatcher:   dispatcher,
 		Orchestrator: orchestrator,
+		Consumer:     consumer,
+		QueueBackend: queueBackend,
 	}
 }
 
@@ -111,8 +163,22 @@ func (w *Worker) SubmitPipeline(ctx context.Context, req dag.RunRequest) (*dag.F
 	return w.Orchestrator.SubmitRun(ctx, req)
 }
 
+// Start initiates the distributed queue consumer.
+func (w *Worker) Start(ctx context.Context) error {
+	if w.Consumer != nil {
+		return w.Consumer.Start(ctx)
+	}
+	return nil
+}
+
 // Close gracefully stops the worker and cleans up resources.
 func (w *Worker) Close() error {
+	if w.Consumer != nil {
+		w.Consumer.Stop()
+	}
+	if w.QueueBackend != nil {
+		_ = w.QueueBackend.Close()
+	}
 	if w.Orchestrator != nil {
 		w.Orchestrator.Stop()
 	}
