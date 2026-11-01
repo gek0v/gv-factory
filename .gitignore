@@ -47,6 +47,8 @@ tmp/
 
 # Cobertura y perfiles de pruebas
 coverage/
+coverage
+coverage.*
 *.out
 *.test
 *.prof

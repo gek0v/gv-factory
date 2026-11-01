@@ -10,6 +10,7 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/store"
 )
 
 // PendingGateInfo represents an active pending decision gate awaiting Human-in-the-Loop approval.
@@ -26,15 +27,22 @@ type PendingGateInfo struct {
 	SessionID       string         `json:"session_id,omitempty"`
 }
 
-// PendingGateTracker tracks active pending decision gates in memory.
+// PendingGateTracker tracks active pending decision gates in memory or delegates to persistent Store.
 type PendingGateTracker struct {
 	mu    sync.RWMutex
-	gates map[string]PendingGateInfo // key: token (or runID if token empty)
+	store store.Store
+	gates map[string]PendingGateInfo // fallback in-memory cache: key token or runID
 }
 
 // NewPendingGateTracker creates a tracker and subscribes to approval and resolution events.
-func NewPendingGateTracker(ctx context.Context, gw *gateway.Gateway) *PendingGateTracker {
+func NewPendingGateTracker(ctx context.Context, gw *gateway.Gateway, st ...store.Store) *PendingGateTracker {
+	var s store.Store
+	if len(st) > 0 && st[0] != nil {
+		s = st[0]
+	}
+
 	tracker := &PendingGateTracker{
+		store: s,
 		gates: make(map[string]PendingGateInfo),
 	}
 
@@ -130,6 +138,20 @@ func (t *PendingGateTracker) handleApprovalRequired(ev gateway.Event) {
 		CallerID:        callerID,
 		SessionID:       sessionID,
 	}
+
+	if t.store != nil {
+		_ = t.store.RecordPendingGate(context.Background(), &store.PendingGate{
+			ID:        key,
+			RunID:     runID,
+			Token:     token,
+			GateType:  "HUMAN_APPROVAL",
+			ToolName:  toolName,
+			Arguments: args,
+			Status:    store.GateStatusPending,
+			CreatedAt: now,
+			ExpiresAt: expiresAt,
+		})
+	}
 }
 
 func (t *PendingGateTracker) handleResolved(ev gateway.Event) {
@@ -158,6 +180,25 @@ func (t *PendingGateTracker) handleResolved(ev gateway.Event) {
 
 // ListPending returns active, unexpired pending gates.
 func (t *PendingGateTracker) ListPending() []PendingGateInfo {
+	if t.store != nil {
+		storedGates, err := t.store.ListPendingGates(context.Background())
+		if err == nil && len(storedGates) > 0 {
+			result := make([]PendingGateInfo, 0, len(storedGates))
+			for _, g := range storedGates {
+				result = append(result, PendingGateInfo{
+					RunID:           g.RunID,
+					ToolName:        g.ToolName,
+					Arguments:       g.Arguments,
+					Token:           g.Token,
+					TokenHMACPrefix: auth.ExtractTokenPrefix(g.Token),
+					CreatedAt:       g.CreatedAt,
+					ExpiresAt:       g.ExpiresAt,
+				})
+			}
+			return result
+		}
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

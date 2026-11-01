@@ -21,10 +21,10 @@ import (
 	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/connectors/outbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
-
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/plugins"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
+	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
@@ -38,6 +38,7 @@ var (
 func main() {
 	portFlag := flag.String("port", "", "HTTP listen port (defaults to PORT env var or 8080)")
 	worktreeDir := flag.String("worktree-dir", "", "Base directory for sandbox git worktrees (defaults to OS temp directory or OV_WORKTREE_DIR)")
+	databaseURLFlag := flag.String("database-url", "", "PostgreSQL database connection URL (defaults to DATABASE_URL env var)")
 	flag.Parse()
 
 	port := *portFlag
@@ -48,11 +49,34 @@ func main() {
 		port = "8080"
 	}
 
+	databaseURL := *databaseURLFlag
+	if databaseURL == "" {
+		databaseURL = os.Getenv("DATABASE_URL")
+	}
+
 	log.Printf("Starting ov-server version %s (commit: %s, date: %s, built by: %s)...", version, commit, date, builtBy)
 	fmt.Printf("Starting ov-server (Orchestrator & API Server) on port %s...\n", port)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var appStore store.Store
+	if databaseURL != "" {
+		cfg := store.DefaultConfig()
+		cfg.DatabaseURL = databaseURL
+		pgStore, err := store.NewPostgresStore(ctx, cfg)
+		if err != nil {
+			log.Printf("Warning: failed to initialize PostgreSQL store (%s): %v. Falling back to in-memory store.", store.SanitizeDatabaseURL(databaseURL), err)
+			appStore = store.NewMemoryStore()
+		} else {
+			log.Printf("PostgreSQL store initialized successfully with schema migrations on %s", store.SanitizeDatabaseURL(databaseURL))
+			appStore = pgStore
+		}
+	} else {
+		log.Println("No DATABASE_URL configured. Initializing default in-memory store.")
+		appStore = store.NewMemoryStore()
+	}
+	defer appStore.Close()
 
 	brainSvc, err := brain.NewService(ctx, brain.ConfigFromEnv())
 	if err != nil {
@@ -152,7 +176,7 @@ func main() {
 		defer unsubChat()
 	}
 
-	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, authSvc, tel)
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, authSvc, appStore, tel)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,
