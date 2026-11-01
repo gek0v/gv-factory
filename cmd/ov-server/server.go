@@ -109,6 +109,7 @@ func NewServerMux(
 	orchestrator PipelineOrchestrator,
 	authSvc *auth.Service,
 	st store.Store,
+	workerReg *WorkerRegistry,
 	tel ...*telemetry.Telemetry,
 ) http.Handler {
 	if st == nil {
@@ -373,6 +374,60 @@ func NewServerMux(
 			"gates": gates,
 			"total": len(gates),
 		})
+	})
+
+	// Worker pool monitoring registry and endpoints
+	if workerReg == nil {
+		workerReg = NewWorkerRegistry(context.Background(), gw)
+	}
+	mux.HandleFunc("/api/v1/workers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		workers := workerReg.ListWorkers()
+		summary := workerReg.Summary()
+
+		resp := WorkersResponse{
+			Workers:          workers,
+			TotalWorkers:     summary.TotalWorkers,
+			ActiveWorkers:    summary.ActiveWorkers,
+			TotalCapacity:    summary.TotalCapacity,
+			TotalActiveTasks: summary.TotalActiveTasks,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	mux.HandleFunc("/api/v1/workers/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		workerID := strings.TrimPrefix(r.URL.Path, "/api/v1/workers/")
+		workerID = strings.Trim(workerID, "/")
+		if workerID == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		workerInfo, found := workerReg.GetWorker(workerID)
+		if !found {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": fmt.Sprintf("worker %q not found", workerID),
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(workerInfo)
 	})
 
 	// Pipeline validation endpoint (/api/v1/pipelines/validate)

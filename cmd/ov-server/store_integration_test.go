@@ -26,7 +26,7 @@ func TestServer_StoreIntegration(t *testing.T) {
 	defer gw.Close()
 
 	authSvc := auth.NewService("store-test-secret")
-	mux := NewServerMux(nil, gw, nil, nil, orch, authSvc, memStore)
+	mux := NewServerMux(nil, gw, nil, nil, orch, authSvc, memStore, nil)
 
 	t.Run("POST /api/v1/runs creates record in persistent store", func(t *testing.T) {
 		reqBody := map[string]any{

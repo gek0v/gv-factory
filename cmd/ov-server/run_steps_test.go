@@ -214,7 +214,7 @@ func TestServer_GetRunSteps(t *testing.T) {
 	gw := gateway.NewGateway()
 	st := store.NewMemoryStore()
 
-	server := NewServerMux(nil, gw, nil, nil, nil, nil, st, nil)
+	server := NewServerMux(nil, gw, nil, nil, nil, nil, st, nil, nil)
 
 	runID := "run-steps-test"
 	_ = st.CreateRun(ctx, &store.Run{

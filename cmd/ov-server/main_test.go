@@ -41,7 +41,7 @@ func setupTestMux(t *testing.T, authSvcs ...*auth.Service) (http.Handler, *gatew
 		authSvc = auth.NewService("test-gate-secret-key")
 	}
 
-	mux := NewServerMux(nil, gw, webhookIngestor, chatHandler, nil, authSvc, nil)
+	mux := NewServerMux(nil, gw, webhookIngestor, chatHandler, nil, authSvc, nil, nil)
 	return mux, gw, authSvc
 }
 

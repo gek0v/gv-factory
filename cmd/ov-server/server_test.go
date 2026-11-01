@@ -158,7 +158,7 @@ func cyclicTestTemplate() *schema.FactoryTemplate {
 func setupAPITestServer(t *testing.T, orch PipelineOrchestrator) (http.Handler, *gateway.Gateway) {
 	t.Helper()
 	gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
-	mux := NewServerMux(nil, gw, nil, nil, orch, nil, nil)
+	mux := NewServerMux(nil, gw, nil, nil, orch, nil, nil, nil)
 	return mux, gw
 }
 
@@ -582,6 +582,173 @@ func TestServer_CORS(t *testing.T) {
 		origin := rec.Header().Get("Access-Control-Allow-Origin")
 		if origin != "*" {
 			t.Errorf("expected Access-Control-Allow-Origin *, got %q", origin)
+		}
+	})
+}
+
+func TestServer_WorkerPoolEndpoints(t *testing.T) {
+	orch := newMockOrchestrator()
+	mux, gw := setupAPITestServer(t, orch)
+	defer gw.Close()
+
+	t.Run("GET /api/v1/workers returns empty list initially", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp WorkersResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode JSON response: %v", err)
+		}
+
+		if resp.TotalWorkers != 0 || resp.ActiveWorkers != 0 || resp.TotalCapacity != 0 || resp.TotalActiveTasks != 0 {
+			t.Errorf("expected all zeros, got %+v", resp)
+		}
+		if resp.Workers == nil || len(resp.Workers) != 0 {
+			t.Errorf("expected empty non-nil workers slice, got %v", resp.Workers)
+		}
+	})
+
+	t.Run("GET /api/v1/workers and GET /api/v1/workers/{id} populated via heartbeat", func(t *testing.T) {
+		// Emit heartbeat via Gateway
+		hbPayload := map[string]any{
+			"worker_id":       "worker-alpha",
+			"active_tasks":    1,
+			"max_concurrency": 4,
+			"uptime_seconds":  120,
+			"timestamp":       time.Now().Unix(),
+		}
+
+		err := gw.PublishTaskEvent(context.Background(), gateway.Event{
+			Type:      gateway.TopicWorkerHeartbeat,
+			RunID:     "worker-alpha",
+			Payload:   hbPayload,
+			Timestamp: time.Now().UnixMilli(),
+		})
+		if err != nil {
+			t.Fatalf("failed to publish heartbeat: %v", err)
+		}
+
+		// Wait briefly for asynchronous registry processing
+		time.Sleep(50 * time.Millisecond)
+
+		// 1. GET /api/v1/workers
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp WorkersResponse
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if resp.TotalWorkers != 1 || resp.ActiveWorkers != 1 {
+			t.Errorf("expected 1 total and active worker, got total=%d active=%d", resp.TotalWorkers, resp.ActiveWorkers)
+		}
+		if resp.TotalCapacity != 4 || resp.TotalActiveTasks != 1 {
+			t.Errorf("expected capacity=4 tasks=1, got cap=%d tasks=%d", resp.TotalCapacity, resp.TotalActiveTasks)
+		}
+		if len(resp.Workers) != 1 || resp.Workers[0].WorkerID != "worker-alpha" {
+			t.Fatalf("expected worker-alpha in list, got %+v", resp.Workers)
+		}
+		if resp.Workers[0].Status != WorkerStatusReady {
+			t.Errorf("expected status %q, got %q", WorkerStatusReady, resp.Workers[0].Status)
+		}
+
+		// 2. GET /api/v1/workers/worker-alpha
+		reqSingle := httptest.NewRequest(http.MethodGet, "/api/v1/workers/worker-alpha", nil)
+		recSingle := httptest.NewRecorder()
+		mux.ServeHTTP(recSingle, reqSingle)
+
+		if recSingle.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for worker-alpha, got %d: %s", recSingle.Code, recSingle.Body.String())
+		}
+
+		var single WorkerInfo
+		if err := json.NewDecoder(recSingle.Body).Decode(&single); err != nil {
+			t.Fatalf("failed to decode single worker: %v", err)
+		}
+		if single.WorkerID != "worker-alpha" || single.Status != WorkerStatusReady || single.MaxConcurrency != 4 {
+			t.Errorf("unexpected single worker info: %+v", single)
+		}
+
+		// 3. GET /api/v1/workers/unknown-worker -> 404
+		reqNotFound := httptest.NewRequest(http.MethodGet, "/api/v1/workers/unknown-worker", nil)
+		recNotFound := httptest.NewRecorder()
+		mux.ServeHTTP(recNotFound, reqNotFound)
+
+		if recNotFound.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 Not Found, got %d", recNotFound.Code)
+		}
+	})
+
+	t.Run("Method Not Allowed on workers endpoints", func(t *testing.T) {
+		reqPost := httptest.NewRequest(http.MethodPost, "/api/v1/workers", nil)
+		recPost := httptest.NewRecorder()
+		mux.ServeHTTP(recPost, reqPost)
+		if recPost.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405 for POST /api/v1/workers, got %d", recPost.Code)
+		}
+
+		reqPostSingle := httptest.NewRequest(http.MethodPost, "/api/v1/workers/worker-alpha", nil)
+		recPostSingle := httptest.NewRecorder()
+		mux.ServeHTTP(recPostSingle, reqPostSingle)
+		if recPostSingle.Code != http.StatusMethodNotAllowed {
+			t.Errorf("expected 405 for POST /api/v1/workers/{id}, got %d", recPostSingle.Code)
+		}
+	})
+
+	t.Run("Heartbeat broadcast received over SSE (/api/v1/events)", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			mux.ServeHTTP(rec, req)
+		}()
+
+		// Wait for client registration
+		time.Sleep(30 * time.Millisecond)
+
+		// Broadcast a worker heartbeat
+		hbEvent := gateway.Event{
+			Type:  gateway.TopicWorkerHeartbeat,
+			RunID: "worker-sse",
+			Payload: map[string]any{
+				"worker_id":       "worker-sse",
+				"active_tasks":    0,
+				"max_concurrency": 2,
+				"uptime_seconds":  50,
+			},
+			Timestamp: time.Now().UnixMilli(),
+		}
+		_ = gw.PublishTaskEvent(context.Background(), hbEvent)
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+			t.Fatal("SSE handler did not close after context cancel")
+		}
+
+		body := rec.Body.String()
+		if !strings.Contains(body, "worker-sse") {
+			t.Errorf("expected SSE body to contain worker-sse, got: %s", body)
 		}
 	})
 }
