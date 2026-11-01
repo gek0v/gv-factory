@@ -52,4 +52,37 @@ describe('Toolbar integration and state interaction', () => {
     expect(yamlStr).toContain('kind: FactoryTemplate');
     expect(yamlStr).toContain('entrypoint:');
   });
+
+  it('manages activeRun lifecycle state on submit and cancel in store', async () => {
+    vi.spyOn(runsApi, 'submitPipelineRun').mockResolvedValueOnce({
+      run_id: 'run-test-active-1',
+      state: 'RUNNING',
+    });
+
+    const cancelSpy = vi.spyOn(runsApi, 'cancelPipelineRun').mockResolvedValueOnce({
+      run_id: 'run-test-active-1',
+      cancelled: true,
+      state: 'CANCELLED',
+    });
+
+    // Verify initial store state
+    useFactoryFlowStore.getState().setActiveRun(null);
+    expect(useFactoryFlowStore.getState().activeRunId).toBeNull();
+
+    // Trigger run submission and update store
+    const store = useFactoryFlowStore.getState();
+    const res = await runsApi.submitPipelineRun(store.nodes, store.edges);
+    useFactoryFlowStore.getState().setActiveRun(res.run_id, res.state);
+
+    expect(useFactoryFlowStore.getState().activeRunId).toBe('run-test-active-1');
+    expect(useFactoryFlowStore.getState().activeRunState).toBe('RUNNING');
+
+    // Trigger cancel and update store
+    const cancelRes = await runsApi.cancelPipelineRun('run-test-active-1');
+    useFactoryFlowStore.getState().setActiveRun(cancelRes.run_id, 'CANCELLED');
+
+    expect(cancelSpy).toHaveBeenCalledWith('run-test-active-1');
+    expect(useFactoryFlowStore.getState().activeRunState).toBe('CANCELLED');
+  });
 });
+

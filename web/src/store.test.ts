@@ -103,5 +103,65 @@ describe('useFactoryFlowStore', () => {
     // Count should not increase because it connects to a trigger and would form a cycle
     expect(useFactoryFlowStore.getState().edges.length).toBe(edgesCount);
   });
+
+  it('activeRunId and activeRunState lifecycle tracking', () => {
+    const store = useFactoryFlowStore.getState();
+    expect(store.activeRunId).toBeNull();
+    expect(store.activeRunState).toBeNull();
+
+    // Set active run with state
+    useFactoryFlowStore.getState().setActiveRun('run-xyz-42', 'RUNNING');
+    expect(useFactoryFlowStore.getState().activeRunId).toBe('run-xyz-42');
+    expect(useFactoryFlowStore.getState().activeRunState).toBe('RUNNING');
+
+    // Update state transition to COMPLETED
+    useFactoryFlowStore.getState().setActiveRun('run-xyz-42', 'COMPLETED');
+    expect(useFactoryFlowStore.getState().activeRunState).toBe('COMPLETED');
+
+    // Clear active run
+    useFactoryFlowStore.getState().setActiveRun(null);
+    expect(useFactoryFlowStore.getState().activeRunId).toBeNull();
+    expect(useFactoryFlowStore.getState().activeRunState).toBeNull();
+  });
+
+  it('appendNodeLog reactive updates logs by node.id or stepId', () => {
+    const firstNode = useFactoryFlowStore.getState().nodes[0];
+    expect(firstNode).toBeTruthy();
+
+    useFactoryFlowStore.getState().clearNodeLogs(firstNode.id);
+    expect(useFactoryFlowStore.getState().nodes.find((n) => n.id === firstNode.id)?.data.logs).toEqual([]);
+
+    useFactoryFlowStore.getState().appendNodeLog(firstNode.id, 'stdout', 'Starting Extism WASM guest plugin');
+    useFactoryFlowStore.getState().appendNodeLog(firstNode.id, 'stderr', 'Warning: memory limit approaching', '2026-11-01T12:00:00Z');
+
+    const updatedNode = useFactoryFlowStore.getState().nodes.find((n) => n.id === firstNode.id);
+    expect(updatedNode?.data.logs?.length).toBe(2);
+    expect(updatedNode?.data.logs?.[0].stream).toBe('stdout');
+    expect(updatedNode?.data.logs?.[0].message).toBe('Starting Extism WASM guest plugin');
+    expect(updatedNode?.data.logs?.[1].stream).toBe('stderr');
+    expect(updatedNode?.data.logs?.[1].timestamp).toBe('2026-11-01T12:00:00Z');
+  });
+
+  it('updateNodeTelemetry updates durations, tokens, and outputs', () => {
+    const firstNode = useFactoryFlowStore.getState().nodes[0];
+    expect(firstNode).toBeTruthy();
+
+    useFactoryFlowStore.getState().updateNodeTelemetry(firstNode.id, {
+      status: 'completed',
+      executionDurationMs: 1450,
+      tokensUsed: 3500,
+      promptTokens: 2500,
+      completionTokens: 1000,
+      startedAt: '2026-11-01T10:00:00Z',
+      completedAt: '2026-11-01T10:00:01.450Z',
+    });
+
+    const updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === firstNode.id);
+    expect(updated?.data.status).toBe('completed');
+    expect(updated?.data.executionDurationMs).toBe(1450);
+    expect(updated?.data.tokensUsed).toBe(3500);
+    expect(updated?.data.promptTokens).toBe(2500);
+    expect(updated?.data.completionTokens).toBe(1000);
+  });
 });
 

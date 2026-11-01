@@ -1015,6 +1015,155 @@ body,
   color: #34d399;
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+/* Active Run Lifecycle Pill & Controls */
+.active-run-pill-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.active-run-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  color: #f1f5f9;
+}
+
+.active-run-pill.run-state-running {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.active-run-pill.run-state-queued {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.active-run-pill.run-state-completed {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.active-run-pill.run-state-failed {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.active-run-pill.run-state-cancelled {
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.1);
+}
+
+.run-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.run-state-dot.dot-running {
+  background: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.8);
+  animation: pulseRunning 1.5s infinite ease-in-out;
+}
+
+.run-state-dot.dot-queued {
+  background: #f59e0b;
+  animation: pulse 1.2s infinite ease-in-out;
+}
+
+.run-state-dot.dot-completed {
+  background: #10b981;
+}
+
+.run-state-dot.dot-failed {
+  background: #ef4444;
+}
+
+.run-state-dot.dot-cancelled {
+  background: #94a3b8;
+}
+
+.run-id-label {
+  font-family: monospace;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.run-state-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.run-state-running .run-state-badge {
+  color: #38bdf8;
+}
+
+.run-state-queued .run-state-badge {
+  color: #fbbf24;
+}
+
+.run-state-completed .run-state-badge {
+  color: #34d399;
+}
+
+.run-state-failed .run-state-badge {
+  color: #f87171;
+}
+
+.run-state-cancelled .run-state-badge {
+  color: #94a3b8;
+}
+
+.cancel-run-btn {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  padding: 0.28rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cancel-run-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.3);
+  border-color: #ef4444;
+}
+
+.cancel-run-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.clear-run-btn {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  padding: 0.25rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.clear-run-btn:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+
 /* Gateway Status Pill & Simulate Button */
 .gateway-status-pill {
   display: flex;
@@ -1813,11 +1962,6 @@ body,
   font-size: 0.7rem;
   color: #475569;
   margin-top: 0.4rem;
-}
-
-  padding: 0.25rem 0.55rem;
-  border-radius: 6px;
-  font-weight: 500;
 }
 
 .template-invalid-pill {
