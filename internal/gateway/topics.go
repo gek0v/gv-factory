@@ -18,6 +18,8 @@ const (
 	TopicRunCancelled         = "ov.run.cancelled"
 	TopicFactoryMetrics       = "ov.factory.metrics"
 	TopicGateApprovalRequired = "gate.approval_required"
+	TopicGateResolved         = "gate.resolved"
+	TopicGateAudit            = "gate.audit"
 	TopicMergerDivertedToPR   = "merger.diverted_to_pr"
 	TopicAllTasks             = "ov.task.*"
 	TopicAllEvents            = "ov.>"
