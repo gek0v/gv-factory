@@ -23,10 +23,20 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
         startedAt: new Date().toISOString(),
       });
     }
-  } else if (type === 'ov.task.log' || type === 'task.log') {
+  } else if (
+    type === 'ov.task.log' ||
+    type === 'task.log' ||
+    type === 'ov.worker.logs' ||
+    type === 'worker.logs'
+  ) {
     if (stepId) {
       const stream = (payload.stream as 'stdout' | 'stderr') || 'stdout';
-      const msg = (payload.message as string) || (payload.log as string) || (payload.line as string) || '';
+      const msg =
+        (payload.chunk as string) ||
+        (payload.message as string) ||
+        (payload.log as string) ||
+        (payload.line as string) ||
+        '';
       const ts = (payload.timestamp as string) || (event.timestamp ? String(event.timestamp) : undefined);
       if (msg) {
         store.appendNodeLog(stepId, stream, msg, ts);

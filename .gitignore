@@ -54,7 +54,7 @@ coverage.*
 *.prof
 
 # Logs
-logs/
+/logs/
 *.log
 
 # Archivos del sistema operativo y editores
