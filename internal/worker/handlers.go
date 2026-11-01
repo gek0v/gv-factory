@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/sandbox"
@@ -38,11 +40,33 @@ type CommandExecutor interface {
 	ExecuteCommand(ctx context.Context, dir string, name string, args []string, env []string) (stdout string, stderr string, exitCode int, err error)
 }
 
+// StreamingCommandExecutor extends CommandExecutor to support real-time piping into io.Writer sinks.
+type StreamingCommandExecutor interface {
+	CommandExecutor
+	ExecuteCommandStreaming(
+		ctx context.Context,
+		dir string,
+		name string,
+		args []string,
+		env []string,
+		stdoutWriter io.Writer,
+		stderrWriter io.Writer,
+	) (exitCode int, err error)
+}
+
 // DefaultCommandExecutor executes commands via standard OS subprocesses.
 type DefaultCommandExecutor struct{}
 
-// ExecuteCommand runs an OS command inside the specified directory with given arguments and environment.
-func (e *DefaultCommandExecutor) ExecuteCommand(ctx context.Context, dir string, name string, args []string, env []string) (string, string, int, error) {
+// ExecuteCommandStreaming executes an OS command and streams stdout/stderr directly into writers.
+func (e *DefaultCommandExecutor) ExecuteCommandStreaming(
+	ctx context.Context,
+	dir string,
+	name string,
+	args []string,
+	env []string,
+	stdoutWriter io.Writer,
+	stderrWriter io.Writer,
+) (int, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -51,14 +75,10 @@ func (e *DefaultCommandExecutor) ExecuteCommand(ctx context.Context, dir string,
 		cmd.Env = append(os.Environ(), env...)
 	}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 
 	err := cmd.Run()
-	stdout := stdoutBuf.String()
-	stderr := stderrBuf.String()
-
 	exitCode := 0
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -69,7 +89,14 @@ func (e *DefaultCommandExecutor) ExecuteCommand(ctx context.Context, dir string,
 		}
 	}
 
-	return stdout, stderr, exitCode, err
+	return exitCode, err
+}
+
+// ExecuteCommand runs an OS command inside the specified directory with given arguments and environment.
+func (e *DefaultCommandExecutor) ExecuteCommand(ctx context.Context, dir string, name string, args []string, env []string) (string, string, int, error) {
+	var stdoutBuf, stderrBuf bytes.Buffer
+	exitCode, err := e.ExecuteCommandStreaming(ctx, dir, name, args, env, &stdoutBuf, &stderrBuf)
+	return stdoutBuf.String(), stderrBuf.String(), exitCode, err
 }
 
 // AgentStepExecutor abstracts agent cognition and step execution.
@@ -279,8 +306,11 @@ func (h *WasmPluginHandler) HandleTask(ctx context.Context, task *TaskMessage) (
 
 // GitSandboxHandler executes commands in isolated Git Sandboxes.
 type GitSandboxHandler struct {
-	mgr      SandboxManager
-	executor CommandExecutor
+	mgr       SandboxManager
+	executor  CommandExecutor
+	publisher EventPublisher
+	workerID  string
+	chunkSize int
 }
 
 // SandboxHandlerOption configures GitSandboxHandler.
@@ -290,6 +320,27 @@ type SandboxHandlerOption func(*GitSandboxHandler)
 func WithCommandExecutor(exec CommandExecutor) SandboxHandlerOption {
 	return func(h *GitSandboxHandler) {
 		h.executor = exec
+	}
+}
+
+// WithSandboxPublisher configures an EventPublisher for real-time log chunk streaming.
+func WithSandboxPublisher(pub EventPublisher) SandboxHandlerOption {
+	return func(h *GitSandboxHandler) {
+		h.publisher = pub
+	}
+}
+
+// WithSandboxWorkerID configures the WorkerID reported in streamed log chunks.
+func WithSandboxWorkerID(workerID string) SandboxHandlerOption {
+	return func(h *GitSandboxHandler) {
+		h.workerID = workerID
+	}
+}
+
+// WithSandboxChunkSize configures the buffer threshold size for log chunking.
+func WithSandboxChunkSize(size int) SandboxHandlerOption {
+	return func(h *GitSandboxHandler) {
+		h.chunkSize = size
 	}
 }
 
@@ -367,9 +418,7 @@ func (h *GitSandboxHandler) HandleTask(ctx context.Context, task *TaskMessage) (
 		_ = sandbox.CleanStaleLocks(worktreeDir)
 	}
 
-	stdout, stderr, exitCode, cmdErr := h.executor.ExecuteCommand(execCtx, worktreeDir, command, payload.TargetArgs(), payload.TargetEnv())
-
-	// Mask sensitive secrets in stdout and stderr
+	// Prepare sensitive secrets
 	secrets := append([]string{}, payload.Secrets...)
 	for _, envVar := range payload.TargetEnv() {
 		parts := strings.SplitN(envVar, "=", 2)
@@ -378,8 +427,62 @@ func (h *GitSandboxHandler) HandleTask(ctx context.Context, task *TaskMessage) (
 		}
 	}
 
-	stdout = sandbox.MaskSecrets(stdout, secrets)
-	stderr = sandbox.MaskSecrets(stderr, secrets)
+	var stdout, stderr string
+	var exitCode int
+	var cmdErr error
+
+	if h.publisher != nil {
+		seqCounter := new(atomic.Int64)
+		stdoutChunker := NewStreamChunker(StreamChunkerConfig{
+			TaskID:     task.TaskID,
+			StepID:     task.StepID,
+			RunID:      task.RunID,
+			WorkerID:   h.workerID,
+			Stream:     "stdout",
+			Publisher:  h.publisher,
+			Secrets:    secrets,
+			ChunkSize:  h.chunkSize,
+			SeqCounter: seqCounter,
+		})
+		stderrChunker := NewStreamChunker(StreamChunkerConfig{
+			TaskID:     task.TaskID,
+			StepID:     task.StepID,
+			RunID:      task.RunID,
+			WorkerID:   h.workerID,
+			Stream:     "stderr",
+			Publisher:  h.publisher,
+			Secrets:    secrets,
+			ChunkSize:  h.chunkSize,
+			SeqCounter: seqCounter,
+		})
+
+		if streamingExec, ok := h.executor.(StreamingCommandExecutor); ok {
+			exitCode, cmdErr = streamingExec.ExecuteCommandStreaming(
+				execCtx,
+				worktreeDir,
+				command,
+				payload.TargetArgs(),
+				payload.TargetEnv(),
+				stdoutChunker,
+				stderrChunker,
+			)
+		} else {
+			var outRaw, errRaw string
+			outRaw, errRaw, exitCode, cmdErr = h.executor.ExecuteCommand(execCtx, worktreeDir, command, payload.TargetArgs(), payload.TargetEnv())
+			_, _ = stdoutChunker.Write([]byte(outRaw))
+			_, _ = stderrChunker.Write([]byte(errRaw))
+		}
+
+		_ = stdoutChunker.Flush()
+		_ = stderrChunker.Flush()
+
+		stdout = stdoutChunker.FullOutput()
+		stderr = stderrChunker.FullOutput()
+	} else {
+		stdout, stderr, exitCode, cmdErr = h.executor.ExecuteCommand(execCtx, worktreeDir, command, payload.TargetArgs(), payload.TargetEnv())
+		stdout = sandbox.MaskSecrets(stdout, secrets)
+		stderr = sandbox.MaskSecrets(stderr, secrets)
+	}
 
 	if payload.RecycleAfter {
 		_ = h.mgr.RecycleWorktree(ctx, task.RunID)
@@ -420,9 +523,11 @@ func (h *GitSandboxHandler) HandleTask(ctx context.Context, task *TaskMessage) (
 
 // AgentStepConfig provides dependencies for AgentStepHandler.
 type AgentStepConfig struct {
-	Caller   WasmCaller
-	Sandbox  SandboxManager
-	Executor AgentStepExecutor
+	Caller    WasmCaller
+	Sandbox   SandboxManager
+	Executor  AgentStepExecutor
+	Publisher EventPublisher
+	WorkerID  string
 }
 
 // AgentStepHandler processes cognitive agent tasks.
@@ -473,6 +578,21 @@ func (h *AgentStepHandler) HandleTask(ctx context.Context, task *TaskMessage) (*
 	output := fmt.Sprintf("agent step [%s:%s] completed for task %s", role, action, task.TaskID)
 	if payload.Prompt != "" {
 		output = fmt.Sprintf("executed prompt for task %s (%s)", task.TaskID, role)
+	}
+
+	if h.cfg.Publisher != nil {
+		seqCounter := new(atomic.Int64)
+		chunker := NewStreamChunker(StreamChunkerConfig{
+			TaskID:     task.TaskID,
+			StepID:     task.StepID,
+			RunID:      task.RunID,
+			WorkerID:   h.cfg.WorkerID,
+			Stream:     "stdout",
+			Publisher:  h.cfg.Publisher,
+			SeqCounter: seqCounter,
+		})
+		_, _ = chunker.Write([]byte(output + "\n"))
+		_ = chunker.Flush()
 	}
 
 	return &TaskResult{

@@ -102,10 +102,16 @@ func NewWorker(cfg WorkerConfig) *Worker {
 
 	// Register concrete execution sub-engine handlers
 	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.NewWasmPluginHandler(pluginHost))
-	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.NewGitSandboxHandler(sb))
+	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.NewGitSandboxHandler(
+		sb,
+		worker.WithSandboxPublisher(gw),
+		worker.WithSandboxWorkerID(cfg.WorkerID),
+	))
 	router.RegisterHandler(worker.TaskTypeAgentStep, worker.NewAgentStepHandler(worker.AgentStepConfig{
-		Caller:  pluginHost,
-		Sandbox: sb,
+		Caller:    pluginHost,
+		Sandbox:   sb,
+		Publisher: gw,
+		WorkerID:  cfg.WorkerID,
 	}))
 
 	consumer := worker.NewConsumer(worker.ConsumerConfig{

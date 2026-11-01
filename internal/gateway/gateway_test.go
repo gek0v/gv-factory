@@ -178,6 +178,54 @@ func TestGateway_TaskLogAndSpanPayloadSerialization(t *testing.T) {
 	}
 }
 
+func TestGateway_WorkerLogsTopicAndPayload(t *testing.T) {
+	if TopicWorkerLogs != "ov.worker.logs" {
+		t.Errorf("expected TopicWorkerLogs to be 'ov.worker.logs', got %q", TopicWorkerLogs)
+	}
+
+	if !matchesTopic(TopicAllEvents, TopicWorkerLogs) {
+		t.Errorf("expected matchesTopic(%s, %s) to be true", TopicAllEvents, TopicWorkerLogs)
+	}
+	if !matchesTopic(TopicWorkerLogs, TopicWorkerLogs) {
+		t.Errorf("expected matchesTopic(%s, %s) to be true", TopicWorkerLogs, TopicWorkerLogs)
+	}
+	if matchesTopic(TopicAllTasks, TopicWorkerLogs) {
+		t.Errorf("expected matchesTopic(%s, %s) to be false", TopicAllTasks, TopicWorkerLogs)
+	}
+	if matchesTopic(TopicAllEvents, "factory.triggers.github") {
+		t.Errorf("expected matchesTopic(%s, %s) to be false", TopicAllEvents, "factory.triggers.github")
+	}
+
+	chunkPayload := WorkerLogChunkPayload{
+		TaskID:    "task-1",
+		StepID:    "step-1",
+		RunID:     "run-1",
+		WorkerID:  "worker-1",
+		Stream:    "stdout",
+		Chunk:     "hello world\n",
+		Sequence:  1,
+		Timestamp: 1700000000,
+	}
+
+	data, err := json.Marshal(chunkPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal WorkerLogChunkPayload: %v", err)
+	}
+
+	var decoded WorkerLogChunkPayload
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal WorkerLogChunkPayload: %v", err)
+	}
+	if decoded.TaskID != "task-1" || decoded.Stream != "stdout" || decoded.Sequence != 1 || decoded.WorkerID != "worker-1" {
+		t.Errorf("unexpected decoded payload: %+v", decoded)
+	}
+
+	m := chunkPayload.ToMap()
+	if m["task_id"] != "task-1" || m["chunk"] != "hello world\n" || m["sequence"] != int64(1) {
+		t.Errorf("unexpected map conversion: %+v", m)
+	}
+}
+
 func TestHub_RunScopedBroadcastIsolation(t *testing.T) {
 	hub := NewHub()
 	defer hub.Close()
