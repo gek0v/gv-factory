@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
 	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 )
@@ -589,6 +590,83 @@ func TestGitSandboxHandler_MaskSecrets(t *testing.T) {
 	}
 }
 
+func TestGitSandboxHandler_StreamingWithPublisher(t *testing.T) {
+	mgr := &mockSandboxManager{worktreePath: "/tmp/wt"}
+	collector := &mockChunkEventCollector{}
+
+	exec := &mockCommandExecutor{
+		executeFunc: func(ctx context.Context, dir string, name string, args []string, env []string) (string, string, int, error) {
+			return "step 1: downloading\nstep 2: done\n", "warning: non-fatal\n", 0, nil
+		},
+	}
+
+	handler := NewGitSandboxHandler(
+		mgr,
+		WithCommandExecutor(exec),
+		WithSandboxPublisher(collector),
+		WithSandboxWorkerID("worker-streaming"),
+	)
+
+	payload, _ := json.Marshal(GitSandboxPayload{
+		Command: "make",
+		Args:    []string{"build"},
+		Secrets: []string{"secret-val"},
+	})
+	task := &TaskMessage{
+		TaskID:   "t-stream",
+		RunID:    "r-stream",
+		StepID:   "s-stream",
+		TaskType: TaskTypeGitSandbox,
+		Payload:  payload,
+	}
+
+	res, err := handler.HandleTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected task to succeed")
+	}
+
+	events := collector.getEvents()
+	if len(events) < 2 {
+		t.Fatalf("expected at least 2 log chunk events, got %d", len(events))
+	}
+
+	for _, ev := range events {
+		if ev.Type != gateway.TopicWorkerLogs {
+			t.Errorf("expected topic %s, got %s", gateway.TopicWorkerLogs, ev.Type)
+		}
+		if ev.RunID != "r-stream" || ev.TaskID != "t-stream" {
+			t.Errorf("unexpected IDs in event: %+v", ev)
+		}
+		if ev.Payload["worker_id"] != "worker-streaming" {
+			t.Errorf("expected worker_id 'worker-streaming', got %v", ev.Payload["worker_id"])
+		}
+	}
+
+	if !strings.Contains(res.Output, "step 1: downloading") {
+		t.Errorf("expected full output in TaskResult, got %s", res.Output)
+	}
+}
+
+func TestGitSandboxHandler_Options(t *testing.T) {
+	mgr := &mockSandboxManager{worktreePath: "/tmp/wt"}
+	exec := &mockCommandExecutor{}
+	h := NewGitSandboxHandler(
+		mgr,
+		WithCommandExecutor(exec),
+		WithSandboxChunkSize(512),
+		WithSandboxWorkerID("worker-custom"),
+	)
+	if h.chunkSize != 512 {
+		t.Errorf("expected chunkSize 512, got %d", h.chunkSize)
+	}
+	if h.workerID != "worker-custom" {
+		t.Errorf("expected workerID 'worker-custom', got %q", h.workerID)
+	}
+}
+
 func TestGitSandboxHandler_RecycleAfter(t *testing.T) {
 	mgr := &mockSandboxManager{worktreePath: "/tmp/wt"}
 	exec := &mockCommandExecutor{}
@@ -665,6 +743,51 @@ func TestAgentStepHandler_StructuredStep_Success(t *testing.T) {
 	}
 	if res.Data["role"] != "spec_writer" || res.Data["action"] != "plan" {
 		t.Fatalf("unexpected data: %v", res.Data)
+	}
+}
+
+func TestAgentStepHandler_StreamingLogs(t *testing.T) {
+	collector := &mockChunkEventCollector{}
+	handler := NewAgentStepHandler(AgentStepConfig{
+		Publisher: collector,
+		WorkerID:  "agent-worker-1",
+	})
+
+	payload, _ := json.Marshal(AgentStepPayload{
+		StepName: "code_review",
+		Role:     "reviewer",
+		Action:   "validate",
+	})
+	task := &TaskMessage{
+		TaskID:   "t-agent-stream",
+		RunID:    "r-agent-stream",
+		StepID:   "s-agent-stream",
+		TaskType: TaskTypeAgentStep,
+		Payload:  payload,
+	}
+
+	res, err := handler.HandleTask(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("expected success")
+	}
+
+	events := collector.getEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 chunk event emitted for agent step, got %d", len(events))
+	}
+
+	ev := events[0]
+	if ev.Type != gateway.TopicWorkerLogs {
+		t.Errorf("expected topic %s, got %s", gateway.TopicWorkerLogs, ev.Type)
+	}
+	if ev.Payload["worker_id"] != "agent-worker-1" {
+		t.Errorf("expected worker_id 'agent-worker-1', got %v", ev.Payload["worker_id"])
+	}
+	if !strings.Contains(ev.Payload["chunk"].(string), "agent step [reviewer:validate]") {
+		t.Errorf("unexpected chunk content: %v", ev.Payload["chunk"])
 	}
 }
 

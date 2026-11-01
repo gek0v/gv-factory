@@ -543,6 +543,58 @@ func TestServer_RunsLifecycle(t *testing.T) {
 			t.Errorf("expected body NOT to contain 'other log', got: %s", body)
 		}
 	})
+
+	t.Run("GET /api/v1/runs/{id}/events streams WorkerLogChunkPayload events", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/runs/"+createdRunID+"/events", nil)
+		rec := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			mux.ServeHTTP(rec, req)
+			close(done)
+		}()
+
+		time.Sleep(30 * time.Millisecond)
+
+		chunkPayload := gateway.WorkerLogChunkPayload{
+			TaskID:    "task-stream-42",
+			StepID:    "step-compile",
+			RunID:     createdRunID,
+			WorkerID:  "worker-node-1",
+			Stream:    "stdout",
+			Chunk:     "compiling go modules in sandbox...\n",
+			Sequence:  1,
+			Timestamp: time.Now().UnixMilli(),
+		}
+
+		_ = gw.PublishTaskEvent(context.Background(), gateway.Event{
+			Type:      gateway.TopicWorkerLogs,
+			RunID:     createdRunID,
+			TaskID:    "task-stream-42",
+			Payload:   chunkPayload.ToMap(),
+			Timestamp: chunkPayload.Timestamp,
+		})
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+			t.Fatal("ServeHTTP did not terminate after client context cancellation")
+		}
+
+		body := rec.Body.String()
+		if !strings.Contains(body, "ov.worker.logs") {
+			t.Errorf("expected body to contain event type 'ov.worker.logs', got: %s", body)
+		}
+		if !strings.Contains(body, "compiling go modules in sandbox...") {
+			t.Errorf("expected body to contain streamed log chunk, got: %s", body)
+		}
+	})
 }
 
 func TestServer_CORS(t *testing.T) {

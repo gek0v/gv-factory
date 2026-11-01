@@ -26,6 +26,7 @@ const (
 	TopicWorkTasks            = "ov.work.tasks"
 	TopicWorkTasksFilter      = "ov.work.>"
 	TopicWorkerHeartbeat      = "ov.worker.heartbeat"
+	TopicWorkerLogs           = "ov.worker.logs"
 	TopicAllTasks             = "ov.task.*"
 	TopicAllEvents            = "ov.>"
 
@@ -51,6 +52,35 @@ type TaskSpanPayload struct {
 	Tokens     int64  `json:"tokens"`
 }
 
+// WorkerLogChunkPayload represents a discrete chunk of real-time worker execution logs.
+type WorkerLogChunkPayload struct {
+	TaskID    string `json:"task_id"`
+	StepID    string `json:"step_id"`
+	RunID     string `json:"run_id"`
+	WorkerID  string `json:"worker_id,omitempty"`
+	Stream    string `json:"stream"` // "stdout" | "stderr"
+	Chunk     string `json:"chunk"`
+	Sequence  int64  `json:"sequence"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// ToMap converts WorkerLogChunkPayload into a map[string]any for event payload embedding.
+func (p WorkerLogChunkPayload) ToMap() map[string]any {
+	m := map[string]any{
+		"task_id":   p.TaskID,
+		"step_id":   p.StepID,
+		"run_id":    p.RunID,
+		"stream":    p.Stream,
+		"chunk":     p.Chunk,
+		"sequence":  p.Sequence,
+		"timestamp": p.Timestamp,
+	}
+	if p.WorkerID != "" {
+		m["worker_id"] = p.WorkerID
+	}
+	return m
+}
+
 // TriggerTopicForSource returns the NATS topic for triggers from a specific provider source (e.g. "factory.triggers.github").
 func TriggerTopicForSource(source string) string {
 	if source == "" {
@@ -70,7 +100,7 @@ type Event struct {
 
 // matchesTopic evaluates NATS-style wildcard patterns (* for single token, > for remainder).
 func matchesTopic(pattern, topic string) bool {
-	if pattern == topic || pattern == ">" || pattern == "ov.>" {
+	if pattern == topic || pattern == ">" {
 		return true
 	}
 	pParts := strings.Split(pattern, ".")
