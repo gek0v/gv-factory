@@ -148,3 +148,75 @@ func TestWorker_DistributedConsumer_AgentStepAndSandbox(t *testing.T) {
 		}
 	}
 }
+
+func TestWorker_Integration_RealHandlersDispatch(t *testing.T) {
+	w := NewWorker(WorkerConfig{
+		DisableNATS:   true,
+		WorkerID:      "test-worker-real-dispatch",
+		MaxConcurrent: 2,
+	})
+	defer w.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := w.Start(ctx); err != nil {
+		t.Fatalf("failed to start worker: %v", err)
+	}
+
+	taskEvCh := make(chan gateway.Event, 20)
+	unsubTasks, err := w.Gateway.SubscribeTaskEvents(ctx, gateway.TopicAllTasks, taskEvCh)
+	if err != nil {
+		t.Fatalf("failed to subscribe to task events: %v", err)
+	}
+	defer unsubTasks()
+
+	// 1. Dispatch GitSandbox task with echo command in temp dir
+	sandboxPayload, _ := json.Marshal(worker.GitSandboxPayload{
+		Command:    "go",
+		Args:       []string{"version"},
+		WorkingDir: t.TempDir(),
+	})
+	sandboxTask, _ := json.Marshal(worker.TaskMessage{
+		TaskID:   "task-real-sb",
+		RunID:    "run-real-sb",
+		StepID:   "step-real-sb",
+		TaskType: worker.TaskTypeGitSandbox,
+		Payload:  sandboxPayload,
+	})
+	_ = w.QueueBackend.Publish(worker.TopicWorkTasks, sandboxTask)
+
+	// 2. Dispatch AgentStep task with structured payload
+	agentPayload, _ := json.Marshal(worker.AgentStepPayload{
+		StepName: "code_review",
+		Role:     "reviewer",
+		Action:   "validate",
+		Prompt:   "Verify test coverage",
+	})
+	agentTask, _ := json.Marshal(worker.TaskMessage{
+		TaskID:   "task-real-ag",
+		RunID:    "run-real-ag",
+		StepID:   "step-real-ag",
+		TaskType: worker.TaskTypeAgentStep,
+		Payload:  agentPayload,
+	})
+	_ = w.QueueBackend.Publish(worker.TopicWorkTasks, agentTask)
+
+	var sbCompleted, agCompleted bool
+	timeout := time.After(3 * time.Second)
+	for !sbCompleted || !agCompleted {
+		select {
+		case ev := <-taskEvCh:
+			if ev.Type == gateway.TopicTaskCompleted {
+				if ev.TaskID == "task-real-sb" {
+					sbCompleted = true
+				}
+				if ev.TaskID == "task-real-ag" {
+					agCompleted = true
+				}
+			}
+		case <-timeout:
+			t.Fatalf("timeout waiting for real handlers dispatch (sb=%v, ag=%v)", sbCompleted, agCompleted)
+		}
+	}
+}
