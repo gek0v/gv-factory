@@ -5,6 +5,7 @@ package version
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -110,6 +111,56 @@ func TestGoReleaserV2Schema(t *testing.T) {
 					t.Errorf("archive[%d] format_overrides[%d] 'format' must be a string", i, j)
 				}
 			}
+		}
+	}
+}
+
+func TestGoReleaserBrewResilience(t *testing.T) {
+	rootPath := filepath.Join("..", "..", ".goreleaser.yaml")
+	data, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatalf("failed to read .goreleaser.yaml at %q: %v", rootPath, err)
+	}
+
+	var config map[string]any
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatalf("failed to unmarshal .goreleaser.yaml: %v", err)
+	}
+
+	rawBrews, ok := config["brews"]
+	if !ok {
+		t.Fatalf("missing required 'brews' section at root")
+	}
+
+	brews, ok := rawBrews.([]any)
+	if !ok || len(brews) == 0 {
+		t.Fatalf("'brews' must be a non-empty slice")
+	}
+
+	for i, b := range brews {
+		brewMap, ok := b.(map[string]any)
+		if !ok {
+			t.Fatalf("brew[%d] must be a map", i)
+		}
+
+		name, _ := brewMap["name"].(string)
+
+		skipUploadVal, hasSkipUpload := brewMap["skip_upload"]
+		if !hasSkipUpload {
+			t.Errorf("brew[%d] (%s) is missing required 'skip_upload' setting for publication resilience", i, name)
+			continue
+		}
+
+		skipStr, ok := skipUploadVal.(string)
+		if !ok || skipStr != "auto" {
+			t.Errorf("brew[%d] (%s) 'skip_upload' must be 'auto', got %v (%T)", i, name, skipUploadVal, skipUploadVal)
+		}
+	}
+
+	if goreleaserBin, err := exec.LookPath("goreleaser"); err == nil {
+		cmd := exec.Command(goreleaserBin, "check", "-q", "-f", rootPath)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("goreleaser check validation failed: %v, output: %s", err, string(out))
 		}
 	}
 }
