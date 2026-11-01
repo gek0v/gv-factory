@@ -119,4 +119,37 @@ describe('dispatchGatewayEvent for logs, spans, and run lifecycle', () => {
     );
     expect(useFactoryFlowStore.getState().activeRunState).toBe('CANCELLED');
   });
+
+  it('handles gate.approval_required for MCP agent tool gates and flags caller node', () => {
+    const store = useFactoryFlowStore.getState();
+    const builderNode = store.nodes.find((n) => n.data.role === 'builder_tdd') || store.nodes[1];
+    expect(builderNode).toBeTruthy();
+
+    const toolGateEvent: GatewayEvent = {
+      type: 'gate.approval_required',
+      run_id: 'run-mcp-42',
+      payload: {
+        token: 'hmac-tool-sig-abc',
+        gate_type: 'tool',
+        tool_name: 'bash_exec',
+        arguments: { command: 'rm -rf /tmp/target && make build' },
+        caller_id: builderNode.id,
+        timeout_ms: 45000,
+      },
+    };
+
+    dispatchGatewayEvent(toolGateEvent, store);
+
+    const activeApproval = useFactoryFlowStore.getState().activeApproval;
+    expect(activeApproval).toBeTruthy();
+    expect(activeApproval?.gateType).toBe('tool');
+    expect(activeApproval?.toolName).toBe('bash_exec');
+    expect(activeApproval?.callerId).toBe(builderNode.id);
+    expect(activeApproval?.token).toBe('hmac-tool-sig-abc');
+    expect(activeApproval?.timeoutMs).toBe(45000);
+
+    const updatedNode = useFactoryFlowStore.getState().nodes.find((n) => n.id === builderNode.id);
+    expect(updatedNode?.data.status).toBe('awaiting_approval');
+  });
 });
+

@@ -48,10 +48,15 @@ export interface ReviewerDiagnostic {
   findings: string[];
 }
 
+export type GateType = 'pipeline' | 'tool';
+
+export type ToolRiskLevel = 'critical' | 'high' | 'sensitive' | 'standard';
+
 export interface GateApprovalPayload {
   runId: string;
   token: string;
   expiresAt: string;
+  gateType?: GateType | 'pipeline_gate' | 'tool_gate';
   coveragePercent?: number;
   securityAlerts?: number;
   minCoveragePercent?: number;
@@ -59,6 +64,12 @@ export interface GateApprovalPayload {
   diagnostics?: ReviewerDiagnostic[];
   headBranch?: string;
   baseBranch?: string;
+  toolName?: string;
+  toolArguments?: Record<string, unknown> | string;
+  callerId?: string;
+  stepId?: string;
+  timeoutMs?: number;
+  rejectionReason?: string;
 }
 
 export type GatewayConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';

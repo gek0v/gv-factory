@@ -111,6 +111,13 @@ export const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
             <span>Rootless Worktree Sandbox</span>
           </div>
         )}
+
+        {nodeData.status === 'awaiting_approval' && (
+          <div className="node-awaiting-badge">
+            <span className="awaiting-dot" />
+            <span>Awaiting Operator Approval</span>
+          </div>
+        )}
       </div>
 
       <Handle

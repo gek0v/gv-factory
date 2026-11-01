@@ -100,19 +100,48 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
   } else if (type === 'gate.approval_required' || type === 'ov.gate.approval_required') {
     const runId = event.run_id || (payload.run_id as string) || `run-${Date.now()}`;
     const token = (payload.token as string) || 'hmac-approval-token-xyz';
-    const expiresAt = (payload.expires_at as string) || new Date(Date.now() + 3600000).toISOString();
+    const timeoutMs = (payload.timeout_ms as number) ?? (payload.timeoutMs as number);
+    const expiresAt =
+      (payload.expires_at as string) ||
+      (payload.expiresAt as string) ||
+      (timeoutMs ? new Date(Date.now() + timeoutMs).toISOString() : new Date(Date.now() + 3600000).toISOString());
 
-    const approverNode = store.nodes.find(
-      (n) => n.data.role === 'approver' || n.id.includes('approver') || n.id.includes('gate')
-    );
-    if (approverNode) {
-      store.updateNodeStatus(approverNode.id, 'awaiting_approval');
+    const rawGateType = (payload.gate_type as string) || (payload.gateType as string);
+    const toolName = (payload.tool_name as string) || (payload.toolName as string);
+    const callerId = (payload.caller_id as string) || (payload.callerId as string) || stepId;
+    const toolArguments = (payload.arguments as Record<string, unknown> | string) ?? (payload.tool_arguments as Record<string, unknown> | string);
+
+    const isToolGate = rawGateType === 'tool' || rawGateType === 'tool_gate' || Boolean(toolName);
+    const gateType = isToolGate ? 'tool' : 'pipeline';
+
+    if (callerId) {
+      const targetNode = store.nodes.find(
+        (n) => n.id === callerId || (n.data as { stepId?: string })?.stepId === callerId
+      );
+      if (targetNode) {
+        store.updateNodeStatus(targetNode.id, 'awaiting_approval');
+      }
+    }
+
+    if (!callerId || !isToolGate) {
+      const approverNode = store.nodes.find(
+        (n) => n.data.role === 'approver' || n.id.includes('approver') || n.id.includes('gate')
+      );
+      if (approverNode) {
+        store.updateNodeStatus(approverNode.id, 'awaiting_approval');
+      }
     }
 
     const approvalPayload: GateApprovalPayload = {
       runId,
       token,
       expiresAt,
+      gateType,
+      toolName,
+      toolArguments,
+      callerId,
+      stepId: stepId || callerId,
+      timeoutMs,
       coveragePercent: (payload.coverage_percent as number) ?? 93.8,
       securityAlerts: (payload.security_alerts as number) ?? 0,
       minCoveragePercent: (payload.min_coverage_percent as number) ?? 90.0,
