@@ -126,6 +126,27 @@ func (c *EventCarrier) Keys() []string {
 	return keys
 }
 
+// InjectPayload serializes the active trace context into a payload map under "_trace".
+func InjectPayload(ctx context.Context, payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	carrier := NewEventCarrier(payload)
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+}
+
+// ExtractPayload restores the active trace context from a payload map containing "_trace".
+func ExtractPayload(ctx context.Context, payload map[string]any) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if payload == nil {
+		return ctx
+	}
+	carrier := NewEventCarrier(payload)
+	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+}
+
 // InjectEvent serializes the active trace context into the event's payload metadata.
 func InjectEvent(ctx context.Context, ev *gateway.Event) {
 	if ev == nil {
@@ -134,18 +155,10 @@ func InjectEvent(ctx context.Context, ev *gateway.Event) {
 	if ev.Payload == nil {
 		ev.Payload = make(map[string]any)
 	}
-	carrier := NewEventCarrier(ev.Payload)
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	InjectPayload(ctx, ev.Payload)
 }
 
 // ExtractEvent restores the active trace context from the event's payload metadata.
 func ExtractEvent(ctx context.Context, ev gateway.Event) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if ev.Payload == nil {
-		return ctx
-	}
-	carrier := NewEventCarrier(ev.Payload)
-	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+	return ExtractPayload(ctx, ev.Payload)
 }

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 	"github.com/gv-factory/gv-factory/pkg/schema"
 )
 
@@ -96,6 +97,10 @@ func (i *Ingestor) GetProvider(name string) (Provider, bool) {
 
 // ProcessWebhook directly validates, normalizes, and dispatches a webhook payload without requiring an active HTTP connection.
 func (i *Ingestor) ProcessWebhook(ctx context.Context, providerName string, headers http.Header, body []byte) (*schema.TriggerEvent, error) {
+	if headers != nil {
+		ctx = telemetry.ExtractHTTP(ctx, headers)
+	}
+
 	provider, ok := i.GetProvider(providerName)
 	if !ok {
 		return nil, ErrUnsupportedProvider
@@ -121,6 +126,11 @@ func (i *Ingestor) ProcessWebhook(ctx context.Context, providerName string, head
 		return nil, err
 	}
 
+	if ev.Payload == nil {
+		ev.Payload = make(map[string]any)
+	}
+	telemetry.InjectPayload(ctx, ev.Payload)
+
 	if ev.EventType != "ping" && i.dispatcher != nil {
 		if err := i.dispatcher.Dispatch(ctx, *ev); err != nil {
 			return nil, err
@@ -132,6 +142,9 @@ func (i *Ingestor) ProcessWebhook(ctx context.Context, providerName string, head
 
 // ServeHTTP handles incoming HTTP requests on /api/v1/webhooks/{provider}.
 func (i *Ingestor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := telemetry.ExtractHTTP(r.Context(), r.Header)
+	r = r.WithContext(ctx)
+
 	if r.Method != http.MethodPost {
 		i.writeError(w, ErrMethodNotAllowed)
 		return
@@ -175,6 +188,11 @@ func (i *Ingestor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ev.Payload == nil {
+		ev.Payload = make(map[string]any)
+	}
+	telemetry.InjectPayload(ctx, ev.Payload)
+
 	// Fast acknowledgement for ping events
 	if ev.EventType == "ping" {
 		i.writeJSON(w, http.StatusOK, map[string]any{
@@ -186,7 +204,7 @@ func (i *Ingestor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Event routing & dispatch
 	if i.dispatcher != nil {
-		if err := i.dispatcher.Dispatch(r.Context(), *ev); err != nil {
+		if err := i.dispatcher.Dispatch(ctx, *ev); err != nil {
 			i.writeError(w, err)
 			return
 		}

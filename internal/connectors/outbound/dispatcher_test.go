@@ -15,7 +15,7 @@ import (
 
 func TestDispatcher_HMACSignatureAndHeaders(t *testing.T) {
 	secret := "secret-hmac-test-key"
-	var receivedSig, receivedTimestamp, receivedDelivery, receivedEvent, receivedCustom string
+	var receivedSig, receivedTimestamp, receivedDelivery, receivedEvent, receivedCustom, receivedTraceparent string
 	var receivedBody []byte
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,6 +24,7 @@ func TestDispatcher_HMACSignatureAndHeaders(t *testing.T) {
 		receivedDelivery = r.Header.Get(HeaderDelivery)
 		receivedEvent = r.Header.Get(HeaderEvent)
 		receivedCustom = r.Header.Get("X-Audit-Header")
+		receivedTraceparent = r.Header.Get("traceparent")
 		receivedBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -46,7 +47,13 @@ func TestDispatcher_HMACSignatureAndHeaders(t *testing.T) {
 		Event:     "task.completed",
 		Timestamp: 1730419200000,
 		RunID:     "run-hmac-99",
-		Data:      map[string]any{"task_name": "ast-indexer", "status": "ok"},
+		Data: map[string]any{
+			"task_name": "ast-indexer",
+			"status":    "ok",
+			"_trace": map[string]string{
+				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+		},
 	}
 
 	rec, err := disp.SendDirect(ctx, sub, payload)
@@ -72,6 +79,9 @@ func TestDispatcher_HMACSignatureAndHeaders(t *testing.T) {
 	}
 	if receivedCustom != "audit-val-123" {
 		t.Errorf("expected custom header %q, got %q", "audit-val-123", receivedCustom)
+	}
+	if receivedTraceparent != "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" {
+		t.Errorf("expected traceparent header preserved in outbound webhook, got %q", receivedTraceparent)
 	}
 
 	// 2. Verify HMAC-SHA256 signature
