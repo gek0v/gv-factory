@@ -10,7 +10,12 @@ import (
 	"os"
 )
 
-const version = "0.2.0-beta"
+var (
+	version = "0.2.0-beta"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
 
 // CLIApp encapsulates CLI I/O streams and command routing.
 type CLIApp struct {
@@ -51,7 +56,7 @@ func (app *CLIApp) Run(ctx context.Context, args []string) int {
 
 	switch command {
 	case "version", "--version", "-v":
-		fmt.Fprintf(app.Out, "ov-cli version %s\n", version)
+		fmt.Fprintf(app.Out, "ov-cli version %s (commit: %s, date: %s, built by: %s)\n", version, commit, date, builtBy)
 		return 0
 
 	case "help", "--help", "-h":

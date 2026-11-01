@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
 name: Release Please & Distribution
 
 on:
@@ -10,6 +13,7 @@ permissions:
   pull-requests: write
   packages: write
   id-token: write
+  attestations: write
 
 jobs:
   release-please:
@@ -25,69 +29,11 @@ jobs:
           release-type: go
           package-name: ov-factory
 
-  goreleaser:
-    name: Build & Publish Multi-Platform Binaries
-    runs-on: ubuntu-latest
+  release:
+    name: Trigger Production Release Pipeline
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Setup Go
-        uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
-        with:
-          go-version: '1.24'
-          check-latest: true
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@90a3faa9d0182683851fbfa97ca1a2cb983bfca3 # v6.2.1
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish-and-sign-containers:
-    name: Container Build & Cosign Signing
-    runs-on: ubuntu-latest
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Cosign (Sigstore)
-        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
-
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and Push Container Images
-        id: docker_build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: ./deployments/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/ov-server:${{ needs.release-please.outputs.tag_name }}
-            ghcr.io/${{ github.repository }}/ov-server:latest
-
-      - name: Sign Container Image with Cosign
-        run: |
-          cosign sign --yes ghcr.io/${{ github.repository }}/ov-server:${{ needs.release-please.outputs.tag_name }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag_name: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

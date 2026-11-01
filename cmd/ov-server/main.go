@@ -28,6 +28,13 @@ import (
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
+
 func main() {
 	portFlag := flag.String("port", "", "HTTP listen port (defaults to PORT env var or 8080)")
 	worktreeDir := flag.String("worktree-dir", "", "Base directory for sandbox git worktrees (defaults to OS temp directory or OV_WORKTREE_DIR)")
@@ -41,6 +48,7 @@ func main() {
 		port = "8080"
 	}
 
+	log.Printf("Starting ov-server version %s (commit: %s, date: %s, built by: %s)...", version, commit, date, builtBy)
 	fmt.Printf("Starting ov-server (Orchestrator & API Server) on port %s...\n", port)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
