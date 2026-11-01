@@ -134,6 +134,7 @@ jobs:
 
       - name: Attest Build Provenance (SLSA Level 3)
         uses: actions/attest-build-provenance@v2
+        continue-on-error: true # Non-Enterprise user-owned private repos do not support provenance attestations; continue to ensure SBOM upload succeeds
         with:
           subject-name: ghcr.io/${{ github.repository }}/${{ matrix.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
