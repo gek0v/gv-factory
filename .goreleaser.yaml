@@ -81,39 +81,34 @@ builds:
 
 archives:
   - id: ov-server
-    ids:
+    builds:
       - ov-server
     name_template: "ov-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
+    format: tar.gz
     files:
       - LICENSE*
       - README*
 
   - id: ov-worker
-    ids:
+    builds:
       - ov-worker
     name_template: "ov-worker_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
+    format: tar.gz
     files:
       - LICENSE*
       - README*
 
   - id: ov-cli
-    ids:
+    builds:
       - ov-cli
     name_template: "ov-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - tar.gz
+    format: tar.gz
     format_overrides:
       - goos: windows
-        formats:
-          - zip
+        format: zip
     files:
       - LICENSE*
       - README*
-
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
@@ -136,7 +131,7 @@ signs:
       - "${artifact}"
       - "--yes"
 
-homebrew_casks:
+brews:
   - name: ov-cli
     ids:
       - ov-cli
@@ -144,11 +139,10 @@ homebrew_casks:
       owner: gek0v
       name: homebrew-tap
       branch: main
-    directory: Casks
+    directory: Formula
     homepage: "https://github.com/gek0v/gv-factory"
     description: "Official developer CLI and workflow runner for OV-Factory"
     license: "Apache-2.0"
-
 changelog:
   sort: asc
   filters:
