@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if .Values.worker.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-worker
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: {{ .Values.worker.service.type }}
+  ports:
+    - port: {{ .Values.worker.service.port }}
+      targetPort: health
+      protocol: TCP
+      name: health
+  selector:
+    {{- include "ov-factory.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+{{- end }}

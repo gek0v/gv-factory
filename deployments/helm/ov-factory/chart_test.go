@@ -109,3 +109,49 @@ func TestValuesSchemaAndConfiguration(t *testing.T) {
 	}
 }
 
+func TestCoreWorkloadDeployments(t *testing.T) {
+	requiredFiles := []struct {
+		path     string
+		patterns []string
+	}{
+		{
+			path: filepath.Join(".", "templates", "server-deployment.yaml"),
+			patterns: []string{"kind: Deployment", "livenessProbe", "/healthz", ".Values.server.service.port", "emptyDir"},
+		},
+		{
+			path: filepath.Join(".", "templates", "server-service.yaml"),
+			patterns: []string{"kind: Service", ".Values.server.service.port", "targetPort: http"},
+		},
+		{
+			path: filepath.Join(".", "templates", "worker-deployment.yaml"),
+			patterns: []string{"kind: Deployment", "livenessProbe", ".Values.worker.service.port", ".Values.worker.persistence.mountPath"},
+		},
+		{
+			path: filepath.Join(".", "templates", "worker-service.yaml"),
+			patterns: []string{"kind: Service", ".Values.worker.service.port"},
+		},
+		{
+			path: filepath.Join(".", "templates", "web-deployment.yaml"),
+			patterns: []string{"kind: Deployment", ".Values.web.service.port", "/var/cache/nginx"},
+		},
+		{
+			path: filepath.Join(".", "templates", "web-service.yaml"),
+			patterns: []string{"kind: Service", ".Values.web.service.port"},
+		},
+	}
+
+	for _, req := range requiredFiles {
+		data, err := os.ReadFile(req.path)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", req.path, err)
+		}
+		content := string(data)
+		for _, pat := range req.patterns {
+			if !strings.Contains(content, pat) {
+				t.Errorf("File %s missing expected pattern %q", req.path, pat)
+			}
+		}
+	}
+}
+
+
