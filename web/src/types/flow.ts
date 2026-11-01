@@ -136,6 +136,8 @@ export interface ActionNodeData extends BaseNodeData {
   branchName?: string;
 }
 
+export * from './worker';
+
 export type FactoryNodeData =
   | TriggerNodeData
   | AgentNodeData

@@ -68,6 +68,11 @@ export interface FactoryFlowState {
     decision: 'APPROVE' | 'REJECT',
     rejectionReason?: string
   ) => Promise<{ success: boolean; message: string }>;
+  showWorkerDashboard: boolean;
+  setShowWorkerDashboard: (show: boolean) => void;
+  workerPool: import('./types/worker').WorkerPoolResponse | null;
+  setWorkerPool: (pool: import('./types/worker').WorkerPoolResponse | null) => void;
+  updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => void;
   setNodes: (nodes: Node<FactoryNodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
 }
@@ -82,6 +87,8 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   showGateModal: false,
   activeRunId: null,
   activeRunState: null,
+  showWorkerDashboard: false,
+  workerPool: null,
 
   onNodesChange: (changes) => {
     for (const change of changes) {
@@ -357,6 +364,46 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
 
   setBackgroundVariant: (variant: BackgroundVariant) => {
     set({ backgroundVariant: variant });
+  },
+
+  setShowWorkerDashboard: (show: boolean) => set({ showWorkerDashboard: show }),
+  setWorkerPool: (pool: import('./types/worker').WorkerPoolResponse | null) => set({ workerPool: pool }),
+  updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => {
+    const { workerPool } = get();
+    const nowIso = new Date(heartbeat.timestamp ? heartbeat.timestamp * 1000 : Date.now()).toISOString();
+    const currentWorkers = workerPool ? [...workerPool.workers] : [];
+    const index = currentWorkers.findIndex((w) => w.worker_id === heartbeat.worker_id);
+
+    const updatedWorker = {
+      worker_id: heartbeat.worker_id,
+      status: heartbeat.status || (heartbeat.active_tasks > 0 ? 'busy' : 'ready'),
+      active_tasks: heartbeat.active_tasks,
+      max_concurrency: heartbeat.max_concurrency || 1,
+      uptime_seconds: heartbeat.uptime_seconds,
+      last_heartbeat: nowIso,
+      timestamp: heartbeat.timestamp,
+    } as import('./types/worker').WorkerInfo;
+
+    if (index >= 0) {
+      currentWorkers[index] = updatedWorker;
+    } else {
+      currentWorkers.push(updatedWorker);
+    }
+
+    const totalWorkers = currentWorkers.length;
+    const activeWorkers = currentWorkers.filter((w) => w.status !== 'offline').length;
+    const totalCapacity = currentWorkers.reduce((acc, w) => acc + (w.max_concurrency || 0), 0);
+    const totalActiveTasks = currentWorkers.reduce((acc, w) => acc + (w.active_tasks || 0), 0);
+
+    set({
+      workerPool: {
+        workers: currentWorkers,
+        total_workers: totalWorkers,
+        active_workers: activeWorkers,
+        total_capacity: totalCapacity,
+        total_active_tasks: totalActiveTasks,
+      },
+    });
   },
 
   setNodes: (nodes) => set({ nodes }),

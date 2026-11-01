@@ -8,6 +8,7 @@ import { StatusBadge } from '../badges/StatusBadge';
 import { TrashIcon, XIcon, SlidersIcon } from '../icons/Icons';
 import { LogStreamViewer } from './LogStreamViewer';
 import { GitDiffViewer } from './GitDiffViewer';
+import { StepExecutionViewer } from './StepExecutionViewer';
 
 const STATUS_OPTIONS: { status: ExecutionStatus; label: string }[] = [
   { status: 'pending', label: 'Pending' },
@@ -29,7 +30,7 @@ export const NodeInspector: React.FC = () => {
     setShowGateModal,
   } = useFactoryFlowStore();
 
-  const [activeTab, setActiveTab] = useState<'config' | 'logs' | 'diff'>('config');
+  const [activeTab, setActiveTab] = useState<'config' | 'steps' | 'logs' | 'diff'>('config');
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
 
@@ -66,6 +67,13 @@ export const NodeInspector: React.FC = () => {
           onClick={() => setActiveTab('config')}
         >
           Config & Meta
+        </button>
+        <button
+          type="button"
+          className={`inspector-tab-btn ${activeTab === 'steps' ? 'active' : ''}`}
+          onClick={() => setActiveTab('steps')}
+        >
+          Steps
         </button>
         <button
           type="button"
@@ -236,6 +244,13 @@ export const NodeInspector: React.FC = () => {
               </button>
             </div>
           </>
+        )}
+
+        {activeTab === 'steps' && (
+          <StepExecutionViewer
+            nodeId={selectedNode.id}
+            stepName={(nodeData as { role?: string; stepName?: string }).role || selectedNode.id}
+          />
         )}
 
         {activeTab === 'logs' && (

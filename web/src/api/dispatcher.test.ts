@@ -151,5 +151,32 @@ describe('dispatchGatewayEvent for logs, spans, and run lifecycle', () => {
     const updatedNode = useFactoryFlowStore.getState().nodes.find((n) => n.id === builderNode.id);
     expect(updatedNode?.data.status).toBe('awaiting_approval');
   });
+
+  it('handles ov.worker.heartbeat events and updates workerPool in store', () => {
+    const store = useFactoryFlowStore.getState();
+
+    const heartbeatEvent: GatewayEvent = {
+      type: 'ov.worker.heartbeat',
+      payload: {
+        worker_id: 'worker-node-alpha',
+        active_tasks: 2,
+        max_concurrency: 4,
+        uptime_seconds: 3600,
+        timestamp: 1761998500,
+        status: 'busy',
+      },
+    };
+
+    dispatchGatewayEvent(heartbeatEvent, store);
+
+    const pool = useFactoryFlowStore.getState().workerPool;
+    expect(pool).toBeTruthy();
+    expect(pool?.total_workers).toBe(1);
+    expect(pool?.active_workers).toBe(1);
+    expect(pool?.total_capacity).toBe(4);
+    expect(pool?.total_active_tasks).toBe(2);
+    expect(pool?.workers[0].worker_id).toBe('worker-node-alpha');
+    expect(pool?.workers[0].status).toBe('busy');
+  });
 });
 

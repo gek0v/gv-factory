@@ -163,5 +163,29 @@ describe('useFactoryFlowStore', () => {
     expect(updated?.data.promptTokens).toBe(2500);
     expect(updated?.data.completionTokens).toBe(1000);
   });
+
+  it('manages worker dashboard and workerPool state', () => {
+    const store = useFactoryFlowStore.getState();
+    expect(store.showWorkerDashboard).toBe(false);
+    expect(store.workerPool).toBeNull();
+
+    store.setShowWorkerDashboard(true);
+    expect(useFactoryFlowStore.getState().showWorkerDashboard).toBe(true);
+
+    store.updateWorkerHeartbeat({
+      worker_id: 'test-w1',
+      active_tasks: 3,
+      max_concurrency: 6,
+      uptime_seconds: 120,
+      timestamp: 1761999000,
+    });
+
+    const pool = useFactoryFlowStore.getState().workerPool;
+    expect(pool).not.toBeNull();
+    expect(pool?.total_workers).toBe(1);
+    expect(pool?.total_capacity).toBe(6);
+    expect(pool?.total_active_tasks).toBe(3);
+    expect(pool?.workers[0].worker_id).toBe('test-w1');
+  });
 });
 
