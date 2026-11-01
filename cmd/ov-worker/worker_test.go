@@ -5,6 +5,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -143,6 +146,35 @@ func TestWorker_MultiFactoryPipelineSubmission(t *testing.T) {
 
 	if run == nil || run.ID != "worker-sub-1" {
 		t.Fatalf("expected run with ID worker-sub-1, got %v", run)
+	}
+}
+
+func TestWorker_HealthMux(t *testing.T) {
+	mux := NewHealthMux()
+
+	for _, ep := range []string{"/healthz", "/health"} {
+		t.Run(ep, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, ep, nil)
+			rec := httptest.NewRecorder()
+
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected HTTP 200, got %d", rec.Code)
+			}
+
+			var resp map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode JSON response: %v", err)
+			}
+
+			if resp["status"] != "ok" {
+				t.Errorf("expected status 'ok', got %v", resp["status"])
+			}
+			if resp["service"] != "ov-worker" {
+				t.Errorf("expected service 'ov-worker', got %v", resp["service"])
+			}
+		})
 	}
 }
 
