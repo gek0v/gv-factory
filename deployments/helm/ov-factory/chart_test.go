@@ -58,3 +58,54 @@ func TestChartMetadataAndHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestValuesSchemaAndConfiguration(t *testing.T) {
+	valuesPath := filepath.Join(".", "values.yaml")
+	data, err := os.ReadFile(valuesPath)
+	if err != nil {
+		t.Fatalf("Failed to read values.yaml: %v", err)
+	}
+
+	var values map[string]interface{}
+	if err := yaml.Unmarshal(data, &values); err != nil {
+		t.Fatalf("Failed to unmarshal values.yaml: %v", err)
+	}
+
+	requiredSections := []string{"global", "server", "worker", "web", "postgres", "nats", "ingress"}
+	for _, section := range requiredSections {
+		if _, ok := values[section]; !ok {
+			t.Errorf("values.yaml is missing required section %q", section)
+		}
+	}
+
+	// Verify server security context defaults
+	server, ok := values["server"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("server section is not a map")
+	}
+	secCtx, ok := server["securityContext"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("server.securityContext is not a map")
+	}
+	if secCtx["runAsNonRoot"] != true {
+		t.Errorf("Expected server.securityContext.runAsNonRoot == true, got %v", secCtx["runAsNonRoot"])
+	}
+	if secCtx["readOnlyRootFilesystem"] != true {
+		t.Errorf("Expected server.securityContext.readOnlyRootFilesystem == true, got %v", secCtx["readOnlyRootFilesystem"])
+	}
+	if secCtx["runAsUser"] != 10001 {
+		t.Errorf("Expected server.securityContext.runAsUser == 10001, got %v", secCtx["runAsUser"])
+	}
+
+	// Verify template files exist
+	configmapPath := filepath.Join(".", "templates", "configmap.yaml")
+	if _, err := os.Stat(configmapPath); err != nil {
+		t.Errorf("configmap.yaml does not exist: %v", err)
+	}
+
+	secretPath := filepath.Join(".", "templates", "secret.yaml")
+	if _, err := os.Stat(secretPath); err != nil {
+		t.Errorf("secret.yaml does not exist: %v", err)
+	}
+}
+

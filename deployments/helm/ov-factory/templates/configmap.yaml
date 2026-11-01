@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-config
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+data:
+  PORT: "8080"
+  HEALTH_PORT: "8081"
+  OV_WORKTREE_DIR: {{ .Values.worker.persistence.mountPath | quote }}
+  {{- if .Values.postgres.external.enabled }}
+  DATABASE_URL: {{ .Values.postgres.external.url | quote }}
+  {{- else }}
+  DATABASE_URL: {{ printf "postgres://%s:%s@%s-postgres:%d/%s?sslmode=disable" .Values.postgres.auth.username .Values.postgres.auth.password (include "ov-factory.fullname" .) (int .Values.postgres.service.port) .Values.postgres.auth.database | quote }}
+  {{- end }}
+  {{- if .Values.nats.external.enabled }}
+  NATS_URL: {{ .Values.nats.external.url | quote }}
+  {{- else }}
+  NATS_URL: {{ printf "nats://%s-nats:%d" (include "ov-factory.fullname" .) (int .Values.nats.service.clientPort) | quote }}
+  {{- end }}
+  {{- if .Values.secret.slackDefaultChannel }}
+  SLACK_DEFAULT_CHANNEL: {{ .Values.secret.slackDefaultChannel | quote }}
+  {{- end }}
+  {{- if .Values.secret.discordDefaultChannel }}
+  DISCORD_DEFAULT_CHANNEL: {{ .Values.secret.discordDefaultChannel | quote }}
+  {{- end }}
