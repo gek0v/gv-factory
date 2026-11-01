@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -286,8 +287,8 @@ func TestServer_RunsLifecycle(t *testing.T) {
 
 	t.Run("POST /api/v1/runs submits valid pipeline returning 201 Created", func(t *testing.T) {
 		reqBody := map[string]any{
-			"run_id":   "test-run-001",
-			"template": validTestTemplate(),
+			"run_id":    "test-run-001",
+			"template":  validTestTemplate(),
 			"repo_path": "/tmp/repo",
 			"branch":    "feat/test-001",
 		}
@@ -458,6 +459,88 @@ func TestServer_RunsLifecycle(t *testing.T) {
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404 Not Found, got %d", rec.Code)
+		}
+	})
+
+	t.Run("GET /api/v1/runs/{id}/events returns 404 for non-existent run", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/runs/non-existent-id/events", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 Not Found, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/v1/runs/{id}/events returns 405 Method Not Allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/runs/"+createdRunID+"/events", nil)
+		rec := httptest.NewRecorder()
+
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
+		}
+	})
+
+	t.Run("GET /api/v1/runs/{id}/events streams SSE filtered for run", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/runs/"+createdRunID+"/events", nil)
+		rec := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			mux.ServeHTTP(rec, req)
+			close(done)
+		}()
+
+		// Wait for registration
+		time.Sleep(30 * time.Millisecond)
+
+		// Broadcast event for another run
+		_ = gw.PublishTaskEvent(context.Background(), gateway.Event{
+			Type:   gateway.TopicTaskLog,
+			RunID:  "other-run-id",
+			TaskID: "step-1",
+			Payload: map[string]any{
+				"stream":  "stdout",
+				"message": "other log",
+			},
+		})
+
+		// Broadcast event for this run
+		_ = gw.PublishTaskEvent(context.Background(), gateway.Event{
+			Type:   gateway.TopicTaskLog,
+			RunID:  createdRunID,
+			TaskID: "step-2",
+			Payload: map[string]any{
+				"stream":  "stdout",
+				"message": "my run log",
+			},
+		})
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+			t.Fatal("ServeHTTP did not terminate after client context cancellation")
+		}
+
+		if rec.Header().Get("Content-Type") != "text/event-stream" {
+			t.Errorf("expected Content-Type text/event-stream, got %s", rec.Header().Get("Content-Type"))
+		}
+
+		body := rec.Body.String()
+		if !strings.Contains(body, "my run log") {
+			t.Errorf("expected body to contain 'my run log', got: %s", body)
+		}
+		if strings.Contains(body, "other log") {
+			t.Errorf("expected body NOT to contain 'other log', got: %s", body)
 		}
 	})
 }

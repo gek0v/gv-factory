@@ -16,15 +16,15 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
-	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 )
 
 type orchestratorMockCaller struct {
-	mu           sync.Mutex
-	delay        time.Duration
+	mu            sync.Mutex
+	delay         time.Duration
 	tokensPerCall int
-	callCount    map[string]int
+	callCount     map[string]int
 }
 
 func newOrchestratorMockCaller(delay time.Duration, tokens int) *orchestratorMockCaller {
@@ -640,5 +640,50 @@ CheckReceived:
 	}
 }
 
+func TestOrchestrator_OnTaskEvent_SpanAndCompletedTokensDeduplication(t *testing.T) {
+	orchestrator := &MultiFactoryOrchestrator{
+		registry:   make(map[string]*FactoryRun),
+		taskTokens: make(map[string]int64),
+	}
 
+	run := &FactoryRun{
+		ID:         "run-dedup",
+		TotalSteps: 2,
+	}
+	orchestrator.registry["run-dedup"] = run
 
+	// 1. Emit TopicTaskSpan with 200 tokens
+	spanEvent := gateway.Event{
+		Type:   gateway.TopicTaskSpan,
+		RunID:  "run-dedup",
+		TaskID: "step-1",
+		Payload: map[string]any{
+			"tokens": int64(200),
+		},
+	}
+	orchestrator.onTaskEvent(spanEvent)
+
+	if run.TokensConsumed != 200 {
+		t.Errorf("expected 200 tokens after span event, got %d", run.TokensConsumed)
+	}
+
+	// 2. Emit TopicTaskCompleted with same 200 tokens
+	completedEvent := gateway.Event{
+		Type:   gateway.TopicTaskCompleted,
+		RunID:  "run-dedup",
+		TaskID: "step-1",
+		Payload: map[string]any{
+			"data": map[string]any{
+				"tokens": int64(200),
+			},
+		},
+	}
+	orchestrator.onTaskEvent(completedEvent)
+
+	if run.TokensConsumed != 200 {
+		t.Errorf("expected tokens to remain 200 (deduplicated), got %d", run.TokensConsumed)
+	}
+	if orchestrator.totalTokens != 200 {
+		t.Errorf("expected totalTokens to be 200, got %d", orchestrator.totalTokens)
+	}
+}

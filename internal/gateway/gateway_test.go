@@ -6,10 +6,12 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"github.com/gv-factory/gv-factory/pkg/schema"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gv-factory/gv-factory/pkg/schema"
 )
 
 func TestGateway_InMemoryFallback(t *testing.T) {
@@ -112,6 +114,216 @@ func TestGateway_WildcardMatching(t *testing.T) {
 	}
 	if receivedGlobal != 3 {
 		t.Errorf("expected 3 global events, got %d", receivedGlobal)
+	}
+}
+
+func TestGateway_TopicTaskLogAndSpanConstants(t *testing.T) {
+	if TopicTaskLog != "ov.task.log" {
+		t.Errorf("expected TopicTaskLog to be 'ov.task.log', got '%s'", TopicTaskLog)
+	}
+	if TopicTaskSpan != "ov.task.span" {
+		t.Errorf("expected TopicTaskSpan to be 'ov.task.span', got '%s'", TopicTaskSpan)
+	}
+
+	if !matchesTopic(TopicAllTasks, TopicTaskLog) {
+		t.Errorf("expected matchesTopic(%s, %s) to be true", TopicAllTasks, TopicTaskLog)
+	}
+	if !matchesTopic(TopicAllTasks, TopicTaskSpan) {
+		t.Errorf("expected matchesTopic(%s, %s) to be true", TopicAllTasks, TopicTaskSpan)
+	}
+	if !matchesTopic(TopicAllEvents, TopicTaskLog) {
+		t.Errorf("expected matchesTopic(%s, %s) to be true", TopicAllEvents, TopicTaskLog)
+	}
+	if !matchesTopic(TopicAllEvents, TopicTaskSpan) {
+		t.Errorf("expected matchesTopic(%s, %s) to be true", TopicAllEvents, TopicTaskSpan)
+	}
+}
+
+func TestGateway_TaskLogAndSpanPayloadSerialization(t *testing.T) {
+	logPayload := TaskLogPayload{
+		Stream:    "stdout",
+		Message:   "line 1\nline 2",
+		Timestamp: 1234567890,
+	}
+	data, err := json.Marshal(logPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal TaskLogPayload: %v", err)
+	}
+	var unmarshaledLog TaskLogPayload
+	if err := json.Unmarshal(data, &unmarshaledLog); err != nil {
+		t.Fatalf("failed to unmarshal TaskLogPayload: %v", err)
+	}
+	if unmarshaledLog.Stream != "stdout" || unmarshaledLog.Message != "line 1\nline 2" || unmarshaledLog.Timestamp != 1234567890 {
+		t.Errorf("unexpected unmarshaled log payload: %+v", unmarshaledLog)
+	}
+
+	spanPayload := TaskSpanPayload{
+		DurationMS: 1500,
+		TraceID:    "trace-abc",
+		SpanID:     "span-xyz",
+		NodeType:   "step",
+		Status:     "COMPLETED",
+		Tokens:     42,
+	}
+	data, err = json.Marshal(spanPayload)
+	if err != nil {
+		t.Fatalf("failed to marshal TaskSpanPayload: %v", err)
+	}
+	var unmarshaledSpan TaskSpanPayload
+	if err := json.Unmarshal(data, &unmarshaledSpan); err != nil {
+		t.Fatalf("failed to unmarshal TaskSpanPayload: %v", err)
+	}
+	if unmarshaledSpan.DurationMS != 1500 || unmarshaledSpan.TraceID != "trace-abc" || unmarshaledSpan.Tokens != 42 {
+		t.Errorf("unexpected unmarshaled span payload: %+v", unmarshaledSpan)
+	}
+}
+
+func TestHub_RunScopedBroadcastIsolation(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+
+	chGlobal := make(chan []byte, 5)
+	chRun1 := make(chan []byte, 5)
+	chRun2 := make(chan []byte, 5)
+
+	hub.Register(chGlobal)
+	defer hub.Unregister(chGlobal)
+
+	hub.RegisterRun("run-1", chRun1)
+	defer hub.UnregisterRun("run-1", chRun1)
+
+	hub.RegisterRun("run-2", chRun2)
+	defer hub.UnregisterRun("run-2", chRun2)
+
+	msgRun1 := []byte(`{"run_id":"run-1","message":"hello run 1"}`)
+	hub.BroadcastRun("run-1", msgRun1)
+
+	// chGlobal should receive msgRun1
+	select {
+	case received := <-chGlobal:
+		if string(received) != string(msgRun1) {
+			t.Errorf("expected global to receive %s, got %s", msgRun1, received)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Error("timeout waiting for msgRun1 on global channel")
+	}
+
+	// chRun1 should receive msgRun1
+	select {
+	case received := <-chRun1:
+		if string(received) != string(msgRun1) {
+			t.Errorf("expected run-1 to receive %s, got %s", msgRun1, received)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Error("timeout waiting for msgRun1 on run-1 channel")
+	}
+
+	// chRun2 should NOT receive msgRun1
+	select {
+	case received := <-chRun2:
+		t.Errorf("run-2 received unexpected message: %s", received)
+	case <-time.After(50 * time.Millisecond):
+		// Expected
+	}
+}
+
+func TestHub_ClientUnregisterCleanup(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+
+	ch1 := make(chan []byte, 1)
+	ch2 := make(chan []byte, 1)
+
+	hub.RegisterRun("run-x", ch1)
+	hub.RegisterRun("run-x", ch2)
+
+	if count := hub.RunClientCount("run-x"); count != 2 {
+		t.Errorf("expected 2 clients for run-x, got %d", count)
+	}
+
+	hub.UnregisterRun("run-x", ch1)
+	if count := hub.RunClientCount("run-x"); count != 1 {
+		t.Errorf("expected 1 client for run-x, got %d", count)
+	}
+
+	hub.UnregisterRun("run-x", ch2)
+	if count := hub.RunClientCount("run-x"); count != 0 {
+		t.Errorf("expected 0 clients for run-x, got %d", count)
+	}
+}
+
+type dummyFlusherResponseWriter struct {
+	header     http.Header
+	buf        []byte
+	flushed    bool
+	statusCode int
+}
+
+func (d *dummyFlusherResponseWriter) Header() http.Header {
+	if d.header == nil {
+		d.header = make(http.Header)
+	}
+	return d.header
+}
+
+func (d *dummyFlusherResponseWriter) Write(b []byte) (int, error) {
+	d.buf = append(d.buf, b...)
+	return len(b), nil
+}
+
+func (d *dummyFlusherResponseWriter) WriteHeader(statusCode int) {
+	d.statusCode = statusCode
+}
+
+func (d *dummyFlusherResponseWriter) Flush() {
+	d.flushed = true
+}
+
+func TestHub_ServeHTTPRun_SSEHeadersAndStreaming(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/runs/run-99/events", nil)
+	w := &dummyFlusherResponseWriter{}
+
+	done := make(chan struct{})
+	go func() {
+		hub.ServeHTTPRun(w, req, "run-99")
+		close(done)
+	}()
+
+	// Wait briefly for client registration
+	time.Sleep(20 * time.Millisecond)
+	if count := hub.RunClientCount("run-99"); count != 1 {
+		t.Fatalf("expected 1 registered client, got %d", count)
+	}
+
+	hub.BroadcastRun("run-99", []byte(`{"type":"ov.task.log","run_id":"run-99"}`))
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancel context to simulate client disconnect
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("ServeHTTPRun did not exit after context cancellation")
+	}
+
+	if w.Header().Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %s", w.Header().Get("Content-Type"))
+	}
+	if !w.flushed {
+		t.Errorf("expected Flush() to be called")
+	}
+	if string(w.buf) == "" {
+		t.Errorf("expected buffer to contain SSE data, got empty")
+	}
+	if hub.RunClientCount("run-99") != 0 {
+		t.Errorf("expected 0 clients after disconnect, got %d", hub.RunClientCount("run-99"))
 	}
 }
 

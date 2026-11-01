@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -111,6 +112,7 @@ type MultiFactoryOrchestrator struct {
 	requests        map[string]RunRequest
 	activeBranches  map[string]string // branch -> runID
 	repoActiveCount map[string]int    // repoPath -> active runs
+	taskTokens      map[string]int64  // taskKey -> max tokens consumed
 	totalTokens     int64
 	completedCount  int
 	failedCount     int
@@ -159,6 +161,7 @@ func NewMultiFactoryOrchestrator(
 		requests:        make(map[string]RunRequest),
 		activeBranches:  make(map[string]string),
 		repoActiveCount: make(map[string]int),
+		taskTokens:      make(map[string]int64),
 		ctx:             ctx,
 		cancel:          cancel,
 		scheduleNotify:  make(chan struct{}, 100),
@@ -466,6 +469,12 @@ func (o *MultiFactoryOrchestrator) cleanupRun(runID string, req RunRequest) {
 	if o.repoActiveCount[req.RepoPath] <= 0 {
 		delete(o.repoActiveCount, req.RepoPath)
 	}
+	prefix := runID + ":"
+	for k := range o.taskTokens {
+		if strings.HasPrefix(k, prefix) {
+			delete(o.taskTokens, k)
+		}
+	}
 	o.mu.Unlock()
 
 	select {
@@ -506,6 +515,21 @@ func (o *MultiFactoryOrchestrator) runPipelineSteps(
 	return dispatcher.ExecuteWorkflow(ctx, runID, req.Template)
 }
 
+func parseTokens(v any) int64 {
+	switch val := v.(type) {
+	case int:
+		return int64(val)
+	case int32:
+		return int64(val)
+	case int64:
+		return val
+	case float64:
+		return int64(val)
+	default:
+		return 0
+	}
+}
+
 func (o *MultiFactoryOrchestrator) onTaskEvent(ev gateway.Event) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -515,9 +539,23 @@ func (o *MultiFactoryOrchestrator) onTaskEvent(ev gateway.Event) {
 		return
 	}
 
+	taskKey := ev.RunID + ":" + ev.TaskID
+
 	switch ev.Type {
 	case gateway.TopicTaskStarted:
 		run.CurrentStep = ev.TaskID
+
+	case gateway.TopicTaskSpan:
+		if tokensVal, ok := ev.Payload["tokens"]; ok {
+			tokens := parseTokens(tokensVal)
+			if tokens > o.taskTokens[taskKey] {
+				delta := tokens - o.taskTokens[taskKey]
+				run.TokensConsumed += delta
+				o.totalTokens += delta
+				o.taskTokens[taskKey] = tokens
+			}
+		}
+
 	case gateway.TopicTaskCompleted:
 		run.CompletedSteps = append(run.CompletedSteps, ev.TaskID)
 		if run.TotalSteps > 0 {
@@ -525,29 +563,23 @@ func (o *MultiFactoryOrchestrator) onTaskEvent(ev gateway.Event) {
 		}
 		if data, ok := ev.Payload["data"].(map[string]any); ok {
 			var tokens int64
-			if t, ok := data["tokens"].(int); ok {
-				tokens = int64(t)
-			} else if t, ok := data["tokens"].(float64); ok {
-				tokens = int64(t)
-			} else if t, ok := data["tokens"].(int64); ok {
-				tokens = t
-			} else if t, ok := data["token_count"].(int); ok {
-				tokens = int64(t)
-			} else if t, ok := data["token_count"].(float64); ok {
-				tokens = int64(t)
-			} else if t, ok := data["token_count"].(int64); ok {
-				tokens = t
+			if t, ok := data["tokens"]; ok {
+				tokens = parseTokens(t)
+			} else if t, ok := data["token_count"]; ok {
+				tokens = parseTokens(t)
 			}
-			if tokens > 0 {
-				run.TokensConsumed += tokens
-				o.totalTokens += tokens
+			if tokens > o.taskTokens[taskKey] {
+				delta := tokens - o.taskTokens[taskKey]
+				run.TokensConsumed += delta
+				o.totalTokens += delta
+				o.taskTokens[taskKey] = tokens
 			}
 		}
+
 	case gateway.TopicTaskFailed:
 		run.FailedSteps = append(run.FailedSteps, ev.TaskID)
 	}
 }
-
 
 func (o *MultiFactoryOrchestrator) publishEvent(ctx context.Context, topic string, runID string, payload map[string]any) error {
 	if o.gateway == nil {
@@ -710,5 +742,3 @@ func (o *MultiFactoryOrchestrator) QueuedCount() int {
 	defer o.mu.RUnlock()
 	return o.queue.Len()
 }
-
-

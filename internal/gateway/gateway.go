@@ -136,7 +136,7 @@ func (g *Gateway) PublishTaskEvent(ctx context.Context, ev Event) error {
 
 	data, err := json.Marshal(ev)
 	if err == nil && g.hub != nil {
-		g.hub.Broadcast(data)
+		g.hub.BroadcastRun(ev.RunID, data)
 	}
 
 	g.mu.RLock()

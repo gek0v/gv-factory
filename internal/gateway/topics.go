@@ -11,6 +11,8 @@ const (
 	TopicTaskStarted          = "ov.task.started"
 	TopicTaskCompleted        = "ov.task.completed"
 	TopicTaskFailed           = "ov.task.failed"
+	TopicTaskLog              = "ov.task.log"
+	TopicTaskSpan             = "ov.task.span"
 	TopicRunQueued            = "ov.run.queued"
 	TopicRunStarted           = "ov.run.started"
 	TopicRunCompleted         = "ov.run.completed"
@@ -28,6 +30,23 @@ const (
 	TopicTriggerPrefix = "factory.triggers."
 	TopicAllTriggers   = "factory.triggers.>"
 )
+
+// TaskLogPayload defines the payload for TopicTaskLog ("ov.task.log").
+type TaskLogPayload struct {
+	Stream    string `json:"stream"`
+	Message   string `json:"message"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+// TaskSpanPayload defines the telemetry payload for TopicTaskSpan ("ov.task.span").
+type TaskSpanPayload struct {
+	DurationMS int64  `json:"duration_ms"`
+	TraceID    string `json:"trace_id"`
+	SpanID     string `json:"span_id"`
+	NodeType   string `json:"node_type"`
+	Status     string `json:"status"`
+	Tokens     int64  `json:"tokens"`
+}
 
 // TriggerTopicForSource returns the NATS topic for triggers from a specific provider source (e.g. "factory.triggers.github").
 func TriggerTopicForSource(source string) string {
