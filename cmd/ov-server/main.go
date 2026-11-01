@@ -176,7 +176,10 @@ func main() {
 		defer unsubChat()
 	}
 
-	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, authSvc, appStore, tel)
+	workerRegistry := NewWorkerRegistry(ctx, gw)
+	defer workerRegistry.Close()
+
+	mux := NewServerMux(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, authSvc, appStore, workerRegistry, tel)
 
 	httpServer := &http.Server{
 		Addr:              ":" + port,
