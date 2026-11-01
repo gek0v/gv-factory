@@ -14,6 +14,7 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
+	"github.com/gv-factory/gv-factory/internal/connectors/chat"
 	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/connectors/outbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
@@ -64,6 +65,34 @@ func main() {
 	}()
 	_, _ = outboundDispatcher.AttachToGateway(ctx, gw)
 	_ = outboundDispatcher
+
+	chatMgr := chat.NewManager()
+	slackAdapter := chat.NewSlackAdapter(chat.SlackConfig{
+		BotToken:       os.Getenv("SLACK_BOT_TOKEN"),
+		SigningSecret:  os.Getenv("SLACK_SIGNING_SECRET"),
+		DefaultChannel: os.Getenv("SLACK_DEFAULT_CHANNEL"),
+	})
+	chatMgr.Register(slackAdapter)
+
+	discordAdapter := chat.NewDiscordAdapter(chat.DiscordConfig{
+		BotToken:         os.Getenv("DISCORD_BOT_TOKEN"),
+		PublicKey:        os.Getenv("DISCORD_PUBLIC_KEY"),
+		DefaultChannelID: os.Getenv("DISCORD_DEFAULT_CHANNEL"),
+	})
+	chatMgr.Register(discordAdapter)
+
+	chatHandler := chat.NewChatHandler(chat.HandlerConfig{
+		SlackSigningSecret: os.Getenv("SLACK_SIGNING_SECRET"),
+		DiscordPublicKey:   os.Getenv("DISCORD_PUBLIC_KEY"),
+		SlackAdapter:       slackAdapter,
+		DiscordAdapter:     discordAdapter,
+	})
+	_ = chatHandler
+
+	unsubChat, _ := chatMgr.AttachToGateway(ctx, gw, os.Getenv("SLACK_DEFAULT_CHANNEL"))
+	if unsubChat != nil {
+		defer unsubChat()
+	}
 
 	log.Println("ov-server initialized successfully. Listening for orchestrations...")
 
