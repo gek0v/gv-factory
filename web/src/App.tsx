@@ -20,10 +20,9 @@ import { LogicNode } from './components/nodes/LogicNode';
 import { ActionNode } from './components/nodes/ActionNode';
 import { NodePalette } from './components/palette/NodePalette';
 import { NodeInspector } from './components/drawer/NodeInspector';
-import { TemplateToolbar } from './components/templates/TemplateToolbar';
+import { Toolbar } from './components/Toolbar';
 import { GateResolutionModal } from './components/gate/GateResolutionModal';
 import { defaultGatewayClient } from './api/gateway';
-import { simulatePipelineRun } from './api/simulator';
 
 export const App: React.FC = () => {
   const {
@@ -136,16 +135,7 @@ export const App: React.FC = () => {
             </span>
           </div>
 
-          <button
-            type="button"
-            className="simulate-run-btn"
-            title="Simulate Real-time Pipeline Execution Telemetry"
-            onClick={() => simulatePipelineRun()}
-          >
-            ▶ Simulate Run
-          </button>
-
-          <TemplateToolbar />
+          <Toolbar />
           <div className="bg-toggle-group" title="Canvas Background Style">
             <button
               type="button"
