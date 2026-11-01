@@ -186,3 +186,61 @@ func TestReleaseWorkflowAttestProvenanceResilience(t *testing.T) {
 		t.Errorf("release.yml: el paso 'Attest Build Provenance (SLSA Level 3)' debe tener 'continue-on-error: true' para evitar abortos en repositorios de usuario")
 	}
 }
+
+// TestOpenCodeMultiAgentConfiguration valida que opencode.jsonc configure worktree.directory
+// y subagent_depth >= 2, y que los agentes/comandos de orquestación paralela existan con SPDX.
+func TestOpenCodeMultiAgentConfiguration(t *testing.T) {
+	// 1. Validar opencode.jsonc
+	configPath := filepath.Join("..", "..", "opencode.jsonc")
+	configBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("error leyendo opencode.jsonc en %q: %v", configPath, err)
+	}
+	content := string(configBytes)
+
+	if !strings.Contains(content, `"worktree"`) || !strings.Contains(content, `".worktrees"`) {
+		t.Errorf("opencode.jsonc debe configurar 'worktree.directory: \".worktrees\"'")
+	}
+	depthRegex := regexp.MustCompile(`"subagent_depth":\s*([2-9]|\d{2,})`)
+	if !depthRegex.MatchString(content) {
+		t.Errorf("opencode.jsonc debe habilitar 'subagent_depth' >= 2 para permitir orquestación anidada")
+	}
+
+	// REUSE-IgnoreStart
+	spdxRequired := "SPDX-License-Identifier" + ": " + "Apache-2.0"
+	// REUSE-IgnoreEnd
+
+	// 2. Validar que .opencode/agents/issue-orchestrator.md exista y tenga SPDX
+	agentPath := filepath.Join("..", "..", ".opencode", "agents", "issue-orchestrator.md")
+	agentBytes, err := os.ReadFile(agentPath)
+	if err != nil {
+		t.Fatalf("error leyendo .opencode/agents/issue-orchestrator.md: %v", err)
+	}
+	agentContent := string(agentBytes)
+	if !strings.Contains(agentContent, spdxRequired) {
+		t.Errorf("issue-orchestrator.md debe tener cabecera SPDX Apache-2.0")
+	}
+	if !strings.Contains(agentContent, "issue-orchestrator") && !strings.Contains(agentContent, "Issue Orchestrator") {
+		t.Errorf("issue-orchestrator.md no define la identidad del agente Issue Orchestrator")
+	}
+
+	// 3. Validar comandos de orquestación
+	commands := []string{
+		filepath.Join("..", "..", ".opencode", "commands", "work-on-issue.md"),
+		filepath.Join("..", "..", ".opencode", "commands", "work-on-issues.md"),
+	}
+
+	for _, cmdPath := range commands {
+		cmdBytes, err := os.ReadFile(cmdPath)
+		if err != nil {
+			t.Fatalf("error leyendo comando en %q: %v", cmdPath, err)
+		}
+		cmdContent := string(cmdBytes)
+		if !strings.Contains(cmdContent, spdxRequired) {
+			t.Errorf("%s debe contener cabecera SPDX Apache-2.0", cmdPath)
+		}
+		if !strings.Contains(cmdContent, "issue-orchestrator") {
+			t.Errorf("%s debe delegar en 'issue-orchestrator'", cmdPath)
+		}
+	}
+}
