@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-postgres
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: postgresql
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "ov-factory.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+{{- end }}

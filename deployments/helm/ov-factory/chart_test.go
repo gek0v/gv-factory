@@ -191,5 +191,51 @@ func TestScalingAndResilienceManifests(t *testing.T) {
 	}
 }
 
+func TestPersistenceAndMessagingManifests(t *testing.T) {
+	requiredFiles := []struct {
+		path     string
+		patterns []string
+	}{
+		{
+			path:     filepath.Join(".", "templates", "postgres-statefulset.yaml"),
+			patterns: []string{"kind: StatefulSet", "volumeClaimTemplates", "POSTGRES_DB"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "postgres-service.yaml"),
+			patterns: []string{"kind: Service", ".Values.postgres.service.port"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "nats-statefulset.yaml"),
+			patterns: []string{"kind: StatefulSet", "volumeClaimTemplates", "clientPort"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "nats-service.yaml"),
+			patterns: []string{"kind: Service", "clientPort"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "hatchet-deployment.yaml"),
+			patterns: []string{"kind: Deployment", "hatchet"},
+		},
+		{
+			path:     filepath.Join(".", "templates", "hatchet-service.yaml"),
+			patterns: []string{"kind: Service", ".Values.hatchet.service.port"},
+		},
+	}
+
+	for _, req := range requiredFiles {
+		data, err := os.ReadFile(req.path)
+		if err != nil {
+			t.Fatalf("Failed to read %s: %v", req.path, err)
+		}
+		content := string(data)
+		for _, pat := range req.patterns {
+			if !strings.Contains(content, pat) {
+				t.Errorf("File %s missing expected pattern %q", req.path, pat)
+			}
+		}
+	}
+}
+
+
 
 

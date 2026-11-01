@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if .Values.hatchet.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-hatchet
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hatchet
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.hatchet.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "ov-factory.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: hatchet
+{{- end }}

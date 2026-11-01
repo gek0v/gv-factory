@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if and .Values.nats.enabled (not .Values.nats.external.enabled) -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "ov-factory.fullname" . }}-nats
+  labels:
+    {{- include "ov-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  serviceName: {{ include "ov-factory.fullname" . }}-nats
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "ov-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "ov-factory.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nats
+          image: "{{ if .Values.global.imageRegistry }}{{ .Values.global.imageRegistry }}/{{ end }}{{ .Values.nats.image.repository }}:{{ .Values.nats.image.tag }}"
+          imagePullPolicy: {{ .Values.nats.image.pullPolicy }}
+          command:
+            - "nats-server"
+            - "-js"
+            - "-m"
+            - {{ .Values.nats.service.monitorPort | quote }}
+            - "-sd"
+            - "/data"
+          ports:
+            - name: client
+              containerPort: {{ .Values.nats.service.clientPort }}
+              protocol: TCP
+            - name: monitor
+              containerPort: {{ .Values.nats.service.monitorPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  {{- if .Values.nats.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "ov-factory.labels" . | nindent 10 }}
+          app.kubernetes.io/component: nats
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.nats.persistence.size }}
+        {{- if or .Values.nats.persistence.storageClass .Values.global.storageClass }}
+        storageClassName: {{ default .Values.global.storageClass .Values.nats.persistence.storageClass | quote }}
+        {{- end }}
+  {{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+  {{- end }}
+{{- end }}
