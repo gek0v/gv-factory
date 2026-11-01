@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+	builtBy = "unknown"
+)
+
 // NewHealthMux creates the HTTP multiplexer for ov-worker health checks.
 func NewHealthMux() http.Handler {
 	mux := http.NewServeMux()
@@ -38,6 +45,7 @@ func main() {
 	natsURL := flag.String("nats-url", "", "NATS server URL (defaults to nats://localhost:4222 or in-memory fallback)")
 	healthPortFlag := flag.String("health-port", "", "Health check HTTP listen port (defaults to HEALTH_PORT env var or 8081)")
 	flag.Parse()
+	log.Printf("Starting ov-worker version %s (commit: %s, date: %s, built by: %s)...", version, commit, date, builtBy)
 
 	healthPort := *healthPortFlag
 	if healthPort == "" {

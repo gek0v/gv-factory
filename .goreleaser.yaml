@@ -1,0 +1,158 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+version: 2
+project_name: gv-factory
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ov-server
+    main: ./cmd/ov-server
+    binary: ov-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+      - -X github.com/gv-factory/gv-factory/pkg/version.Version={{.Version}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.Commit={{.Commit}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.Date={{.Date}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.BuiltBy=goreleaser
+
+  - id: ov-worker
+    main: ./cmd/ov-worker
+    binary: ov-worker
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+      - -X github.com/gv-factory/gv-factory/pkg/version.Version={{.Version}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.Commit={{.Commit}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.Date={{.Date}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.BuiltBy=goreleaser
+
+  - id: ov-cli
+    main: ./cmd/ov-cli
+    binary: ov-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+      - -X github.com/gv-factory/gv-factory/pkg/version.Version={{.Version}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.Commit={{.Commit}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.Date={{.Date}}
+      - -X github.com/gv-factory/gv-factory/pkg/version.BuiltBy=goreleaser
+
+archives:
+  - id: ov-server
+    ids:
+      - ov-server
+    name_template: "ov-server_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE*
+      - README*
+
+  - id: ov-worker
+    ids:
+      - ov-worker
+    name_template: "ov-worker_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE*
+      - README*
+
+  - id: ov-cli
+    ids:
+      - ov-cli
+    name_template: "ov-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - id: default
+    artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+
+signs:
+  - id: cosign-checksum
+    artifacts: checksum
+    cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - "sign-blob"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+homebrew_casks:
+  - name: ov-cli
+    ids:
+      - ov-cli
+    repository:
+      owner: gek0v
+      name: homebrew-tap
+      branch: main
+    directory: Casks
+    homepage: "https://github.com/gek0v/gv-factory"
+    description: "Official developer CLI and workflow runner for OV-Factory"
+    license: "Apache-2.0"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

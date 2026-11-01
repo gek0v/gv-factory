@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 gv-factory contributors
 
-.PHONY: all build test lint dev clean web-install web-build compose-up compose-down compose-check helm-lint helm-template
+.PHONY: all build test lint dev clean web-install web-build compose-up compose-down compose-check helm-lint helm-template release-check release-snapshot
 
 BIN_DIR := bin
 
@@ -56,4 +56,12 @@ helm-lint:
 helm-template:
 	@echo "==> Rendering Helm templates..."
 	@which helm > /dev/null 2>&1 && helm template ov-factory deployments/helm/ov-factory || go test -v ./deployments/helm/ov-factory/...
+
+release-check:
+	@echo "==> Validating GoReleaser configuration..."
+	@go run github.com/goreleaser/goreleaser/v2@latest check
+
+release-snapshot:
+	@echo "==> Building GoReleaser snapshot release..."
+	@go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean --skip=sign,publish
 
