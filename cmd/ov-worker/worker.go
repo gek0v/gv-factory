@@ -100,28 +100,12 @@ func NewWorker(cfg WorkerConfig) *Worker {
 
 	router := worker.NewTaskRouter()
 
-	// Register wasm_plugin handler
-	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.TaskHandlerFunc(func(ctx context.Context, task *worker.TaskMessage) (*worker.TaskResult, error) {
-		return &worker.TaskResult{
-			Success: true,
-			Output:  fmt.Sprintf("executed wasm plugin for task %s", task.TaskID),
-		}, nil
-	}))
-
-	// Register agent_step handler
-	router.RegisterHandler(worker.TaskTypeAgentStep, worker.TaskHandlerFunc(func(ctx context.Context, task *worker.TaskMessage) (*worker.TaskResult, error) {
-		return &worker.TaskResult{
-			Success: true,
-			Output:  fmt.Sprintf("executed agent step for task %s", task.TaskID),
-		}, nil
-	}))
-
-	// Register git_sandbox handler
-	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.TaskHandlerFunc(func(ctx context.Context, task *worker.TaskMessage) (*worker.TaskResult, error) {
-		return &worker.TaskResult{
-			Success: true,
-			Output:  fmt.Sprintf("executed git sandbox for task %s", task.TaskID),
-		}, nil
+	// Register concrete execution sub-engine handlers
+	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.NewWasmPluginHandler(pluginHost))
+	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.NewGitSandboxHandler(sb))
+	router.RegisterHandler(worker.TaskTypeAgentStep, worker.NewAgentStepHandler(worker.AgentStepConfig{
+		Caller:  pluginHost,
+		Sandbox: sb,
 	}))
 
 	consumer := worker.NewConsumer(worker.ConsumerConfig{
