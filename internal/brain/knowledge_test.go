@@ -6,6 +6,7 @@ package brain
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -547,3 +548,138 @@ func TestCodebaseKnowledge_LiveIntegration(t *testing.T) {
 			similar[0].Distance, similar[1].Distance)
 	}
 }
+
+func TestCodebaseKnowledge_FilePathAndSymbolOperations(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("input validation", func(t *testing.T) {
+		svc := &Service{cfg: DefaultConfig()}
+
+		if _, err := svc.GetKnowledgeByFilePath(ctx, "  "); !errors.Is(err, ErrInvalidKnowledge) {
+			t.Fatalf("expected ErrInvalidKnowledge for GetKnowledgeByFilePath, got %v", err)
+		}
+		if _, err := svc.DeleteKnowledgeByFilePath(ctx, "  "); !errors.Is(err, ErrInvalidKnowledge) {
+			t.Fatalf("expected ErrInvalidKnowledge for DeleteKnowledgeByFilePath, got %v", err)
+		}
+		if err := svc.DeleteKnowledgeBySymbol(ctx, "  ", "sym"); !errors.Is(err, ErrInvalidKnowledge) {
+			t.Fatalf("expected ErrInvalidKnowledge for DeleteKnowledgeBySymbol empty path, got %v", err)
+		}
+		if err := svc.DeleteKnowledgeBySymbol(ctx, "path.go", "  "); !errors.Is(err, ErrInvalidKnowledge) {
+			t.Fatalf("expected ErrInvalidKnowledge for DeleteKnowledgeBySymbol empty symbol, got %v", err)
+		}
+	})
+
+	t.Run("nil pool connection error", func(t *testing.T) {
+		svc := &Service{cfg: DefaultConfig()}
+
+		var connErr *ConnectionError
+
+		_, err := svc.GetKnowledgeByFilePath(ctx, "file.go")
+		if !errors.As(err, &connErr) {
+			t.Fatalf("expected ConnectionError on GetKnowledgeByFilePath nil pool, got %v", err)
+		}
+
+		_, err = svc.DeleteKnowledgeByFilePath(ctx, "file.go")
+		if !errors.As(err, &connErr) {
+			t.Fatalf("expected ConnectionError on DeleteKnowledgeByFilePath nil pool, got %v", err)
+		}
+
+		err = svc.DeleteKnowledgeBySymbol(ctx, "file.go", "sym")
+		if !errors.As(err, &connErr) {
+			t.Fatalf("expected ConnectionError on DeleteKnowledgeBySymbol nil pool, got %v", err)
+		}
+	})
+
+	t.Run("mock DB success and error paths", func(t *testing.T) {
+		now := time.Now()
+		vec := make([]float32, KnowledgeVectorDimensions)
+		pgVec := pgvector.NewVector(vec)
+
+		mock := &mockDB{
+			queryFn: func(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+				if strings.Contains(sql, "DELETE FROM codebase_knowledge") {
+					path := args[0].(string)
+					if path == "error.go" {
+						return nil, errors.New("delete error")
+					}
+					return &mockRows{
+						data: [][]any{
+							{"id-1"},
+							{"id-2"},
+						},
+					}, nil
+				}
+				if strings.Contains(sql, "FROM codebase_knowledge") {
+					path := args[0].(string)
+					if path == "error.go" {
+						return nil, errors.New("db error")
+					}
+					return &mockRows{
+						data: [][]any{
+							{"id-1", path, "Sym1", "func", "code", "hash1", &pgVec, now},
+						},
+					}, nil
+				}
+				return &mockRows{}, nil
+			},
+			queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+				if strings.Contains(sql, "DELETE FROM codebase_knowledge") {
+					sym := args[1].(string)
+					if sym == "not-found" {
+						return &mockRow{err: pgx.ErrNoRows}
+					}
+					if sym == "db-error" {
+						return &mockRow{err: errors.New("db row error")}
+					}
+					return &mockRow{values: []any{"id-1"}}
+				}
+				return &mockRow{err: pgx.ErrNoRows}
+			},
+		}
+
+		svc := &Service{cfg: DefaultConfig(), db: mock}
+
+		// GetKnowledgeByFilePath success
+		list, err := svc.GetKnowledgeByFilePath(ctx, "test.go")
+		if err != nil || len(list) != 1 {
+			t.Fatalf("GetKnowledgeByFilePath failed: %v, len=%d", err, len(list))
+		}
+		if len(list[0].Embedding) != KnowledgeVectorDimensions {
+			t.Fatalf("expected embedding populated, got %d", len(list[0].Embedding))
+		}
+
+		// GetKnowledgeByFilePath error
+		_, err = svc.GetKnowledgeByFilePath(ctx, "error.go")
+		if err == nil {
+			t.Fatal("expected error on GetKnowledgeByFilePath db error")
+		}
+
+		// DeleteKnowledgeByFilePath success
+		count, err := svc.DeleteKnowledgeByFilePath(ctx, "test.go")
+		if err != nil || count != 2 {
+			t.Fatalf("DeleteKnowledgeByFilePath failed: %v, count=%d", err, count)
+		}
+
+		// DeleteKnowledgeByFilePath error
+		_, err = svc.DeleteKnowledgeByFilePath(ctx, "error.go")
+		if err == nil {
+			t.Fatal("expected error on DeleteKnowledgeByFilePath db error")
+		}
+
+		// DeleteKnowledgeBySymbol success
+		if err := svc.DeleteKnowledgeBySymbol(ctx, "test.go", "Sym1"); err != nil {
+			t.Fatalf("DeleteKnowledgeBySymbol failed: %v", err)
+		}
+
+		// DeleteKnowledgeBySymbol not found
+		if err := svc.DeleteKnowledgeBySymbol(ctx, "test.go", "not-found"); !errors.Is(err, ErrKnowledgeNotFound) {
+			t.Fatalf("expected ErrKnowledgeNotFound, got %v", err)
+		}
+
+		// DeleteKnowledgeBySymbol db error
+		if err := svc.DeleteKnowledgeBySymbol(ctx, "test.go", "db-error"); err == nil {
+			t.Fatal("expected error on DeleteKnowledgeBySymbol db error")
+		}
+	})
+}
+

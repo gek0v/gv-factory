@@ -273,3 +273,170 @@ func (s *Service) QueryCodebaseKnowledge(ctx context.Context, embedding []float3
 
 	return list, nil
 }
+
+// GetKnowledgeByFilePath retrieves all codebase knowledge fragments for a given file path.
+func (s *Service) GetKnowledgeByFilePath(ctx context.Context, filePath string) ([]CodebaseKnowledge, error) {
+	path := strings.TrimSpace(filePath)
+	if path == "" {
+		return nil, fmt.Errorf("%w: file_path is required", ErrInvalidKnowledge)
+	}
+
+	db := s.getDB()
+	if db == nil {
+		return nil, &ConnectionError{
+			Op:  "get_knowledge_by_file_path",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	const query = `
+		SELECT id, file_path, symbol_name, symbol_type, content, content_hash, embedding, updated_at
+		FROM codebase_knowledge
+		WHERE file_path = $1
+		ORDER BY symbol_name ASC
+	`
+
+	rows, err := db.Query(ctx, query, path)
+	if err != nil {
+		return nil, &ConnectionError{
+			Op:  "get_knowledge_by_file_path",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+	defer rows.Close()
+
+	var list []CodebaseKnowledge
+	for rows.Next() {
+		var k CodebaseKnowledge
+		var vec *pgvector.Vector
+		if err := rows.Scan(
+			&k.ID,
+			&k.FilePath,
+			&k.SymbolName,
+			&k.SymbolType,
+			&k.Content,
+			&k.ContentHash,
+			&vec,
+			&k.UpdatedAt,
+		); err != nil {
+			return nil, &ConnectionError{
+				Op:  "get_knowledge_by_file_path",
+				URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+				Err: err,
+			}
+		}
+		if vec != nil {
+			k.Embedding = vec.Slice()
+		}
+		list = append(list, k)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, &ConnectionError{
+			Op:  "get_knowledge_by_file_path",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+
+	return list, nil
+}
+
+// DeleteKnowledgeByFilePath removes all codebase knowledge fragments for a given file path.
+// It returns the number of deleted records.
+func (s *Service) DeleteKnowledgeByFilePath(ctx context.Context, filePath string) (int, error) {
+	path := strings.TrimSpace(filePath)
+	if path == "" {
+		return 0, fmt.Errorf("%w: file_path is required", ErrInvalidKnowledge)
+	}
+
+	db := s.getDB()
+	if db == nil {
+		return 0, &ConnectionError{
+			Op:  "delete_knowledge_by_file_path",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	const query = `
+		DELETE FROM codebase_knowledge
+		WHERE file_path = $1
+		RETURNING id
+	`
+
+	rows, err := db.Query(ctx, query, path)
+	if err != nil {
+		return 0, &ConnectionError{
+			Op:  "delete_knowledge_by_file_path",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return count, &ConnectionError{
+				Op:  "delete_knowledge_by_file_path",
+				URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+				Err: err,
+			}
+		}
+		count++
+	}
+
+	if err := rows.Err(); err != nil {
+		return count, &ConnectionError{
+			Op:  "delete_knowledge_by_file_path",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+
+	return count, nil
+}
+
+// DeleteKnowledgeBySymbol removes a single codebase knowledge fragment by file path and symbol name.
+func (s *Service) DeleteKnowledgeBySymbol(ctx context.Context, filePath, symbolName string) error {
+	path := strings.TrimSpace(filePath)
+	symbol := strings.TrimSpace(symbolName)
+	if path == "" || symbol == "" {
+		return fmt.Errorf("%w: file_path and symbol_name are required", ErrInvalidKnowledge)
+	}
+
+	db := s.getDB()
+	if db == nil {
+		return &ConnectionError{
+			Op:  "delete_knowledge_by_symbol",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: errors.New("connection pool is not initialized"),
+		}
+	}
+
+	const query = `
+		DELETE FROM codebase_knowledge
+		WHERE file_path = $1 AND symbol_name = $2
+		RETURNING id
+	`
+
+	var id string
+	err := db.QueryRow(ctx, query, path, symbol).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrKnowledgeNotFound
+		}
+		return &ConnectionError{
+			Op:  "delete_knowledge_by_symbol",
+			URL: SanitizeDatabaseURL(s.cfg.DatabaseURL),
+			Err: err,
+		}
+	}
+
+	return nil
+}
+
