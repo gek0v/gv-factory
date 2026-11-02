@@ -27,6 +27,7 @@ type WorkerConfig struct {
 	WorkerID          string
 	HeartbeatInterval time.Duration
 	DrainTimeout      time.Duration
+	SandboxConfig     sandbox.ContainerSandboxConfig
 }
 
 // Worker orchestrates Hatchet workflow steps and dispatches tasks to WASM plugins and Sandboxes.
@@ -100,16 +101,28 @@ func NewWorker(cfg WorkerConfig) *Worker {
 
 	router := worker.NewTaskRouter()
 
+	// Container sandbox executor with cgroups quotas and mount isolation
+	sandboxCfg := cfg.SandboxConfig
+	if sandboxCfg.Runtime == "" {
+		sandboxCfg = sandbox.NewDefaultContainerSandboxConfig()
+	}
+	if sandboxCfg.Image == "" {
+		sandboxCfg.Image = sandbox.DefaultSandboxImage
+	}
+	containerExec := sandbox.NewContainerSandboxExecutor(sandboxCfg)
+
 	// Register concrete execution sub-engine handlers
 	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.NewWasmPluginHandler(pluginHost))
 	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.NewGitSandboxHandler(
 		sb,
+		worker.WithCommandExecutor(containerExec),
 		worker.WithSandboxPublisher(gw),
 		worker.WithSandboxWorkerID(cfg.WorkerID),
 	))
 	router.RegisterHandler(worker.TaskTypeAgentStep, worker.NewAgentStepHandler(worker.AgentStepConfig{
 		Caller:    pluginHost,
 		Sandbox:   sb,
+		Command:   containerExec,
 		Publisher: gw,
 		WorkerID:  cfg.WorkerID,
 	}))
