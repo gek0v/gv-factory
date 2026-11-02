@@ -774,6 +774,9 @@ func NewServerMux(
 		http.NotFound(w, r)
 	})
 
+	// Codebase Brain endpoints (search, sync ADRs, repository indexer, stats)
+	registerBrainEndpoints(mux, brainSvc)
+
 	var handler http.Handler = corsMiddleware(mux)
 	if t != nil && t.Metrics != nil {
 		handler = corsMiddleware(telemetry.NewHTTPMiddleware(t.Metrics, t.Tracer)(mux))

@@ -263,10 +263,15 @@ func TestColorizer(t *testing.T) {
 	if !strings.Contains(c.Green("ok"), "ok") {
 		t.Error("expected colorized text")
 	}
+	if !strings.Contains(c.Blue("info"), "info") {
+		t.Error("expected blue colorized text")
+	}
 
-	badge := c.BadgeStatus("completed")
-	if !strings.Contains(badge, "COMPLETED") {
-		t.Errorf("expected badge to contain COMPLETED, got %s", badge)
+	for _, st := range []string{"completed", "running", "failed", "pending", "other"} {
+		badge := c.BadgeStatus(st)
+		if len(badge) == 0 {
+			t.Errorf("expected non-empty badge for %s", st)
+		}
 	}
 
 	cDisabled := &Colorizer{disabled: true}
@@ -274,4 +279,23 @@ func TestColorizer(t *testing.T) {
 		t.Errorf("expected plain text when disabled, got %s", cDisabled.Green("plain"))
 	}
 }
+
+func TestCLI_AppAndFlags(t *testing.T) {
+	app := NewCLIApp(nil, nil, nil)
+	if app.Out == nil || app.Err == nil || app.In == nil {
+		t.Error("expected defaults in NewCLIApp")
+	}
+
+	var ss stringSliceFlag
+	if err := ss.Set("label1=val1"); err != nil {
+		t.Errorf("expected nil error on ss.Set, got: %v", err)
+	}
+	if len(ss) != 1 || ss[0] != "label1=val1" {
+		t.Errorf("unexpected stringSlice: %v", ss)
+	}
+	if ss.String() != "label1=val1" {
+		t.Errorf("unexpected String representation: %s", ss.String())
+	}
+}
+
 

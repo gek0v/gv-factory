@@ -106,6 +106,14 @@ func (s *Service) getDB() DBPool {
 	return nil
 }
 
+// NewServiceWithDB constructs a Service with an explicit DBPool, primarily for testing or mock database injection.
+func NewServiceWithDB(cfg Config, db DBPool) *Service {
+	return &Service{
+		cfg: cfg,
+		db:  db,
+	}
+}
+
 // NewService constructs a new Brain service instance and establishes a connection pool.
 // If the database is unreachable at startup, the service initializes gracefully in a degraded state.
 func NewService(ctx context.Context, cfg Config) (*Service, error) {

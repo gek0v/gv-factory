@@ -37,6 +37,14 @@ func mockScan(src []any, dest []any) error {
 			if f, ok := val.(float32); ok {
 				*target = f
 			}
+		case *int:
+			if iv, ok := val.(int); ok {
+				*target = iv
+			}
+		case *int64:
+			if iv, ok := val.(int64); ok {
+				*target = iv
+			}
 		case **pgvector.Vector:
 			if v, ok := val.(*pgvector.Vector); ok {
 				*target = v
