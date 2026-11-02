@@ -520,8 +520,19 @@ Respond ONLY with a valid JSON object with keys "path" (relative file path) and 
 		kind, task.ID, task.Title, tc.Name, tc.Description, failureOutput, iteration,
 	)
 
+	model := os.Getenv("MODEL")
+	if model == "" {
+		model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("OPENAI_MODEL")
+	}
+	if model == "" {
+		model = "gpt-4o"
+	}
+
 	req := &llm.ChatRequest{
-		Model: "gpt-4o",
+		Model: model,
 		Messages: []llm.ChatMessage{
 			llm.NewSystemMessage("You are an autonomous TDD code generation agent. Output only JSON."),
 			llm.NewUserMessage(prompt),

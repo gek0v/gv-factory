@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -112,8 +113,16 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 
 	llmClient, _ := llm.NewClientFromEnv()
 
+	model := os.Getenv("MODEL")
+	if model == "" {
+		model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("OPENAI_MODEL")
+	}
+
 	cfg := agent.CoordinatorConfig{
-		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc, LLM: llmClient}),
+		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc, LLM: llmClient, Model: model}),
 		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: ".", LLMClient: llmClient}),
 		Approver:    agent.NewApprover(nil, agent.ApproverConfig{}),
 		Brain:       d.brainSvc,
