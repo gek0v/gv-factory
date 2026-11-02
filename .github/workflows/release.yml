@@ -133,7 +133,7 @@ jobs:
           cosign attest --yes --predicate "${SBOM_FILE}" --type https://spdx.dev/Document "${IMAGE_URI}"
 
       - name: Attest Build Provenance (SLSA Level 3)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         continue-on-error: true # Non-Enterprise user-owned private repos do not support provenance attestations; continue to ensure SBOM upload succeeds
         with:
           subject-name: ghcr.io/${{ github.repository }}/${{ matrix.name }}
