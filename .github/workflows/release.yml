@@ -105,7 +105,7 @@ jobs:
 
       - name: Build and Push Multi-Arch Container Image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
