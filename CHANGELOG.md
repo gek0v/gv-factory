@@ -8,6 +8,16 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.7.0](https://github.com/gek0v/gv-factory/compare/v1.6.0...v1.7.0) (2026-11-02)
+
+
+### Features
+
+* **brain:** implement automated ADR Markdown parser and sync to architectural_rules store ([#122](https://github.com/gek0v/gv-factory/issues/122)) ([#145](https://github.com/gek0v/gv-factory/issues/145)) ([f06fb10](https://github.com/gek0v/gv-factory/commit/f06fb101920fa83072f80f37c3896f4aebbfe09d))
+* **brain:** implement Tree-sitter code chunker with AST symbol extraction ([#119](https://github.com/gek0v/gv-factory/issues/119)) ([#148](https://github.com/gek0v/gv-factory/issues/148)) ([430a178](https://github.com/gek0v/gv-factory/commit/430a17839554d065d4922b65c6f9e9f45e54b179))
+* **server,dag:** trigger automated pipeline runs from inbound GitHub webhooks ([#121](https://github.com/gek0v/gv-factory/issues/121)) ([#147](https://github.com/gek0v/gv-factory/issues/147)) ([1efa7d3](https://github.com/gek0v/gv-factory/commit/1efa7d3f47a201246b4fd4db3506c0756e313959))
+* **web:** add interactive DecisionGate node in canvas with live HMAC approval actions ([#120](https://github.com/gek0v/gv-factory/issues/120)) ([#146](https://github.com/gek0v/gv-factory/issues/146)) ([7cec2d9](https://github.com/gek0v/gv-factory/commit/7cec2d98d7cea98c49f31872ae5b3906655367cd))
+
 ## [1.6.0](https://github.com/gek0v/gv-factory/compare/v1.5.0...v1.6.0) (2026-11-02)
 
 
