@@ -324,6 +324,78 @@ func TestCodebaseKnowledge_MockDatabase(t *testing.T) {
 		}
 	})
 
+	t.Run("IngestChunks empty and success", func(t *testing.T) {
+		fixedTime := time.Date(2026, 10, 31, 15, 0, 0, 0, time.UTC)
+		mock := &mockDB{
+			queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+				return &mockRow{
+					values: []any{
+						"uuid-ingested-1",
+						args[0],
+						args[1],
+						args[2],
+						args[3],
+						args[4],
+						nil,
+						fixedTime,
+					},
+				}
+			},
+		}
+
+		svc := &Service{
+			cfg: DefaultConfig(),
+			db:  mock,
+		}
+
+		// Empty chunks
+		res, err := svc.IngestChunks(ctx, nil)
+		if err != nil || len(res) != 0 {
+			t.Fatalf("expected empty result, got %v, err: %v", res, err)
+		}
+
+		// Populated chunks
+		chunks := []CodeChunk{
+			{
+				SymbolName:  "TestFn",
+				SymbolType:  SymbolTypeFunction,
+				FilePath:    "pkg/test.go",
+				Content:     "func TestFn() {}",
+				ContentHash: ComputeContentHash("func TestFn() {}"),
+			},
+		}
+
+		saved, err := svc.IngestChunks(ctx, chunks)
+		if err != nil {
+			t.Fatalf("IngestChunks failed: %v", err)
+		}
+		if len(saved) != 1 || saved[0].SymbolName != "TestFn" {
+			t.Fatalf("unexpected saved chunks: %+v", saved)
+		}
+	})
+
+	t.Run("IngestChunks error handling", func(t *testing.T) {
+		mock := &mockDB{
+			queryRowFn: func(ctx context.Context, sql string, args ...any) pgx.Row {
+				return &mockRow{err: errors.New("db error")}
+			},
+		}
+		svc := &Service{cfg: DefaultConfig(), db: mock}
+		chunks := []CodeChunk{
+			{
+				SymbolName:  "TestFn",
+				SymbolType:  SymbolTypeFunction,
+				FilePath:    "pkg/test.go",
+				Content:     "func TestFn() {}",
+				ContentHash: ComputeContentHash("func TestFn() {}"),
+			},
+		}
+		_, err := svc.IngestChunks(ctx, chunks)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
 	t.Run("QueryCodebaseKnowledge success and query error", func(t *testing.T) {
 		fixedTime := time.Date(2026, 10, 31, 15, 0, 0, 0, time.UTC)
 		queryVec := make([]float32, KnowledgeVectorDimensions)
