@@ -37,8 +37,10 @@ type BridgeConfig struct {
 	Async               bool          `json:"async"`
 	GateApprovalBaseURL string        `json:"gate_approval_base_url"`
 	CLISuggestionCmd    string        `json:"cli_suggestion_cmd"`
-	Deduplicator        Deduplicator  `json:"-"`
-	DeduplicationTTL    time.Duration `json:"deduplication_ttl"`
+	Deduplicator        Deduplicator       `json:"-"`
+	DeduplicationTTL    time.Duration      `json:"deduplication_ttl"`
+	PRCreator           PullRequestCreator `json:"-"`
+	AutoCreatePR        bool               `json:"auto_create_pr"`
 }
 
 // DefaultBridgeConfig returns production defaults for autonomous webhook triggering.
@@ -62,6 +64,7 @@ type BridgeResult struct {
 	Reason        string                 `json:"reason,omitempty"`
 	TaskID        string                 `json:"task_id,omitempty"`
 	Branch        string                 `json:"branch,omitempty"`
+	PRURL         string                 `json:"pr_url,omitempty"`
 	Outcome       *agent.PipelineOutcome `json:"outcome,omitempty"`
 	CommentPosted bool                   `json:"comment_posted"`
 }
@@ -72,6 +75,7 @@ type AutonomousFactoryBridge struct {
 	runner    FactoryPipelineRunner
 	publisher EventPublisher
 	reporter  IssueFeedbackReporter
+	prCreator PullRequestCreator
 	dedup     Deduplicator
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -106,13 +110,31 @@ func NewAutonomousFactoryBridge(
 		dedup = NewMemoryDeduplicator(ttl)
 	}
 
+	prCreator := cfg.PRCreator
+	if prCreator == nil {
+		if pc, ok := reporter.(PullRequestCreator); ok {
+			prCreator = pc
+		}
+	}
+
 	return &AutonomousFactoryBridge{
 		cfg:       cfg,
 		runner:    runner,
 		publisher: publisher,
 		reporter:  reporter,
+		prCreator: prCreator,
 		dedup:     dedup,
 	}
+}
+
+// SetPRCreator configures or overrides the PullRequestCreator on the bridge.
+func (b *AutonomousFactoryBridge) SetPRCreator(prc PullRequestCreator) {
+	b.prCreator = prc
+}
+
+// PRCreator returns the active PullRequestCreator, if configured.
+func (b *AutonomousFactoryBridge) PRCreator() PullRequestCreator {
+	return b.prCreator
 }
 
 // Close gracefully stops the bridge and closes the deduplicator.
@@ -200,7 +222,7 @@ func (b *AutonomousFactoryBridge) HandleEvent(ctx context.Context, ev schema.Tri
 		b.wg.Add(1)
 		go func() {
 			defer b.wg.Done()
-			_, _, _ = b.runAndReport(context.Background(), task, ev, targetBranch)
+			_, _, _, _ = b.runAndReport(context.Background(), task, ev, targetBranch)
 		}()
 
 		return &BridgeResult{
@@ -212,7 +234,7 @@ func (b *AutonomousFactoryBridge) HandleEvent(ctx context.Context, ev schema.Tri
 	}
 
 	// Synchronous execution
-	outcome, posted, err := b.runAndReport(ctx, task, ev, targetBranch)
+	outcome, posted, prURL, err := b.runAndReport(ctx, task, ev, targetBranch)
 	if err != nil {
 		return &BridgeResult{
 			Handled: false,
@@ -227,6 +249,7 @@ func (b *AutonomousFactoryBridge) HandleEvent(ctx context.Context, ev schema.Tri
 		Async:         false,
 		TaskID:        task.TaskID,
 		Branch:        targetBranch,
+		PRURL:         prURL,
 		Outcome:       outcome,
 		CommentPosted: posted,
 	}, nil
@@ -602,7 +625,7 @@ func (b *AutonomousFactoryBridge) runAndReport(
 	task agent.TaskContext,
 	ev schema.TriggerEvent,
 	targetBranch string,
-) (*agent.PipelineOutcome, bool, error) {
+) (*agent.PipelineOutcome, bool, string, error) {
 	outcome, err := b.runner.RunPipeline(ctx, task)
 	if err != nil {
 		// Emit failure event
@@ -623,7 +646,7 @@ func (b *AutonomousFactoryBridge) runAndReport(
 		// Post error comment if reporter is available
 		comment := b.FormatErrorComment(err, targetBranch, task.TaskID)
 		b.postCommentIfAvailable(ctx, ev, comment)
-		return nil, false, err
+		return nil, false, "", err
 	}
 
 	// Emit lifecycle event according to outcome decision
@@ -653,11 +676,24 @@ func (b *AutonomousFactoryBridge) runAndReport(
 		})
 	}
 
+	// Auto create Pull Request if approved and triggered by an issue
+	var prURL string
+	if outcome.IsApproved() && ev.IssueNumber > 0 && ev.PRNumber == 0 && b.prCreator != nil {
+		prTitle := fmt.Sprintf("feat: %s (closes #%d)", task.Title, ev.IssueNumber)
+		prBody := fmt.Sprintf("Autonomous implementation for issue #%d.\n\n### Task Overview\n%s\n\n---\n*Created automatically by gv-factory.*", ev.IssueNumber, task.Description)
+		if prResp, err := b.prCreator.CreatePullRequest(ctx, ev.Repository, targetBranch, b.cfg.BaseBranch, prTitle, prBody); err == nil && prResp != nil {
+			prURL = prResp.HTMLURL
+			if prURL == "" {
+				prURL = prResp.URL
+			}
+		}
+	}
+
 	// Post feedback comment
-	comment := b.FormatFeedbackComment(outcome, targetBranch, task.TaskID)
+	comment := b.FormatFeedbackComment(outcome, targetBranch, task.TaskID, prURL)
 	posted := b.postCommentIfAvailable(ctx, ev, comment)
 
-	return outcome, posted, nil
+	return outcome, posted, prURL, nil
 }
 
 func (b *AutonomousFactoryBridge) postCommentIfAvailable(ctx context.Context, ev schema.TriggerEvent, comment string) bool {
@@ -672,27 +708,32 @@ func (b *AutonomousFactoryBridge) postCommentIfAvailable(ctx context.Context, ev
 		return false
 	}
 
+	if comp, ok := b.reporter.(*CompositeIssueReporter); ok {
+		err := comp.PostIssueCommentWithSource(ctx, ev.Source, ev.Repository, targetNum, comment)
+		return err == nil
+	}
+
 	err := b.reporter.PostIssueComment(ctx, ev.Repository, targetNum, comment)
 	return err == nil
 }
 
 // FormatFeedbackComment renders markdown feedback according to the pipeline outcome.
-func (b *AutonomousFactoryBridge) FormatFeedbackComment(outcome *agent.PipelineOutcome, branch string, taskID string) string {
+func (b *AutonomousFactoryBridge) FormatFeedbackComment(outcome *agent.PipelineOutcome, branch string, taskID string, prURL ...string) string {
 	if outcome == nil {
 		return ""
 	}
 
 	switch {
 	case outcome.IsApproved():
-		return b.formatApprovedComment(outcome, branch)
+		return b.formatApprovedComment(outcome, branch, prURL...)
 	case outcome.IsHumanGate():
-		return b.formatHumanGateComment(outcome, branch, taskID)
+		return b.formatHumanGateComment(outcome, branch, taskID, prURL...)
 	default:
 		return b.formatFailedComment(outcome, branch)
 	}
 }
 
-func (b *AutonomousFactoryBridge) formatApprovedComment(outcome *agent.PipelineOutcome, branch string) string {
+func (b *AutonomousFactoryBridge) formatApprovedComment(outcome *agent.PipelineOutcome, branch string, prURL ...string) string {
 	var sb strings.Builder
 	sb.WriteString("### 🚀 Autonomous Factory Pipeline: Approved\n\n")
 	sb.WriteString("The autonomous factory pipeline successfully implemented and verified the requested task.\n\n")
@@ -700,6 +741,14 @@ func (b *AutonomousFactoryBridge) formatApprovedComment(outcome *agent.PipelineO
 	sb.WriteString(fmt.Sprintf("- **Total Iterations:** %d\n", outcome.TotalIterations))
 	sb.WriteString(fmt.Sprintf("- **Duration:** %s\n", outcome.Duration.Round(100*time.Millisecond)))
 	sb.WriteString(fmt.Sprintf("- **Target Branch:** `%s`\n", branch))
+
+	var link string
+	if len(prURL) > 0 && strings.TrimSpace(prURL[0]) != "" {
+		link = strings.TrimSpace(prURL[0])
+	}
+	if link != "" {
+		sb.WriteString(fmt.Sprintf("- **Pull Request:** [%s](%s)\n", link, link))
+	}
 
 	if outcome.BuildResult != nil && len(outcome.BuildResult.FilesModified) > 0 {
 		sb.WriteString("\n#### 📝 Changes Overview\n")
@@ -716,7 +765,7 @@ func (b *AutonomousFactoryBridge) formatApprovedComment(outcome *agent.PipelineO
 	return sb.String()
 }
 
-func (b *AutonomousFactoryBridge) formatHumanGateComment(outcome *agent.PipelineOutcome, branch string, taskID string) string {
+func (b *AutonomousFactoryBridge) formatHumanGateComment(outcome *agent.PipelineOutcome, branch string, taskID string, prURL ...string) string {
 	var sb strings.Builder
 	sb.WriteString("### ⚠️ Autonomous Factory Pipeline: Human Approval Required\n\n")
 	sb.WriteString("The autonomous pipeline completed the task implementation, but human approval is required before merging.\n\n")
@@ -724,6 +773,13 @@ func (b *AutonomousFactoryBridge) formatHumanGateComment(outcome *agent.Pipeline
 	sb.WriteString(fmt.Sprintf("- **Total Iterations:** %d\n", outcome.TotalIterations))
 	sb.WriteString(fmt.Sprintf("- **Duration:** %s\n", outcome.Duration.Round(100*time.Millisecond)))
 	sb.WriteString(fmt.Sprintf("- **Target Branch:** `%s`\n", branch))
+	var link string
+	if len(prURL) > 0 && strings.TrimSpace(prURL[0]) != "" {
+		link = strings.TrimSpace(prURL[0])
+	}
+	if link != "" {
+		sb.WriteString(fmt.Sprintf("- **Pull Request:** [%s](%s)\n", link, link))
+	}
 	sb.WriteString("- **Required Action:** Manual sign-off required by an authorized reviewer.\n")
 
 	if outcome.Approval != nil {

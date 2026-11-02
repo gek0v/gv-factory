@@ -248,15 +248,19 @@ type TriggerRule struct {
 	Repositories   []string                           `json:"repositories,omitempty"`
 	TemplateName   string                             `json:"template_name,omitempty"`
 	Priority       dag.Priority                       `json:"priority,omitempty"`
+	Autonomous     bool                               `json:"autonomous,omitempty"`
 	CustomFilter   func(ev *schema.TriggerEvent) bool `json:"-"`
 }
 
 // TriggerManagerConfig holds the configuration for the PipelineTriggerManager.
 type TriggerManagerConfig struct {
-	DefaultTemplate  string        `json:"default_template"`
-	Rules            []TriggerRule `json:"rules"`
-	DeduplicationTTL time.Duration `json:"deduplication_ttl"`
-	BaseBranch       string        `json:"base_branch"`
+	DefaultTemplate  string                   `json:"default_template"`
+	Rules            []TriggerRule            `json:"rules"`
+	DeduplicationTTL time.Duration            `json:"deduplication_ttl"`
+	BaseBranch       string                   `json:"base_branch"`
+	AutonomousBridge *AutonomousFactoryBridge `json:"-"`
+	AutonomousRunner FactoryPipelineRunner   `json:"-"`
+	IssueReporter    IssueFeedbackReporter    `json:"-"`
 }
 
 // DefaultTriggerManagerConfig returns the standard production configuration for webhook triggering.
@@ -268,11 +272,38 @@ func DefaultTriggerManagerConfig() TriggerManagerConfig {
 		Rules: []TriggerRule{
 			{
 				Name:           "github-issue-ready-for-agent",
-				Sources:        []string{schema.SourceGitHub},
-				EventTypes:     []string{schema.EventIssueLabeled},
+				Sources:        []string{schema.SourceGitHub, schema.SourceGitLab},
+				EventTypes:     []string{schema.EventIssueLabeled, "issues.labeled"},
 				RequiredLabels: []string{"ready-for-agent"},
 				TemplateName:   "default-tdd-factory",
 				Priority:       dag.PriorityHigh,
+				Autonomous:     true,
+			},
+			{
+				Name:         "github-issue-comment-factory-build",
+				Sources:      []string{schema.SourceGitHub, schema.SourceGitLab},
+				EventTypes:   []string{schema.EventIssueCommented, "issue_comment.created", "issue_comment"},
+				Autonomous:   true,
+				TemplateName: "default-tdd-factory",
+				Priority:     dag.PriorityHigh,
+				CustomFilter: func(ev *schema.TriggerEvent) bool {
+					if ev == nil || ev.Payload == nil {
+						return false
+					}
+					if comment, ok := ev.Payload["comment"].(map[string]any); ok {
+						if body, ok := comment["body"].(string); ok {
+							lower := strings.ToLower(body)
+							return strings.Contains(lower, "@factory build") || strings.Contains(lower, "/factory") || strings.Contains(lower, "@factory")
+						}
+					}
+					if obj, ok := ev.Payload["object_attributes"].(map[string]any); ok {
+						if note, ok := obj["note"].(string); ok {
+							lower := strings.ToLower(note)
+							return strings.Contains(lower, "@factory build") || strings.Contains(lower, "/factory") || strings.Contains(lower, "@factory")
+						}
+					}
+					return false
+				},
 			},
 			{
 				Name:         "github-issue-opened",
@@ -294,21 +325,23 @@ func DefaultTriggerManagerConfig() TriggerManagerConfig {
 
 // TriggerResult holds the outcome of evaluating a trigger event.
 type TriggerResult struct {
-	Handled     bool            `json:"handled"`
-	Skipped     bool            `json:"skipped"`
-	Reason      string          `json:"reason,omitempty"`
-	RunID       string          `json:"run_id,omitempty"`
-	RuleMatched string          `json:"rule_matched,omitempty"`
-	Run         *dag.FactoryRun `json:"run,omitempty"`
+	Handled      bool            `json:"handled"`
+	Skipped      bool            `json:"skipped"`
+	Reason       string          `json:"reason,omitempty"`
+	RunID        string          `json:"run_id,omitempty"`
+	RuleMatched  string          `json:"rule_matched,omitempty"`
+	Run          *dag.FactoryRun `json:"run,omitempty"`
+	BridgeResult *BridgeResult   `json:"bridge_result,omitempty"`
 }
 
 // PipelineTriggerManager connects inbound trigger events with the DAG Orchestrator.
 type PipelineTriggerManager struct {
-	cfg       TriggerManagerConfig
-	submitter PipelineSubmitter
-	publisher EventPublisher
-	dedup     Deduplicator
-	resolver  TemplateResolver
+	cfg              TriggerManagerConfig
+	submitter        PipelineSubmitter
+	publisher        EventPublisher
+	dedup            Deduplicator
+	resolver         TemplateResolver
+	autonomousBridge *AutonomousFactoryBridge
 }
 
 // NewPipelineTriggerManager initializes a PipelineTriggerManager.
@@ -336,21 +369,52 @@ func NewPipelineTriggerManager(
 		resolver = NewCatalogTemplateResolver()
 	}
 
-	return &PipelineTriggerManager{
-		cfg:       cfg,
-		submitter: submitter,
-		publisher: publisher,
-		dedup:     dedup,
-		resolver:  resolver,
+	bridge := cfg.AutonomousBridge
+	if bridge == nil && cfg.AutonomousRunner != nil {
+		bridge = NewAutonomousFactoryBridge(
+			DefaultBridgeConfig(),
+			cfg.AutonomousRunner,
+			publisher,
+			cfg.IssueReporter,
+		)
 	}
+
+	return &PipelineTriggerManager{
+		cfg:              cfg,
+		submitter:        submitter,
+		publisher:        publisher,
+		dedup:            dedup,
+		resolver:         resolver,
+		autonomousBridge: bridge,
+	}
+}
+
+// SetAutonomousBridge attaches an AutonomousFactoryBridge to the manager.
+func (m *PipelineTriggerManager) SetAutonomousBridge(bridge *AutonomousFactoryBridge) {
+	m.autonomousBridge = bridge
+}
+
+// WithAutonomousBridge chains setting an AutonomousFactoryBridge.
+func (m *PipelineTriggerManager) WithAutonomousBridge(bridge *AutonomousFactoryBridge) *PipelineTriggerManager {
+	m.autonomousBridge = bridge
+	return m
+}
+
+// AutonomousBridge returns the active AutonomousFactoryBridge, if configured.
+func (m *PipelineTriggerManager) AutonomousBridge() *AutonomousFactoryBridge {
+	return m.autonomousBridge
 }
 
 // Close frees any resources held by the manager (e.g. deduplicator background worker).
 func (m *PipelineTriggerManager) Close() error {
+	var err error
 	if m.dedup != nil {
-		return m.dedup.Close()
+		err = m.dedup.Close()
 	}
-	return nil
+	if m.autonomousBridge != nil {
+		_ = m.autonomousBridge.Close()
+	}
+	return err
 }
 
 // Dispatch implements the Dispatcher interface so it can be wired directly to Ingestor.
@@ -385,6 +449,29 @@ func (m *PipelineTriggerManager) HandleTrigger(ctx context.Context, ev schema.Tr
 			Handled: false,
 			Skipped: true,
 			Reason:  fmt.Sprintf("no matching trigger rule for event type %q", ev.EventType),
+		}, nil
+	}
+
+	// 2.1 Autonomous execution delegation
+	if matchedRule.Autonomous && m.autonomousBridge != nil {
+		bridgeRes, err := m.autonomousBridge.HandleEvent(ctx, ev)
+		if err != nil {
+			return &TriggerResult{
+				Handled:      false,
+				Skipped:      false,
+				Reason:       err.Error(),
+				RuleMatched:  matchedRule.Name,
+				BridgeResult: bridgeRes,
+			}, err
+		}
+
+		return &TriggerResult{
+			Handled:      bridgeRes.Handled,
+			Skipped:      bridgeRes.Skipped,
+			Reason:       bridgeRes.Reason,
+			RunID:        bridgeRes.TaskID,
+			RuleMatched:  matchedRule.Name,
+			BridgeResult: bridgeRes,
 		}, nil
 	}
 

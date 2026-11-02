@@ -18,7 +18,6 @@ import (
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/chat"
-	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/connectors/outbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
@@ -133,23 +132,18 @@ func main() {
 	)
 	defer orchestrator.Stop()
 
-	triggerMgr := inbound.NewPipelineTriggerManager(
-		inbound.DefaultTriggerManagerConfig(),
-		orchestrator,
-		gw,
-		nil,
-		nil,
-	)
-	defer triggerMgr.Close()
-
-	webhookIngestor := inbound.NewIngestor(inbound.Config{
+	inboundCfg := InboundConfig{
+		GitHubToken:  os.Getenv("GITHUB_TOKEN"),
+		GitHubAPIURL: os.Getenv("GITHUB_API_URL"),
+		GitLabToken:  os.Getenv("GITLAB_TOKEN"),
+		GitLabAPIURL: os.Getenv("GITLAB_API_URL"),
 		GitHubSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		GitLabSecret: os.Getenv("GITLAB_WEBHOOK_SECRET"),
 		SentrySecret: os.Getenv("SENTRY_WEBHOOK_SECRET"),
-	}, inbound.NewMultiDispatcher(
-		inbound.NewGatewayDispatcher(gw),
-		triggerMgr,
-	))
+	}
+
+	webhookIngestor, triggerMgr := BuildInboundWebhookHandler(inboundCfg, gw, orchestrator, nil)
+	defer triggerMgr.Close()
 	_ = webhookIngestor
 
 	outboundDispatcher := outbound.NewDefaultDispatcher()

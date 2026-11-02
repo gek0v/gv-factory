@@ -6,12 +6,14 @@ package inbound
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/agent"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/pkg/schema"
@@ -813,3 +815,272 @@ func TestPipelineTriggerManager_SubmitErrorHandling(t *testing.T) {
 		}
 	})
 }
+
+type testPRCreatorMock struct {
+	called     bool
+	lastRepo   string
+	lastHead   string
+	lastBase   string
+	lastTitle  string
+	returnURL  string
+	returnNum  int
+	returnErr  error
+}
+
+func (m *testPRCreatorMock) CreatePullRequest(ctx context.Context, repo, head, base, title, body string) (*PullRequestResponse, error) {
+	m.called = true
+	m.lastRepo = repo
+	m.lastHead = head
+	m.lastBase = base
+	m.lastTitle = title
+	if m.returnErr != nil {
+		return nil, m.returnErr
+	}
+	url := m.returnURL
+	if url == "" {
+		url = fmt.Sprintf("https://github.com/%s/pull/%d", repo, m.returnNum)
+	}
+	return &PullRequestResponse{
+		Number:  m.returnNum,
+		HTMLURL: url,
+		URL:     url,
+		State:   "open",
+		Title:   title,
+		Body:    body,
+	}, nil
+}
+
+func TestPipelineTriggerManager_AutonomousBridgeIntegration(t *testing.T) {
+	t.Run("ready-for-agent label delegates to AutonomousBridge with PR creation and comment", func(t *testing.T) {
+		runner := newMockFactoryRunner()
+		runner.runOutcome = &agent.PipelineOutcome{
+			TaskID:          "issue-42",
+			Decision:        agent.DecisionApproved,
+			TotalIterations: 1,
+			Duration:        500 * time.Millisecond,
+		}
+
+		reporter := &mockIssueReporter{}
+		prCreator := &testPRCreatorMock{
+			returnNum: 101,
+			returnURL: "https://github.com/gv-factory/gv-factory/pull/101",
+		}
+
+		bridgeCfg := DefaultBridgeConfig()
+		bridgeCfg.PRCreator = prCreator
+		bridge := NewAutonomousFactoryBridge(bridgeCfg, runner, nil, reporter)
+
+		cfg := DefaultTriggerManagerConfig()
+		cfg.AutonomousBridge = bridge
+
+		mgr := NewPipelineTriggerManager(cfg, nil, nil, nil, nil)
+		defer mgr.Close()
+
+		if mgr.AutonomousBridge() != bridge {
+			t.Error("expected AutonomousBridge getter to match configured bridge")
+		}
+
+		ev := schema.TriggerEvent{
+			ID:          "deliv-auto-1",
+			Source:      schema.SourceGitHub,
+			EventType:   schema.EventIssueLabeled,
+			Repository:  "gv-factory/gv-factory",
+			IssueNumber: 42,
+			Sender:      "octocat",
+			Payload: map[string]any{
+				"action": "labeled",
+				"label": map[string]any{
+					"name": "ready-for-agent",
+				},
+				"issue": map[string]any{
+					"number": 42,
+					"title":  "Add user authentication",
+					"body":   "Need oauth2 implementation",
+				},
+			},
+		}
+
+		res, err := mgr.HandleTrigger(context.Background(), ev)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Handled {
+			t.Fatalf("expected trigger to be handled, got %+v", res)
+		}
+		if res.RuleMatched != "github-issue-ready-for-agent" {
+			t.Errorf("expected rule github-issue-ready-for-agent, got %s", res.RuleMatched)
+		}
+		if res.BridgeResult == nil || !res.BridgeResult.Handled {
+			t.Errorf("expected non-nil handled BridgeResult, got %+v", res.BridgeResult)
+		}
+
+		// Verify PR was created
+		if !prCreator.called {
+			t.Error("expected PR creator to be invoked on approved issue outcome")
+		}
+		if prCreator.lastHead != "ov-run/issue-42" {
+			t.Errorf("expected head ov-run/issue-42, got %s", prCreator.lastHead)
+		}
+
+		// Verify feedback comment was posted with PR link
+		comments := reporter.getComments()
+		if len(comments) != 1 {
+			t.Fatalf("expected 1 comment posted, got %d", len(comments))
+		}
+		if !strings.Contains(comments[0].Comment, "https://github.com/gv-factory/gv-factory/pull/101") {
+			t.Errorf("expected comment to contain PR link, got:\n%s", comments[0].Comment)
+		}
+	})
+
+	t.Run("factory build issue comment triggers AutonomousRunner via trigger manager config", func(t *testing.T) {
+		runner := newMockFactoryRunner()
+		runner.runOutcome = &agent.PipelineOutcome{
+			TaskID:          "issue-77",
+			Decision:        agent.DecisionApproved,
+			TotalIterations: 2,
+			Duration:        800 * time.Millisecond,
+		}
+
+		reporter := &mockIssueReporter{}
+
+		cfg := DefaultTriggerManagerConfig()
+		cfg.AutonomousRunner = runner
+		cfg.IssueReporter = reporter
+
+		mgr := NewPipelineTriggerManager(cfg, nil, nil, nil, nil)
+		defer mgr.Close()
+
+		if mgr.AutonomousBridge() == nil {
+			t.Fatal("expected AutonomousBridge to be constructed from AutonomousRunner")
+		}
+
+		ev := schema.TriggerEvent{
+			ID:          "deliv-cmd-1",
+			Source:      schema.SourceGitHub,
+			EventType:   schema.EventIssueCommented,
+			Repository:  "gv-factory/gv-factory",
+			IssueNumber: 77,
+			Sender:      "maintainer",
+			Payload: map[string]any{
+				"action": "created",
+				"comment": map[string]any{
+					"body": "@factory build Please implement this feature",
+				},
+				"issue": map[string]any{
+					"number": 77,
+					"title":  "Implement dark mode",
+				},
+			},
+		}
+
+		res, err := mgr.HandleTrigger(context.Background(), ev)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Handled {
+			t.Fatalf("expected trigger to be handled, got %+v", res)
+		}
+		if res.RuleMatched != "github-issue-comment-factory-build" {
+			t.Errorf("expected rule github-issue-comment-factory-build, got %s", res.RuleMatched)
+		}
+
+		calls := runner.getCalls()
+		if len(calls) != 1 {
+			t.Fatalf("expected 1 pipeline run, got %d", len(calls))
+		}
+		if calls[0].TaskID != "issue-77" {
+			t.Errorf("expected task ID issue-77, got %s", calls[0].TaskID)
+		}
+	})
+
+	t.Run("GitLab object_attributes note with factory build comment", func(t *testing.T) {
+		runner := newMockFactoryRunner()
+		runner.runOutcome = &agent.PipelineOutcome{
+			TaskID:   "issue-90",
+			Decision: agent.DecisionApproved,
+		}
+
+		cfg := DefaultTriggerManagerConfig()
+		cfg.AutonomousRunner = runner
+
+		mgr := NewPipelineTriggerManager(cfg, nil, nil, nil, nil)
+		defer mgr.Close()
+
+		ev := schema.TriggerEvent{
+			ID:          "deliv-gl-1",
+			Source:      schema.SourceGitLab,
+			EventType:   schema.EventIssueCommented,
+			Repository:  "gitlab-org/project",
+			IssueNumber: 90,
+			Payload: map[string]any{
+				"object_attributes": map[string]any{
+					"note": "/factory build test",
+				},
+			},
+		}
+
+		res, err := mgr.HandleTrigger(context.Background(), ev)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.Handled {
+			t.Fatalf("expected handled trigger, got %+v", res)
+		}
+	})
+
+	t.Run("autonomous bridge error propagation", func(t *testing.T) {
+		runner := newMockFactoryRunner()
+		runner.runErr = fmt.Errorf("fatal pipeline crash")
+
+		bridge := NewAutonomousFactoryBridge(DefaultBridgeConfig(), runner, nil, nil)
+		cfg := DefaultTriggerManagerConfig()
+		cfg.AutonomousBridge = bridge
+
+		mgr := NewPipelineTriggerManager(cfg, nil, nil, nil, nil)
+		defer mgr.Close()
+
+		ev := schema.TriggerEvent{
+			ID:          "deliv-err-1",
+			Source:      schema.SourceGitHub,
+			EventType:   schema.EventIssueLabeled,
+			Repository:  "gv-factory/gv-factory",
+			IssueNumber: 55,
+			Payload: map[string]any{
+				"action": "labeled",
+				"label": map[string]any{
+					"name": "ready-for-agent",
+				},
+			},
+		}
+
+		res, err := mgr.HandleTrigger(context.Background(), ev)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if res.Handled {
+			t.Error("expected Handled == false on error")
+		}
+	})
+
+	t.Run("SetAutonomousBridge and WithAutonomousBridge chaining", func(t *testing.T) {
+		mgr := NewPipelineTriggerManager(DefaultTriggerManagerConfig(), nil, nil, nil, nil)
+		defer mgr.Close()
+
+		if mgr.AutonomousBridge() != nil {
+			t.Error("expected initial bridge to be nil")
+		}
+
+		bridge := NewAutonomousFactoryBridge(DefaultBridgeConfig(), newMockFactoryRunner(), nil, nil)
+		mgr.SetAutonomousBridge(bridge)
+		if mgr.AutonomousBridge() != bridge {
+			t.Error("expected SetAutonomousBridge to set the bridge")
+		}
+
+		bridge2 := NewAutonomousFactoryBridge(DefaultBridgeConfig(), newMockFactoryRunner(), nil, nil)
+		chained := mgr.WithAutonomousBridge(bridge2)
+		if chained != mgr || mgr.AutonomousBridge() != bridge2 {
+			t.Error("expected WithAutonomousBridge to chain and update bridge")
+		}
+	})
+}
+
