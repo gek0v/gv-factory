@@ -227,6 +227,10 @@ func (q *InMemoryQueue) removeSub(target *inMemorySub) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if q.closed {
+		return
+	}
+
 	if q.groups[target.subject] != nil {
 		subs := q.groups[target.subject][target.group]
 		for i, s := range subs {
@@ -241,22 +245,23 @@ func (q *InMemoryQueue) removeSub(target *inMemorySub) {
 // Close shuts down the in-memory queue and all active subscriptions.
 func (q *InMemoryQueue) Close() error {
 	q.mu.Lock()
-	defer q.mu.Unlock()
-
 	if q.closed {
+		q.mu.Unlock()
 		return nil
 	}
 	q.closed = true
 
+	var allSubs []*inMemorySub
 	for _, groupMap := range q.groups {
 		for _, subs := range groupMap {
-			for _, s := range subs {
-				s.once.Do(func() {
-					close(s.ch)
-				})
-			}
+			allSubs = append(allSubs, subs...)
 		}
 	}
 	q.groups = make(map[string]map[string][]*inMemorySub)
+	q.mu.Unlock()
+
+	for _, s := range allSubs {
+		_ = s.Unsubscribe()
+	}
 	return nil
 }

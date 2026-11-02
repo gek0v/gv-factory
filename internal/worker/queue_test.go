@@ -172,3 +172,44 @@ func TestInMemoryQueue_ConcurrentGroupSubscription(t *testing.T) {
 		t.Fatalf("expected both queue group subscribers to receive messages, got count1=%d count2=%d", count1, count2)
 	}
 }
+
+func TestInMemoryQueue_ConcurrentCloseAndUnsubscribe(t *testing.T) {
+	for iter := 0; iter < 50; iter++ {
+		q := NewInMemoryQueue()
+		ctx, cancel := context.WithCancel(context.Background())
+
+		var subs []QueueSubscription
+		for i := 0; i < 20; i++ {
+			sub, err := q.Subscribe(ctx, "test.subject", "")
+			if err != nil {
+				t.Fatalf("unexpected subscribe error: %v", err)
+			}
+			subs = append(subs, sub)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			cancel()
+		}()
+
+		go func() {
+			defer wg.Done()
+			_ = q.Close()
+		}()
+
+		wg.Wait()
+
+		for _, s := range subs {
+			select {
+			case _, ok := <-s.Messages():
+				if ok {
+					t.Errorf("expected closed channel")
+				}
+			default:
+			}
+		}
+	}
+}
