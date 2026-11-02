@@ -26,6 +26,14 @@ type ApprovalTokenProvider interface {
 	ValidateApprovalToken(token string) (string, bool)
 }
 
+// LocalToolHandler defines an in-process tool implementation.
+type LocalToolHandler func(ctx context.Context, arguments map[string]any) (*ToolResult, error)
+
+type localToolEntry struct {
+	def     ToolDefinition
+	handler LocalToolHandler
+}
+
 // ServerEntry holds an MCP client and its metadata in the registry.
 type ServerEntry struct {
 	Name    string
@@ -52,6 +60,7 @@ type gateResolution struct {
 type MCPToolRegistry struct {
 	mu                 sync.RWMutex
 	servers            map[string]*ServerEntry
+	localTools         map[string]localToolEntry
 	toolToServer       map[string]string // tool name -> server name
 	toolDefinitions    map[string]ToolDefinition
 	policies           []ToolSecurityPolicy
@@ -89,6 +98,7 @@ func NewMCPToolRegistry(cfg RegistryConfig) *MCPToolRegistry {
 
 	r := &MCPToolRegistry{
 		servers:            make(map[string]*ServerEntry),
+		localTools:         make(map[string]localToolEntry),
 		toolToServer:       make(map[string]string),
 		toolDefinitions:    make(map[string]ToolDefinition),
 		policies:           make([]ToolSecurityPolicy, 0),
@@ -206,6 +216,42 @@ func (r *MCPToolRegistry) IsApprovalRequired(toolName string) (bool, time.Durati
 	return false, 0
 }
 
+// RegisterLocalTool registers an in-process tool handler with the registry.
+func (r *MCPToolRegistry) RegisterLocalTool(def ToolDefinition, handler LocalToolHandler) error {
+	name := strings.TrimSpace(def.Name)
+	if name == "" {
+		return fmt.Errorf("local tool name cannot be empty")
+	}
+	if handler == nil {
+		return fmt.Errorf("local tool handler cannot be nil")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	def.Name = name
+	r.localTools[name] = localToolEntry{
+		def:     def,
+		handler: handler,
+	}
+	r.toolDefinitions[name] = def
+	return nil
+}
+
+// UnregisterLocalTool removes an in-process tool from the registry.
+func (r *MCPToolRegistry) UnregisterLocalTool(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.localTools[name]; !ok {
+		return fmt.Errorf("%w: %s", ErrToolNotFound, name)
+	}
+
+	delete(r.localTools, name)
+	delete(r.toolDefinitions, name)
+	return nil
+}
+
 // RegisterServer registers an MCP client under a logical server name.
 func (r *MCPToolRegistry) RegisterServer(name string, client *Client, timeout time.Duration) error {
 	if name == "" {
@@ -263,9 +309,14 @@ func (r *MCPToolRegistry) ListTools(ctx context.Context) ([]ToolDefinition, erro
 	for _, s := range r.servers {
 		servers = append(servers, s)
 	}
+	localDefs := make([]ToolDefinition, 0, len(r.localTools))
+	for _, lt := range r.localTools {
+		localDefs = append(localDefs, lt.def)
+	}
 	r.mu.RUnlock()
 
 	var allTools []ToolDefinition
+	allTools = append(allTools, localDefs...)
 	newMappings := make(map[string]string)
 
 	for _, s := range servers {
@@ -318,6 +369,25 @@ func (r *MCPToolRegistry) CallToolWithContext(ctx context.Context, ec ExecutionC
 		if err := r.interceptToolCall(ctx, ec, name, arguments, gateTimeout); err != nil {
 			return nil, err
 		}
+	}
+
+	r.mu.RLock()
+	localEntry, isLocal := r.localTools[name]
+	r.mu.RUnlock()
+
+	if isLocal {
+		select {
+		case r.sem <- struct{}{}:
+			defer func() { <-r.sem }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		callTimeout := r.defaultTimeout
+		callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+		defer cancel()
+
+		return localEntry.handler(callCtx, arguments)
 	}
 
 	r.mu.RLock()
