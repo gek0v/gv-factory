@@ -68,6 +68,9 @@ type ApprovalPromptRequest struct {
 	HasAuthChanges      bool      `json:"has_auth_changes"`
 	HasSchemaChanges    bool      `json:"has_schema_changes"`
 	ReviewerScores      []string  `json:"reviewer_scores,omitempty"`
+	TaskTitle           string    `json:"task_title,omitempty"`
+	GateReason          string    `json:"gate_reason,omitempty"`
+	FindingsCount       int       `json:"findings_count,omitempty"`
 }
 
 // StatusUpdate represents a step-by-step progress update during factory execution.

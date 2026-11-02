@@ -75,8 +75,7 @@ func ParseSlashCommand(platform, cmdText, rawText, userID, userName, channelID, 
 					cmd.Parameters[k] = v
 				}
 			case strings.HasPrefix(p, "-"):
-				// Unknown flag, keep as argument
-				nonFlagArgs = append(nonFlagArgs, p)
+				// Unknown flag, ignore for template resolution
 			default:
 				nonFlagArgs = append(nonFlagArgs, p)
 			}
