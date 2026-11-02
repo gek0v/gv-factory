@@ -70,6 +70,8 @@ export interface FactoryFlowState {
   ) => Promise<{ success: boolean; message: string }>;
   showWorkerDashboard: boolean;
   setShowWorkerDashboard: (show: boolean) => void;
+  showBrainExplorer: boolean;
+  setShowBrainExplorer: (show: boolean) => void;
   workerPool: import('./types/worker').WorkerPoolResponse | null;
   setWorkerPool: (pool: import('./types/worker').WorkerPoolResponse | null) => void;
   updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => void;
@@ -88,6 +90,7 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   activeRunId: null,
   activeRunState: null,
   showWorkerDashboard: false,
+  showBrainExplorer: false,
   workerPool: null,
 
   onNodesChange: (changes) => {
@@ -375,6 +378,7 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   },
 
   setShowWorkerDashboard: (show: boolean) => set({ showWorkerDashboard: show }),
+  setShowBrainExplorer: (show: boolean) => set({ showBrainExplorer: show }),
   setWorkerPool: (pool: import('./types/worker').WorkerPoolResponse | null) => set({ workerPool: pool }),
   updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => {
     const { workerPool } = get();
