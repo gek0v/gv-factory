@@ -5,11 +5,28 @@ package llm
 
 import "net/http"
 
+// ProviderType identifies supported LLM backend providers.
+type ProviderType string
+
+const (
+	ProviderAnthropic        ProviderType = "anthropic"
+	ProviderOpenAI           ProviderType = "openai"
+	ProviderOllama           ProviderType = "ollama"
+	ProviderOpenAICompatible ProviderType = "openai_compatible"
+	ProviderVLLM             ProviderType = "vllm"
+	ProviderAuto             ProviderType = "auto"
+)
+
 // ClientConfig holds configuration settings for LLM providers.
 type ClientConfig struct {
-	BaseURL     string
-	HTTPClient  *http.Client
-	RetryPolicy RetryPolicy
+	BaseURL          string
+	APIKey           string
+	Model            string
+	FallbackProvider ProviderType
+	FallbackBaseURL  string
+	FallbackAPIKey   string
+	HTTPClient       *http.Client
+	RetryPolicy      RetryPolicy
 }
 
 // Option configures a ClientConfig.
@@ -19,6 +36,29 @@ type Option func(*ClientConfig)
 func WithBaseURL(url string) Option {
 	return func(c *ClientConfig) {
 		c.BaseURL = url
+	}
+}
+
+// WithAPIKey sets the API authentication key or token.
+func WithAPIKey(apiKey string) Option {
+	return func(c *ClientConfig) {
+		c.APIKey = apiKey
+	}
+}
+
+// WithModel sets the target model identifier.
+func WithModel(model string) Option {
+	return func(c *ClientConfig) {
+		c.Model = model
+	}
+}
+
+// WithFallbackProvider configures fallback parameters when primary fails.
+func WithFallbackProvider(provider ProviderType, baseURL, apiKey string) Option {
+	return func(c *ClientConfig) {
+		c.FallbackProvider = provider
+		c.FallbackBaseURL = baseURL
+		c.FallbackAPIKey = apiKey
 	}
 }
 
