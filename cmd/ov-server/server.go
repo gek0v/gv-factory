@@ -911,13 +911,22 @@ func NewServerMuxWithRunner(
 	// Codebase Brain endpoints (search, sync ADRs, repository indexer, stats)
 	registerBrainEndpoints(mux, brainSvc)
 
+	// Cost and Token Telemetry endpoints
+	var costTracker *telemetry.CostTracker
+	if t != nil && t.CostTracker != nil {
+		costTracker = t.CostTracker
+	} else {
+		costTracker = telemetry.NewCostTracker()
+	}
+	registerCostEndpoints(mux, costTracker)
+
 	// Autonomous Factory execution and status endpoints
 	if runner == nil {
 		var mq agent.MergeQueue
 		if gw != nil {
 			mq = merger.NewQueue(nil, gw, nil, nil, merger.Config{RepoPath: ".", BaseBranch: "main"})
 		}
-		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw, mergeQueue: mq}
+		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw, mergeQueue: mq, costTracker: costTracker}
 	}
 	RegisterFactoryEndpoints(mux, gw, runner)
 

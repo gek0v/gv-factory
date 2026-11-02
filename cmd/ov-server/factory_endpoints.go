@@ -15,6 +15,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/agent"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
 // FactoryPipelineRunner defines the contract for executing autonomous factory pipelines.
@@ -97,9 +98,10 @@ func (t *FactoryRunTracker) List() []*FactoryRunResponse {
 
 // defaultFactoryRunner wires default agent components with Brain, Gateway telemetry, and sequential Merge Queue.
 type defaultFactoryRunner struct {
-	brainSvc   *brain.Service
-	gw         *gateway.Gateway
-	mergeQueue agent.MergeQueue
+	brainSvc    *brain.Service
+	gw          *gateway.Gateway
+	mergeQueue  agent.MergeQueue
+	costTracker *telemetry.CostTracker
 }
 
 func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
@@ -108,12 +110,13 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 	}
 
 	cfg := agent.CoordinatorConfig{
-		SpecWriter: agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc}),
-		Builder:    agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: "."}),
-		Approver:   agent.NewApprover(nil, agent.ApproverConfig{}),
-		Brain:      d.brainSvc,
-		MergeQueue: d.mergeQueue,
-		EventHook:  hook,
+		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc}),
+		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: "."}),
+		Approver:    agent.NewApprover(nil, agent.ApproverConfig{}),
+		Brain:       d.brainSvc,
+		MergeQueue:  d.mergeQueue,
+		CostTracker: d.costTracker,
+		EventHook:   hook,
 	}
 
 	coord := agent.NewFactoryCoordinator(cfg)

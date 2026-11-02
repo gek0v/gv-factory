@@ -79,6 +79,8 @@ export interface FactoryFlowState {
   setShowWorkerDashboard: (show: boolean) => void;
   showBrainExplorer: boolean;
   setShowBrainExplorer: (show: boolean) => void;
+  showCostBudgetModal: boolean;
+  setShowCostBudgetModal: (show: boolean) => void;
   workerPool: import('./types/worker').WorkerPoolResponse | null;
   setWorkerPool: (pool: import('./types/worker').WorkerPoolResponse | null) => void;
   updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => void;
@@ -106,6 +108,7 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   activeRunOutcome: null,
   showWorkerDashboard: false,
   showBrainExplorer: false,
+  showCostBudgetModal: false,
   workerPool: null,
   showExecutionTimeline: false,
   executionEvents: [],
@@ -408,6 +411,7 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
 
   setShowWorkerDashboard: (show: boolean) => set({ showWorkerDashboard: show }),
   setShowBrainExplorer: (show: boolean) => set({ showBrainExplorer: show }),
+  setShowCostBudgetModal: (show: boolean) => set({ showCostBudgetModal: show }),
   setWorkerPool: (pool: import('./types/worker').WorkerPoolResponse | null) => set({ workerPool: pool }),
   updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => {
     const { workerPool } = get();

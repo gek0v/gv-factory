@@ -14,6 +14,7 @@ type Telemetry struct {
 	TracerProvider *TracerProvider
 	Tracer         trace.Tracer
 	Metrics        *Metrics
+	CostTracker    *CostTracker
 	Config         Config
 }
 
@@ -35,10 +36,13 @@ func New(ctx context.Context, cfg Config) (*Telemetry, error) {
 		metrics = NewMetrics()
 	}
 
+	costTracker := NewCostTracker(DefaultBudgetGuardrail())
+
 	return &Telemetry{
 		TracerProvider: tp,
 		Tracer:         tracer,
 		Metrics:        metrics,
+		CostTracker:    costTracker,
 		Config:         cfg,
 	}, nil
 }
