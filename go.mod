@@ -8,6 +8,7 @@ require (
 	github.com/nats-io/nats.go v1.39.0
 	github.com/pgvector/pgvector-go v0.2.2
 	github.com/prometheus/client_golang v1.21.1
+	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/tetratelabs/wazero v1.9.0
 	go.opentelemetry.io/otel v1.31.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.28.0

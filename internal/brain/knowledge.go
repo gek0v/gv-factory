@@ -133,6 +133,25 @@ func (s *Service) UpsertCodebaseKnowledge(ctx context.Context, k CodebaseKnowled
 	return &upserted, nil
 }
 
+// IngestChunks converts and upserts multiple CodeChunks into the codebase knowledge store.
+func (s *Service) IngestChunks(ctx context.Context, chunks []CodeChunk) ([]*CodebaseKnowledge, error) {
+	if len(chunks) == 0 {
+		return []*CodebaseKnowledge{}, nil
+	}
+
+	results := make([]*CodebaseKnowledge, 0, len(chunks))
+	for _, chunk := range chunks {
+		k := chunk.ToCodebaseKnowledge()
+		saved, err := s.UpsertCodebaseKnowledge(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, saved)
+	}
+
+	return results, nil
+}
+
 // GetKnowledgeBySymbol retrieves a codebase knowledge fragment by file path and symbol name.
 func (s *Service) GetKnowledgeBySymbol(ctx context.Context, filePath, symbolName string) (*CodebaseKnowledge, error) {
 	path := strings.TrimSpace(filePath)
