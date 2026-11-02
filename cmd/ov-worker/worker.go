@@ -6,11 +6,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/connectors/llm"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/plugins"
+	"github.com/gv-factory/gv-factory/internal/runtime/mcp"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
 	"github.com/gv-factory/gv-factory/internal/worker"
 	"github.com/gv-factory/gv-factory/pkg/schema"
@@ -28,6 +32,9 @@ type WorkerConfig struct {
 	HeartbeatInterval time.Duration
 	DrainTimeout      time.Duration
 	SandboxConfig     sandbox.ContainerSandboxConfig
+	LLMProvider       string
+	LLMModel          string
+	MCPRegistry       worker.MCPCaller
 }
 
 // Worker orchestrates Hatchet workflow steps and dispatches tasks to WASM plugins and Sandboxes.
@@ -111,6 +118,34 @@ func NewWorker(cfg WorkerConfig) *Worker {
 	}
 	containerExec := sandbox.NewContainerSandboxExecutor(sandboxCfg)
 
+	// Initialize MCP Tool Registry if not provided
+	mcpCaller := cfg.MCPRegistry
+	if mcpCaller == nil {
+		mcpCaller = mcp.NewMCPToolRegistry(mcp.RegistryConfig{
+			Gateway: gw,
+		})
+	}
+
+	// Initialize LLM Client from configuration and environment variables
+	llmClient := initLLMClient(cfg.LLMProvider)
+	defaultModel := cfg.LLMModel
+	if defaultModel == "" {
+		defaultModel = "claude-3-7-sonnet-20250219"
+	}
+
+	var cognitiveExec worker.AgentStepExecutor
+	if llmClient != nil {
+		cognitiveExec = worker.NewCognitiveAgentExecutor(worker.CognitiveExecutorConfig{
+			LLMClient:       llmClient,
+			MCPCaller:       mcpCaller,
+			Sandbox:         sb,
+			Publisher:       gw,
+			WorkerID:        cfg.WorkerID,
+			DefaultModel:    defaultModel,
+			StreamReasoning: true,
+		})
+	}
+
 	// Register concrete execution sub-engine handlers
 	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.NewWasmPluginHandler(pluginHost))
 	router.RegisterHandler(worker.TaskTypeGitSandbox, worker.NewGitSandboxHandler(
@@ -122,6 +157,7 @@ func NewWorker(cfg WorkerConfig) *Worker {
 	router.RegisterHandler(worker.TaskTypeAgentStep, worker.NewAgentStepHandler(worker.AgentStepConfig{
 		Caller:    pluginHost,
 		Sandbox:   sb,
+		Executor:  cognitiveExec,
 		Command:   containerExec,
 		Publisher: gw,
 		WorkerID:  cfg.WorkerID,
@@ -191,5 +227,55 @@ func (w *Worker) Close() error {
 	if w.PluginHost != nil {
 		_ = w.PluginHost.Close()
 	}
+	return nil
+}
+
+func initLLMClient(provider string) llm.LLMClient {
+	prov := strings.ToLower(strings.TrimSpace(provider))
+	if prov == "" {
+		prov = strings.ToLower(strings.TrimSpace(os.Getenv("LLM_PROVIDER")))
+	}
+
+	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+	openAIKey := os.Getenv("OPENAI_API_KEY")
+	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL")
+	openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+
+	switch prov {
+	case "anthropic":
+		if anthropicKey != "" {
+			return llm.NewAnthropicClient(anthropicKey)
+		}
+	case "openai":
+		if openAIKey != "" {
+			opts := []llm.Option{}
+			if openAIBaseURL != "" {
+				opts = append(opts, llm.WithBaseURL(openAIBaseURL))
+			}
+			return llm.NewOpenAIClient(openAIKey, opts...)
+		}
+	case "ollama":
+		opts := []llm.Option{}
+		if ollamaBaseURL != "" {
+			opts = append(opts, llm.WithBaseURL(ollamaBaseURL))
+		}
+		return llm.NewOllamaClient(opts...)
+	default:
+		// Auto detection
+		if anthropicKey != "" {
+			return llm.NewAnthropicClient(anthropicKey)
+		}
+		if openAIKey != "" {
+			opts := []llm.Option{}
+			if openAIBaseURL != "" {
+				opts = append(opts, llm.WithBaseURL(openAIBaseURL))
+			}
+			return llm.NewOpenAIClient(openAIKey, opts...)
+		}
+		if ollamaBaseURL != "" {
+			return llm.NewOllamaClient(llm.WithBaseURL(ollamaBaseURL))
+		}
+	}
+
 	return nil
 }

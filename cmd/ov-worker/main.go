@@ -55,6 +55,8 @@ func main() {
 	sandboxMemoryLimitFlag := flag.String("sandbox-memory-limit", "", "Sandbox memory limit (e.g. 512m, 1024m)")
 	sandboxPIDsLimitFlag := flag.Int("sandbox-pids-limit", 0, "Sandbox max processes limit (e.g. 256)")
 	sandboxNetworkFlag := flag.String("sandbox-network", "", "Sandbox network isolation mode (none, bridge, host)")
+	llmProviderFlag := flag.String("llm-provider", "", "LLM provider for cognitive agent (anthropic, openai, ollama, auto)")
+	llmModelFlag := flag.String("llm-model", "", "Default LLM model name for cognitive agent")
 	flag.Parse()
 	log.Printf("Starting ov-worker version %s (commit: %s, date: %s, built by: %s)...", version, commit, date, builtBy)
 
@@ -130,6 +132,8 @@ func main() {
 		BaseWorktreeDir:   actualWorktreeDir,
 		NATSURL:           actualNatsURL,
 		SandboxConfig:     sandboxCfg,
+		LLMProvider:       *llmProviderFlag,
+		LLMModel:          *llmModelFlag,
 	})
 	defer worker.Close()
 
