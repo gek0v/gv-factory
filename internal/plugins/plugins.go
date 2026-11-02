@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,17 +152,35 @@ func WithAllowedPaths(paths map[string]string) InstanceOption {
 
 // HostConfig provides default configuration parameters for the plugin host.
 type HostConfig struct {
-	DefaultTimeout  time.Duration
-	DefaultMaxPages uint32
-	EnableWasi      bool
+	DefaultTimeout     time.Duration
+	DefaultMaxPages    uint32
+	EnableWasi         bool
+	EnableMockFallback bool
+}
+
+// isEnvTruthy checks whether an environment variable string represents a truthy boolean.
+func isEnvTruthy(val string) bool {
+	v := strings.ToLower(strings.TrimSpace(val))
+	switch v {
+	case "1", "t", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// checkMockFallbackEnv inspects OV_MOCK_PLUGINS and OV_DRY_RUN_PLUGINS.
+func checkMockFallbackEnv() bool {
+	return isEnvTruthy(os.Getenv("OV_MOCK_PLUGINS")) || isEnvTruthy(os.Getenv("OV_DRY_RUN_PLUGINS"))
 }
 
 // DefaultHostConfig returns recommended production defaults for Extism host.
 func DefaultHostConfig() HostConfig {
 	return HostConfig{
-		DefaultTimeout:  30 * time.Second,
-		DefaultMaxPages: 1024, // 64 MB (64KB * 1024)
-		EnableWasi:      true,
+		DefaultTimeout:     30 * time.Second,
+		DefaultMaxPages:    1024, // 64 MB (64KB * 1024)
+		EnableWasi:         true,
+		EnableMockFallback: checkMockFallbackEnv(),
 	}
 }
 
@@ -185,12 +204,35 @@ func NewHost(configs ...HostConfig) *Host {
 		if cfg.DefaultMaxPages == 0 {
 			cfg.DefaultMaxPages = 1024
 		}
+		if !cfg.EnableMockFallback && checkMockFallbackEnv() {
+			cfg.EnableMockFallback = true
+		}
 	}
 	return &Host{
 		config:        cfg,
 		plugins:       make(map[string]*Instance),
 		hostFunctions: make([]extism.HostFunction, 0),
 	}
+}
+
+// MockFallbackEnabled reports whether mock/dry-run fallback is enabled.
+func (h *Host) MockFallbackEnabled() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.config.EnableMockFallback
+}
+
+// SetMockFallback dynamically enables or disables mock/dry-run fallback.
+func (h *Host) SetMockFallback(enabled bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.config.EnableMockFallback = enabled
 }
 
 // RegisterHostFunction registers a global host function available to all plugins loaded by this host.
@@ -427,6 +469,20 @@ func (h *Host) Call(ctx context.Context, pluginRef string, functionName string, 
 				return nil, loadErr
 			}
 		} else {
+			if h.MockFallbackEnabled() {
+				log.Printf("[WARN] [plugins] mock execution used for missing plugin %q (function %q)\n", pluginRef, functionName)
+				res := pdk.Result{
+					Success: true,
+					Output:  fmt.Sprintf("[dry-run] simulated execution for %s", pluginRef),
+					Data: map[string]interface{}{
+						"dry_run":  true,
+						"plugin":   pluginRef,
+						"function": functionName,
+						"status":   "completed",
+					},
+				}
+				return json.Marshal(res)
+			}
 			return nil, &PluginError{
 				Code:    ErrCodePluginNotFound,
 				Plugin:  pluginRef,
@@ -640,4 +696,3 @@ func (inst *Instance) CloseWithContext(ctx context.Context) error {
 
 	return err
 }
-

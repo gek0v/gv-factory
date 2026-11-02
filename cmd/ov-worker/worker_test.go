@@ -14,8 +14,8 @@ import (
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/sandbox"
-	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
+	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 )
 
 type workerMockCaller struct{}
@@ -156,6 +156,56 @@ func TestWorker_MultiFactoryPipelineSubmission(t *testing.T) {
 	}
 }
 
+func TestWorker_MissingWasmPluginExecutionWithMockFallback(t *testing.T) {
+	t.Setenv("OV_MOCK_PLUGINS", "true")
+
+	worker := NewWorker(WorkerConfig{
+		DisableNATS:    true,
+		DefaultRetries: 1,
+		DefaultTimeout: 5 * time.Second,
+		SandboxConfig: sandbox.ContainerSandboxConfig{
+			Runtime: sandbox.RuntimeHost,
+		},
+	})
+	defer worker.Close()
+
+	tpl := schema.FactoryTemplate{
+		Metadata: schema.Metadata{
+			Name: "mock-worker-e2e",
+		},
+		Spec: schema.FactorySpec{
+			Steps: []schema.StepConfig{
+				{
+					ID:     "ingestion-missing",
+					Name:   "Ingest Repository",
+					Plugin: "extism://plugins/missing-ingestion.wasm",
+				},
+				{
+					ID:        "builder-missing",
+					Name:      "Build TDD Code",
+					Plugin:    "extism://plugins/missing-builder.wasm",
+					DependsOn: []string{"ingestion-missing"},
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	report, err := worker.ExecutePipeline(ctx, "run-mock-worker-test", tpl)
+	if err != nil {
+		t.Fatalf("pipeline execution error with mock plugins: %v", err)
+	}
+
+	if report.Status != dag.StatusCompleted {
+		t.Fatalf("expected StatusCompleted, got %s", report.Status)
+	}
+	if len(report.CompletedSteps) != 2 {
+		t.Fatalf("expected 2 completed steps, got %d", len(report.CompletedSteps))
+	}
+}
+
 func TestWorker_HealthMux(t *testing.T) {
 	mux := NewHealthMux()
 
@@ -184,4 +234,3 @@ func TestWorker_HealthMux(t *testing.T) {
 		})
 	}
 }
-
