@@ -100,4 +100,32 @@ describe('NodeInspector Steps Integration', () => {
     expect(patchedNode?.data.sandboxConfig?.networkPolicy).toBe('bridge');
     expect(patchedNode?.data.sandboxConfig?.pidsLimit).toBe(256);
   });
+
+  it('updates node llmConfig and model when edited in inspector', () => {
+    const store = useFactoryFlowStore.getState();
+    const agentNode = store.nodes.find((n) => n.data.nodeType === 'agent');
+    expect(agentNode).toBeDefined();
+
+    if (!agentNode) return;
+
+    // Mutate LLM config
+    store.updateNodeData(agentNode.id, {
+      model: 'deepseek-r1',
+      llmConfig: {
+        provider: 'ollama',
+        model: 'deepseek-r1',
+        temperature: 0.7,
+        maxIterations: 20,
+        authorizedTools: ['bash_exec', 'file_writer'],
+      },
+    });
+
+    const updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+    expect(updated?.data.model).toBe('deepseek-r1');
+    const llmCfg = updated?.data.llmConfig as import('../../types/flow').AgentLLMConfig;
+    expect(llmCfg?.provider).toBe('ollama');
+    expect(llmCfg?.temperature).toBe(0.7);
+    expect(llmCfg?.maxIterations).toBe(20);
+    expect(llmCfg?.authorizedTools).toEqual(['bash_exec', 'file_writer']);
+  });
 });

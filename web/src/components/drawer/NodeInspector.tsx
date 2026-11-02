@@ -3,12 +3,35 @@
 
 import React, { useState } from 'react';
 import { useFactoryFlowStore } from '../../store';
-import type { ExecutionStatus, FactoryNodeData, SandboxRuntime, SandboxNetworkPolicy } from '../../types/flow';
+import type { ExecutionStatus, FactoryNodeData, SandboxRuntime, SandboxNetworkPolicy, LLMProvider } from '../../types/flow';
 import { StatusBadge } from '../badges/StatusBadge';
-import { TrashIcon, XIcon, SlidersIcon, ShieldIcon } from '../icons/Icons';
+import { TrashIcon, XIcon, SlidersIcon, ShieldIcon, CpuIcon } from '../icons/Icons';
 import { LogStreamViewer } from './LogStreamViewer';
 import { GitDiffViewer } from './GitDiffViewer';
 import { StepExecutionViewer } from './StepExecutionViewer';
+
+const PROVIDER_OPTIONS: { value: LLMProvider; label: string }[] = [
+  { value: 'anthropic', label: 'Anthropic Claude' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'ollama', label: 'Ollama / Local' },
+];
+
+const MODEL_PRESETS: { value: string; label: string }[] = [
+  { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
+  { value: 'gpt-4o', label: 'GPT-4o' },
+  { value: 'deepseek-r1', label: 'DeepSeek-R1' },
+  { value: 'qwen2.5-coder', label: 'Qwen 2.5 Coder' },
+  { value: 'custom', label: 'Custom Model Name...' },
+];
+
+const PREDEFINED_TOOLS: { id: string; label: string; desc: string }[] = [
+  { id: 'bash_exec', label: 'bash_exec', desc: 'Shell command execution' },
+  { id: 'git_read', label: 'git_read', desc: 'Git status & diff reading' },
+  { id: 'file_writer', label: 'file_writer', desc: 'Codebase file modifications' },
+  { id: 'repo_search', label: 'repo_search', desc: 'Ast-grep & ripgrep code queries' },
+  { id: 'ast_grep', label: 'ast_grep', desc: 'Structural AST query engine' },
+  { id: 'test_runner', label: 'test_runner', desc: 'Sandbox test runner' },
+];
 
 const STATUS_OPTIONS: { status: ExecutionStatus; label: string }[] = [
   { status: 'pending', label: 'Pending' },
@@ -245,20 +268,258 @@ export const NodeInspector: React.FC = () => {
             )}
 
             {nodeData.nodeType === 'agent' && (
-              <div className="inspector-field-group">
-                <div className="group-title">Agent Configuration</div>
+              <div className="inspector-field-group llm-field-group">
+                <div className="group-title llm-title-row">
+                  <div className="llm-title-left">
+                    <CpuIcon size={14} className="llm-title-icon" />
+                    <span>LLM &amp; Cognitive Configuration</span>
+                  </div>
+                  <span className="llm-tech-badge">Autonomous CoT</span>
+                </div>
+
                 <div className="inspector-field">
                   <label className="inspector-label">Role</label>
                   <div className="inspector-readonly-val">
                     {nodeData.role?.toUpperCase()}
                   </div>
                 </div>
-                {nodeData.model && (
-                  <div className="inspector-field">
-                    <label className="inspector-label">LLM Model</label>
-                    <div className="inspector-readonly-val">{nodeData.model}</div>
+
+                {/* Provider Selector */}
+                <div className="inspector-field">
+                  <label className="inspector-label" htmlFor="llm-provider-select">
+                    LLM Provider
+                  </label>
+                  <select
+                    id="llm-provider-select"
+                    className="inspector-select"
+                    value={nodeData.llmConfig?.provider || 'anthropic'}
+                    onChange={(e) => {
+                      const newProvider = e.target.value as LLMProvider;
+                      const currentLlm = nodeData.llmConfig || {
+                        provider: 'anthropic',
+                        model: nodeData.model || 'claude-3-5-sonnet',
+                        temperature: 0.2,
+                        maxIterations: 10,
+                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
+                      };
+                      updateNodeData(selectedNode.id, {
+                        llmConfig: {
+                          ...currentLlm,
+                          provider: newProvider,
+                        },
+                      });
+                    }}
+                  >
+                    {PROVIDER_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Model Selector & Custom Input */}
+                <div className="inspector-field">
+                  <label className="inspector-label" htmlFor="llm-model-select">
+                    Model Selection
+                  </label>
+                  <select
+                    id="llm-model-select"
+                    className="inspector-select"
+                    value={
+                      MODEL_PRESETS.some((p) => p.value === nodeData.model)
+                        ? nodeData.model
+                        : 'custom'
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const currentLlm = nodeData.llmConfig || {
+                        provider: 'anthropic',
+                        model: nodeData.model || 'claude-3-5-sonnet',
+                        temperature: 0.2,
+                        maxIterations: 10,
+                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
+                      };
+                      if (val !== 'custom') {
+                        updateNodeData(selectedNode.id, {
+                          model: val,
+                          llmConfig: {
+                            ...currentLlm,
+                            model: val,
+                          },
+                        });
+                      }
+                    }}
+                  >
+                    {MODEL_PRESETS.map((preset) => (
+                      <option key={preset.value} value={preset.value}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {(!MODEL_PRESETS.some((p) => p.value === nodeData.model) ||
+                    nodeData.model === 'custom') && (
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <input
+                        type="text"
+                        className="inspector-input"
+                        placeholder="e.g. qwen2.5-coder:32b, llama-3.3-70b-instruct"
+                        value={nodeData.model === 'custom' ? '' : nodeData.model}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const currentLlm = nodeData.llmConfig || {
+                            provider: 'anthropic',
+                            model: val,
+                            temperature: 0.2,
+                            maxIterations: 10,
+                            authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
+                          };
+                          updateNodeData(selectedNode.id, {
+                            model: val,
+                            llmConfig: {
+                              ...currentLlm,
+                              model: val,
+                            },
+                          });
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Temperature Slider */}
+                <div className="inspector-field">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="inspector-label" htmlFor="llm-temperature-slider">
+                      Temperature
+                    </label>
+                    <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}>
+                      {(nodeData.llmConfig?.temperature ?? 0.2).toFixed(2)}
+                    </span>
                   </div>
-                )}
+                  <input
+                    id="llm-temperature-slider"
+                    type="range"
+                    min="0.0"
+                    max="2.0"
+                    step="0.05"
+                    className="inspector-range"
+                    value={nodeData.llmConfig?.temperature ?? 0.2}
+                    onChange={(e) => {
+                      const temp = parseFloat(e.target.value);
+                      const currentLlm = nodeData.llmConfig || {
+                        provider: 'anthropic',
+                        model: nodeData.model || 'claude-3-5-sonnet',
+                        temperature: 0.2,
+                        maxIterations: 10,
+                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
+                      };
+                      updateNodeData(selectedNode.id, {
+                        llmConfig: {
+                          ...currentLlm,
+                          temperature: temp,
+                        },
+                      });
+                    }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span>0.0 (Deterministic)</span>
+                    <span>1.0 (Balanced)</span>
+                    <span>2.0 (Creative)</span>
+                  </div>
+                </div>
+
+                {/* Max Reasoning Iterations */}
+                <div className="inspector-field">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="inspector-label" htmlFor="llm-max-iterations">
+                      Max Reasoning Iterations
+                    </label>
+                    <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}>
+                      {nodeData.llmConfig?.maxIterations ?? 10}
+                    </span>
+                  </div>
+                  <input
+                    id="llm-max-iterations"
+                    type="range"
+                    min="1"
+                    max="50"
+                    step="1"
+                    className="inspector-range"
+                    value={nodeData.llmConfig?.maxIterations ?? 10}
+                    onChange={(e) => {
+                      const iters = parseInt(e.target.value, 10);
+                      const currentLlm = nodeData.llmConfig || {
+                        provider: 'anthropic',
+                        model: nodeData.model || 'claude-3-5-sonnet',
+                        temperature: 0.2,
+                        maxIterations: 10,
+                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
+                      };
+                      updateNodeData(selectedNode.id, {
+                        llmConfig: {
+                          ...currentLlm,
+                          maxIterations: iters,
+                        },
+                      });
+                    }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span>1 turn</span>
+                    <span>10 (default)</span>
+                    <span>50 turns</span>
+                  </div>
+                </div>
+
+                {/* Authorized MCP Tools Picker */}
+                <div className="inspector-field">
+                  <label className="inspector-label">Authorized MCP Tools</label>
+                  <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Grant sandboxed tool invocation access to the agent cognitive runtime:
+                  </p>
+                  <div className="tools-badge-picker">
+                    {PREDEFINED_TOOLS.map((tool) => {
+                      const currentTools = nodeData.llmConfig?.authorizedTools ?? [
+                        'bash_exec',
+                        'git_read',
+                        'file_writer',
+                        'repo_search',
+                      ];
+                      const isEnabled = currentTools.includes(tool.id);
+
+                      return (
+                        <button
+                          key={tool.id}
+                          type="button"
+                          className={`tool-badge-btn ${isEnabled ? 'enabled' : 'disabled'}`}
+                          title={`${tool.desc} (Click to toggle)`}
+                          onClick={() => {
+                            const newTools = isEnabled
+                              ? currentTools.filter((t) => t !== tool.id)
+                              : [...currentTools, tool.id];
+                            const currentLlm = nodeData.llmConfig || {
+                              provider: 'anthropic',
+                              model: nodeData.model || 'claude-3-5-sonnet',
+                              temperature: 0.2,
+                              maxIterations: 10,
+                              authorizedTools: currentTools,
+                            };
+                            updateNodeData(selectedNode.id, {
+                              llmConfig: {
+                                ...currentLlm,
+                                authorizedTools: newTools,
+                              },
+                            });
+                          }}
+                        >
+                          <span className="tool-indicator">{isEnabled ? '✓' : '+'}</span>
+                          <span className="tool-label">{tool.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
 

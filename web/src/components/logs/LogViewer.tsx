@@ -95,6 +95,43 @@ export function formatLogsAsPlainText(logs: NodeLogEntry[]): string {
     .join('\n');
 }
 
+export interface LogContentPart {
+  type: 'text' | 'thought';
+  content: string;
+}
+
+export function parseThoughtBlocks(rawMessage: string): LogContentPart[] {
+  const parts: LogContentPart[] = [];
+  const regex = /<(?:thought|thinking)>([\s\S]*?)<\/(?:thought|thinking)>/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(rawMessage)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({
+        type: 'text',
+        content: rawMessage.substring(lastIndex, match.index),
+      });
+    }
+
+    parts.push({
+      type: 'thought',
+      content: match[1].trim(),
+    });
+
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < rawMessage.length) {
+    parts.push({
+      type: 'text',
+      content: rawMessage.substring(lastIndex),
+    });
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', content: rawMessage }];
+}
+
 export const LogViewer: React.FC<LogViewerProps> = ({ logs = [], onClear }) => {
   const [streamFilter, setStreamFilter] = useState<LogStreamFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -309,30 +346,88 @@ export const LogViewer: React.FC<LogViewerProps> = ({ logs = [], onClear }) => {
           </div>
         ) : (
           filteredLogs.map((entry, idx) => {
-            const rawSpans = parseAnsi(entry.message);
-            const styledSpans = searchQuery.trim()
-              ? highlightText(rawSpans, searchQuery)
-              : rawSpans;
-
             const timeStr = entry.timestamp ? entry.timestamp.slice(11, 23) : '';
+            const contentParts = parseThoughtBlocks(entry.message);
+
+            const hasThoughts = contentParts.some((p) => p.type === 'thought');
+
+            if (!hasThoughts) {
+              const rawSpans = parseAnsi(entry.message);
+              const styledSpans = searchQuery.trim()
+                ? highlightText(rawSpans, searchQuery)
+                : rawSpans;
+
+              return (
+                <div key={idx} className={`log-entry log-${entry.stream}`}>
+                  <span className="log-idx">{idx + 1}</span>
+                  {timeStr && <span className="log-timestamp">{timeStr}</span>}
+                  <span className={`log-stream-tag stream-${entry.stream}`}>
+                    {entry.stream.toUpperCase()}
+                  </span>
+                  <span className="log-message">
+                    {styledSpans.map((span: AnsiSpan, sIdx: number) => (
+                      <span
+                        key={sIdx}
+                        className={span.classes.length > 0 ? span.classes.join(' ') : undefined}
+                      >
+                        {span.text}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              );
+            }
 
             return (
-              <div key={idx} className={`log-entry log-${entry.stream}`}>
-                <span className="log-idx">{idx + 1}</span>
-                {timeStr && <span className="log-timestamp">{timeStr}</span>}
-                <span className={`log-stream-tag stream-${entry.stream}`}>
-                  {entry.stream.toUpperCase()}
-                </span>
-                <span className="log-message">
-                  {styledSpans.map((span: AnsiSpan, sIdx: number) => (
-                    <span
-                      key={sIdx}
-                      className={span.classes.length > 0 ? span.classes.join(' ') : undefined}
-                    >
-                      {span.text}
-                    </span>
-                  ))}
-                </span>
+              <div key={idx} className={`log-entry log-${entry.stream}`} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                  <span className="log-idx">{idx + 1}</span>
+                  {timeStr && <span className="log-timestamp">{timeStr}</span>}
+                  <span className={`log-stream-tag stream-${entry.stream}`}>
+                    {entry.stream.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{ paddingLeft: '2.5rem', width: '100%' }}>
+                  {contentParts.map((part, pIdx) => {
+                    if (part.type === 'thought') {
+                      return (
+                        <div key={pIdx} className="thought-accordion">
+                          <div
+                            className="thought-header"
+                            onClick={(e) => {
+                              const body = e.currentTarget.nextElementSibling as HTMLElement | null;
+                              if (body) {
+                                body.style.display = body.style.display === 'none' ? 'block' : 'none';
+                              }
+                            }}
+                          >
+                            <span>🧠 Agent Reasoning Thought</span>
+                            <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>Toggle</span>
+                          </div>
+                          <div className="thought-content">{part.content}</div>
+                        </div>
+                      );
+                    }
+
+                    const rawSpans = parseAnsi(part.content);
+                    const styledSpans = searchQuery.trim()
+                      ? highlightText(rawSpans, searchQuery)
+                      : rawSpans;
+
+                    return (
+                      <div key={pIdx} className="log-message" style={{ margin: '0.2rem 0' }}>
+                        {styledSpans.map((span: AnsiSpan, sIdx: number) => (
+                          <span
+                            key={sIdx}
+                            className={span.classes.length > 0 ? span.classes.join(' ') : undefined}
+                          >
+                            {span.text}
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             );
           })

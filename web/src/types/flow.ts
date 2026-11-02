@@ -78,6 +78,16 @@ export type SandboxRuntime = 'auto' | 'host' | 'oci' | 'microvm';
 export type SandboxNetworkPolicy = 'none' | 'bridge' | 'host';
 export type SandboxSecurityLevel = 'standard' | 'strict';
 
+export type LLMProvider = 'anthropic' | 'openai' | 'ollama' | 'local';
+
+export interface AgentLLMConfig {
+  provider: LLMProvider | string;
+  model: string;
+  temperature?: number;          // Rango 0.0 - 2.0 (default: 0.2)
+  maxIterations?: number;        // Rango 1 - 50 (default: 10)
+  authorizedTools?: string[];    // e.g. ['bash_exec', 'git_read', 'file_writer', 'repo_search']
+}
+
 export interface NodeSandboxConfig {
   runtime?: SandboxRuntime;
   cpuLimit?: string;       // e.g. "0.5", "1.0", "2.0", "4.0"
@@ -134,6 +144,7 @@ export interface AgentNodeData extends BaseNodeData {
   model: string;
   pluginTag?: string;
   sandboxEnabled?: boolean;
+  llmConfig?: AgentLLMConfig;
 }
 
 export interface LogicNodeData extends BaseNodeData {

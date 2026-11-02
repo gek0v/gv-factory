@@ -27,7 +27,9 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
     type === 'ov.task.log' ||
     type === 'task.log' ||
     type === 'ov.worker.logs' ||
-    type === 'worker.logs'
+    type === 'worker.logs' ||
+    type === 'worker.log.chunk' ||
+    type === 'ov.worker.log.chunk'
   ) {
     if (stepId) {
       const stream = (payload.stream as 'stdout' | 'stderr') || 'stdout';
@@ -119,7 +121,12 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
         status: (payload.status as import('../types/worker').WorkerStatus) || (Number(payload.active_tasks) > 0 ? 'busy' : 'ready'),
       });
     }
-  } else if (type === 'gate.approval_required' || type === 'ov.gate.approval_required') {
+  } else if (
+    type === 'gate.approval_required' ||
+    type === 'ov.gate.approval_required' ||
+    type === 'gate.requested' ||
+    type === 'ov.gate.requested'
+  ) {
     const runId = event.run_id || (payload.run_id as string) || `run-${Date.now()}`;
     const token = (payload.token as string) || 'hmac-approval-token-xyz';
     const timeoutMs = (payload.timeout_ms as number) ?? (payload.timeoutMs as number);

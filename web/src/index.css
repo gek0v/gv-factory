@@ -3414,3 +3414,298 @@ body,
   padding: 0.12rem 0.4rem;
   border-radius: 4px;
 }
+
+/* =========================================================================
+   Issue #108: LLM Configuration & Live Reasoning/Tool-Call Stream Viewer
+   ========================================================================= */
+
+/* LLM Configuration Group in NodeInspector */
+.llm-field-group {
+  border: 1px solid rgba(99, 102, 241, 0.25) !important;
+  background: rgba(99, 102, 241, 0.03);
+  border-radius: 8px;
+  padding: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.llm-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.llm-title-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  color: #818cf8;
+}
+
+.llm-title-icon {
+  color: #6366f1;
+}
+
+.llm-tech-badge {
+  font-size: 0.62rem;
+  font-weight: 600;
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+/* MCP Tools Badge Picker */
+.tools-badge-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.tool-badge-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.tool-badge-btn.enabled {
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+}
+
+.tool-badge-btn.enabled:hover {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: #818cf8;
+}
+
+.tool-badge-btn.disabled {
+  background: #090d16;
+  color: #64748b;
+  border: 1px solid #1e293b;
+}
+
+.tool-badge-btn.disabled:hover {
+  background: #1e293b;
+  color: #94a3b8;
+  border-color: #334155;
+}
+
+.tool-indicator {
+  font-weight: bold;
+}
+
+/* Cognitive Reasoning Chain & Tool Calling Stream in StepExecutionViewer */
+.reasoning-chain-box {
+  background: #020617;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 6px;
+  margin-top: 0.5rem;
+  overflow: hidden;
+}
+
+.reasoning-chain-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.45rem 0.65rem;
+  background: rgba(99, 102, 241, 0.08);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #a5b4fc;
+}
+
+.reasoning-chain-header:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.reasoning-title-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reasoning-body {
+  padding: 0.65rem 0.75rem;
+  font-family: monospace;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(99, 102, 241, 0.15);
+}
+
+/* Tool Invocation Cards */
+.tool-calls-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.tool-calls-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #38bdf8;
+}
+
+.tool-call-card {
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tool-call-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.6rem;
+  background: #0b1120;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+
+.tool-call-card-header:hover {
+  background: #0f172a;
+}
+
+.tool-call-name-group {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.tool-name-badge {
+  font-family: monospace;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.tool-call-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.tool-status-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+
+.tool-status-executing {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.tool-status-gate-waiting {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.tool-status-completed {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.tool-status-failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.tool-call-body {
+  padding: 0.5rem 0.65rem;
+  border-top: 1px solid #1e293b;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tool-args-label,
+.tool-result-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.tool-args-pre,
+.tool-result-pre {
+  margin: 0;
+  padding: 0.4rem;
+  background: #050914;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.7rem;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* LogViewer Thought Block */
+.thought-accordion {
+  margin: 0.35rem 0;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 6px;
+  background: rgba(99, 102, 241, 0.05);
+  overflow: hidden;
+}
+
+.thought-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.35rem 0.6rem;
+  background: rgba(99, 102, 241, 0.1);
+  color: #a5b4fc;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thought-header:hover {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.thought-content {
+  padding: 0.5rem 0.65rem;
+  font-family: monospace;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  border-top: 1px solid rgba(99, 102, 241, 0.2);
+}

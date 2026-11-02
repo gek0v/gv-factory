@@ -47,6 +47,30 @@ export function validateFactoryTemplate(template: FactoryTemplate): ValidationRe
         `Step "${step.id}" plugin URI "${step.plugin}" does not conform to PDK standard (must begin with "extism://")`
       );
     }
+
+    // Validate LLM configuration if present
+    if (step.config?.llm && typeof step.config.llm === 'object') {
+      const llm = step.config.llm as Record<string, unknown>;
+      if (llm.temperature !== undefined) {
+        if (typeof llm.temperature !== 'number' || llm.temperature < 0.0 || llm.temperature > 2.0) {
+          errors.push(
+            `Step "${step.id}" LLM temperature must be a number between 0.0 and 2.0 (got ${String(llm.temperature)})`
+          );
+        }
+      }
+      const maxIter = llm.max_iterations ?? llm.maxIterations;
+      if (maxIter !== undefined) {
+        if (typeof maxIter !== 'number' || !Number.isInteger(maxIter) || maxIter < 1 || maxIter > 50) {
+          errors.push(
+            `Step "${step.id}" LLM max_iterations must be an integer between 1 and 50 (got ${String(maxIter)})`
+          );
+        }
+      }
+      const authTools = llm.authorized_tools ?? llm.authorizedTools;
+      if (authTools !== undefined && !Array.isArray(authTools)) {
+        errors.push(`Step "${step.id}" LLM authorized_tools must be an array of tool names`);
+      }
+    }
   }
 
   const entrypoint = template.spec?.entrypoint;

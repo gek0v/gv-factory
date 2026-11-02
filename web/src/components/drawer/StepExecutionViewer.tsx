@@ -4,8 +4,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFactoryFlowStore } from '../../store';
 import { fetchRunSteps } from '../../api/steps';
-import type { RunStep, RunStepStatus, StepSandboxTelemetry, StepResourceLimits } from '../../types/worker';
-import { RefreshCwIcon, ChevronDownIcon, ChevronRightIcon, AlertCircleIcon, CheckCircleIcon, ShieldIcon } from '../icons/Icons';
+import type {
+  RunStep,
+  RunStepStatus,
+  StepSandboxTelemetry,
+  StepResourceLimits,
+  ToolCallTelemetry,
+  ToolCallStatus,
+  AgentReasoningBlock,
+} from '../../types/worker';
+import {
+  RefreshCwIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  AlertCircleIcon,
+  CheckCircleIcon,
+  ShieldIcon,
+  CpuIcon,
+  ZapIcon,
+} from '../icons/Icons';
 
 export interface StepExecutionViewerProps {
   nodeId: string;
@@ -72,6 +89,59 @@ export function getSandboxBadgeLabel(mode?: string): string {
     default:
       return '';
   }
+}
+
+export function getToolCallStatusBadgeClass(status: ToolCallStatus): string {
+  switch (status) {
+    case 'executing':
+      return 'tool-status-executing';
+    case 'gate-waiting':
+      return 'tool-status-gate-waiting';
+    case 'completed':
+      return 'tool-status-completed';
+    case 'failed':
+      return 'tool-status-failed';
+    default:
+      return '';
+  }
+}
+
+export interface CognitiveTelemetry {
+  reasoning?: string;
+  toolCalls: ToolCallTelemetry[];
+}
+
+export function extractStepCognitiveTelemetry(step: RunStep): CognitiveTelemetry {
+  const out = (step.output || {}) as Record<string, unknown>;
+
+  // Extract reasoning chain
+  let reasoningStr: string | undefined = undefined;
+  if (typeof step.reasoning === 'string' && step.reasoning.trim().length > 0) {
+    reasoningStr = step.reasoning;
+  } else if (Array.isArray(step.reasoning)) {
+    reasoningStr = step.reasoning.map((b) => (typeof b === 'string' ? b : b.content)).join('\n\n');
+  } else if (typeof out.reasoning === 'string' && out.reasoning.trim().length > 0) {
+    reasoningStr = out.reasoning;
+  } else if (Array.isArray(out.reasoning)) {
+    reasoningStr = (out.reasoning as (string | AgentReasoningBlock)[])
+      .map((b) => (typeof b === 'string' ? b : b.content))
+      .join('\n\n');
+  }
+
+  // Extract tool calls
+  let toolCallsList: ToolCallTelemetry[] = [];
+  if (Array.isArray(step.tool_calls)) {
+    toolCallsList = step.tool_calls;
+  } else if (Array.isArray(out.tool_calls)) {
+    toolCallsList = out.tool_calls as ToolCallTelemetry[];
+  } else if (Array.isArray(out.toolCalls)) {
+    toolCallsList = out.toolCalls as ToolCallTelemetry[];
+  }
+
+  return {
+    reasoning: reasoningStr,
+    toolCalls: toolCallsList,
+  };
 }
 
 export function extractStepSandboxTelemetry(step: RunStep): StepSandboxTelemetry | null {
@@ -354,6 +424,99 @@ export const StepExecutionViewer: React.FC<StepExecutionViewerProps> = ({ nodeId
                       </div>
                     </div>
                   )}
+
+                  {/* Cognitive Reasoning Chain & Tool Calls */}
+                  {(() => {
+                    const cognitive = extractStepCognitiveTelemetry(step);
+                    return (
+                      <>
+                        {cognitive.reasoning && (
+                          <div className="reasoning-chain-box">
+                            <div
+                              className="reasoning-chain-header"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const box = e.currentTarget.nextElementSibling as HTMLElement | null;
+                                if (box) {
+                                  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+                                }
+                              }}
+                            >
+                              <div className="reasoning-title-left">
+                                <CpuIcon size={13} />
+                                <span>Agent Reasoning Chain (CoT)</span>
+                              </div>
+                              <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>Toggle View</span>
+                            </div>
+                            <div className="reasoning-body">{cognitive.reasoning}</div>
+                          </div>
+                        )}
+
+                        {cognitive.toolCalls.length > 0 && (
+                          <div className="tool-calls-container">
+                            <div className="tool-calls-header">
+                              <ZapIcon size={14} />
+                              <span>MCP Tool Invocations ({cognitive.toolCalls.length})</span>
+                            </div>
+                            {cognitive.toolCalls.map((tc) => (
+                              <div key={tc.id} className="tool-call-card">
+                                <div
+                                  className="tool-call-card-header"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const body = e.currentTarget.nextElementSibling as HTMLElement | null;
+                                    if (body) {
+                                      body.style.display = body.style.display === 'none' ? 'flex' : 'none';
+                                    }
+                                  }}
+                                >
+                                  <div className="tool-call-name-group">
+                                    <span className="tool-name-badge">{tc.name}</span>
+                                  </div>
+                                  <div className="tool-call-meta">
+                                    <span className={`tool-status-badge ${getToolCallStatusBadgeClass(tc.status)}`}>
+                                      {tc.status}
+                                    </span>
+                                    {tc.durationMs !== undefined && (
+                                      <span className="step-duration">{formatDuration(tc.durationMs)}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="tool-call-body">
+                                  {tc.arguments !== undefined && (
+                                    <div>
+                                      <div className="tool-args-label">Arguments:</div>
+                                      <pre className="tool-args-pre">
+                                        {typeof tc.arguments === 'string'
+                                          ? tc.arguments
+                                          : JSON.stringify(tc.arguments, null, 2)}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  {tc.result !== undefined && (
+                                    <div>
+                                      <div className="tool-result-label">Result:</div>
+                                      <pre className="tool-result-pre">
+                                        {typeof tc.result === 'string'
+                                          ? tc.result
+                                          : JSON.stringify(tc.result, null, 2)}
+                                      </pre>
+                                    </div>
+                                  )}
+                                  {tc.errorMessage && (
+                                    <div className="step-error-banner" style={{ margin: 0 }}>
+                                      <AlertCircleIcon size={12} className="step-error-icon" />
+                                      <code className="step-error-code">{tc.errorMessage}</code>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {step.output && Object.keys(step.output).length > 0 ? (
                     <div className="step-output-container">

@@ -112,4 +112,39 @@ describe('LogViewer helper utilities', () => {
       expect(text).toContain('[STDERR] Warning: deprecated API');
     });
   });
+
+  describe('parseThoughtBlocks helper', () => {
+    it('detects and parses <thought> blocks in logs', async () => {
+      const { parseThoughtBlocks } = await import('./LogViewer');
+
+      const message = 'Prefix text\n<thought>\nI need to check repo structure first.\n</thought>\nSuffix text';
+      const parts = parseThoughtBlocks(message);
+
+      expect(parts).toHaveLength(3);
+      expect(parts[0]).toEqual({ type: 'text', content: 'Prefix text\n' });
+      expect(parts[1]).toEqual({ type: 'thought', content: 'I need to check repo structure first.' });
+      expect(parts[2]).toEqual({ type: 'text', content: '\nSuffix text' });
+    });
+
+    it('detects <thinking> blocks as well', async () => {
+      const { parseThoughtBlocks } = await import('./LogViewer');
+
+      const message = '<thinking>Deliberating step</thinking>Done.';
+      const parts = parseThoughtBlocks(message);
+
+      expect(parts).toHaveLength(2);
+      expect(parts[0]).toEqual({ type: 'thought', content: 'Deliberating step' });
+      expect(parts[1]).toEqual({ type: 'text', content: 'Done.' });
+    });
+
+    it('returns raw text unchanged if no thought tags present', async () => {
+      const { parseThoughtBlocks } = await import('./LogViewer');
+
+      const message = 'Standard raw log message without thoughts';
+      const parts = parseThoughtBlocks(message);
+
+      expect(parts).toHaveLength(1);
+      expect(parts[0]).toEqual({ type: 'text', content: message });
+    });
+  });
 });

@@ -47,9 +47,21 @@ export function canvasToTemplate(
     const data = node.data;
     const pluginTag = (data.pluginTag as string) || `extism://plugins/${node.id}.wasm`;
 
+    const llmConfig = (data.llmConfig as import('../types/flow').AgentLLMConfig | undefined);
+    const serializedLlm = llmConfig
+      ? {
+          provider: llmConfig.provider,
+          model: llmConfig.model || data.model,
+          ...(llmConfig.temperature !== undefined ? { temperature: llmConfig.temperature } : {}),
+          ...(llmConfig.maxIterations !== undefined ? { max_iterations: llmConfig.maxIterations } : {}),
+          ...(llmConfig.authorizedTools ? { authorized_tools: llmConfig.authorizedTools } : {}),
+        }
+      : undefined;
+
     const stepConfig: Record<string, unknown> = {
       ...(data.config && typeof data.config === 'object' ? (data.config as Record<string, unknown>) : {}),
       ...(data.sandboxConfig ? { sandbox: data.sandboxConfig } : {}),
+      ...(serializedLlm ? { llm: serializedLlm } : {}),
     };
 
     const step: StepConfig = {
