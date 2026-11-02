@@ -167,20 +167,22 @@ func (d *DiscordAdapter) UpdateStatus(ctx context.Context, update StatusUpdate) 
 func (d *DiscordAdapter) UpdateMessageWithDecision(ctx context.Context, channelID, messageID string, res GateResolution) error {
 	color := 0x10B981 // Green
 	statusText := "APPROVED"
+	actionPast := "approved"
 	emoji := "✅"
-	if res.Decision == "REJECT" {
+	if strings.EqualFold(res.Decision, "reject") || strings.EqualFold(res.Decision, "rejected") {
 		color = 0xEF4444 // Red
 		statusText = "REJECTED"
+		actionPast = "rejected"
 		emoji = "❌"
 	}
 
 	embed := map[string]any{
-		"title":       fmt.Sprintf("%s Decision Gate Resolved: %s", emoji, statusText),
-		"description": fmt.Sprintf("Decision submitted by **%s** for Run `%s`.", res.User, res.RunID),
+		"title":       fmt.Sprintf("%s Gate %s by @%s", emoji, actionPast, res.User),
+		"description": fmt.Sprintf("Decision submitted by **@%s** for Run `%s`.", res.User, res.RunID),
 		"color":       color,
 		"fields": []map[string]any{
 			{"name": "Decision", "value": statusText, "inline": true},
-			{"name": "Resolved By", "value": res.User, "inline": true},
+			{"name": "Resolved By", "value": "@" + res.User, "inline": true},
 			{"name": "Timestamp", "value": res.Timestamp.Format(time.RFC3339), "inline": true},
 		},
 	}
@@ -194,10 +196,29 @@ func (d *DiscordAdapter) UpdateMessageWithDecision(ctx context.Context, channelI
 }
 
 func (d *DiscordAdapter) buildApprovalEmbed(req ApprovalPromptRequest) map[string]any {
+	title := "🛑 Decision Gate: Human Approval Required"
+	if req.TaskTitle != "" {
+		title = fmt.Sprintf("🛑 Decision Gate: %s", req.TaskTitle)
+	}
+
 	fields := []map[string]any{
+		{"name": "Status", "value": "Pending Human Approval Required", "inline": true},
 		{"name": "Run ID", "value": fmt.Sprintf("`%s`", req.RunID), "inline": true},
 		{"name": "Coverage", "value": fmt.Sprintf("`%.1f%%`", req.CoveragePercent), "inline": true},
-		{"name": "Security Alerts", "value": fmt.Sprintf("Critical: `%d` | High: `%d`", req.CriticalAlerts, req.HighAlerts), "inline": true},
+	}
+
+	if req.FindingsCount > 0 {
+		fields = append(fields, map[string]any{
+			"name":   "Security Alerts & Findings",
+			"value":  fmt.Sprintf("Total: `%d` | Critical: `%d` | High: `%d`", req.FindingsCount, req.CriticalAlerts, req.HighAlerts),
+			"inline": true,
+		})
+	} else {
+		fields = append(fields, map[string]any{
+			"name":   "Security Alerts",
+			"value":  fmt.Sprintf("Critical: `%d` | High: `%d`", req.CriticalAlerts, req.HighAlerts),
+			"inline": true,
+		})
 	}
 
 	if req.CommitSHA != "" {
@@ -213,6 +234,28 @@ func (d *DiscordAdapter) buildApprovalEmbed(req ApprovalPromptRequest) map[strin
 		"value":  req.ExpiresAt.Format(time.RFC3339),
 		"inline": true,
 	})
+
+	if req.GateReason != "" {
+		fields = append(fields, map[string]any{
+			"name":   "Reason",
+			"value":  req.GateReason,
+			"inline": false,
+		})
+	} else if req.Summary != "" {
+		fields = append(fields, map[string]any{
+			"name":   "Reason",
+			"value":  req.Summary,
+			"inline": false,
+		})
+	}
+
+	if len(req.ReviewerScores) > 0 {
+		fields = append(fields, map[string]any{
+			"name":   "Reviewer Scores",
+			"value":  strings.Join(req.ReviewerScores, " | "),
+			"inline": false,
+		})
+	}
 
 	var risks []string
 	if req.HasMigrationChanges {
@@ -232,16 +275,8 @@ func (d *DiscordAdapter) buildApprovalEmbed(req ApprovalPromptRequest) map[strin
 		})
 	}
 
-	if req.Summary != "" {
-		fields = append(fields, map[string]any{
-			"name":   "Diagnostics Summary",
-			"value":  req.Summary,
-			"inline": false,
-		})
-	}
-
 	return map[string]any{
-		"title":       "🛑 Decision Gate: Human Approval Required",
+		"title":       title,
 		"description": "A workflow execution has reached a decision gate requiring manual review before merging.",
 		"color":       0xF59E0B, // Amber
 		"fields":      fields,
@@ -257,14 +292,14 @@ func (d *DiscordAdapter) buildApprovalComponents(req ApprovalPromptRequest) []an
 		{
 			"type":      2,
 			"style":     3,
-			"label":     "Approve ✅",
-			"custom_id": fmt.Sprintf("gate_approve:%s", req.Token),
+			"label":     "Aprobar ✅",
+			"custom_id": fmt.Sprintf("btn_gate_approve:%s", req.Token),
 		},
 		{
 			"type":      2,
 			"style":     4,
-			"label":     "Reject ❌",
-			"custom_id": fmt.Sprintf("gate_reject:%s", req.Token),
+			"label":     "Rechazar ❌",
+			"custom_id": fmt.Sprintf("btn_gate_reject:%s", req.Token),
 		},
 	}
 
@@ -272,7 +307,7 @@ func (d *DiscordAdapter) buildApprovalComponents(req ApprovalPromptRequest) []an
 		buttons = append(buttons, map[string]any{
 			"type":  2,
 			"style": 5,
-			"label": "View Diff 🔍",
+			"label": "Ver Diff 🔍",
 			"url":   req.DiffURL,
 		})
 	}

@@ -36,4 +36,21 @@ func TestApprovalToken(t *testing.T) {
 	if _, ok := svc.ValidateApprovalToken(token + "corrupt"); ok {
 		t.Fatal("expected corrupted token validation to fail")
 	}
+
+	// Test VerifyGateToken
+	if err := svc.VerifyGateToken(runID, token); err != nil {
+		t.Fatalf("expected VerifyGateToken to succeed, got: %v", err)
+	}
+	if err := svc.VerifyGateToken("", token); err != nil {
+		t.Fatalf("expected VerifyGateToken with empty expected runID to succeed, got: %v", err)
+	}
+	if err := svc.VerifyGateToken("different-run-id", token); err != ErrRunIDMismatch {
+		t.Fatalf("expected ErrRunIDMismatch, got: %v", err)
+	}
+	if err := svc.VerifyGateToken(runID, expiredToken); err != ErrInvalidApprovalToken {
+		t.Fatalf("expected ErrInvalidApprovalToken for expired token, got: %v", err)
+	}
+	if err := svc.VerifyGateToken(runID, ""); err != ErrInvalidApprovalToken {
+		t.Fatalf("expected ErrInvalidApprovalToken for empty token, got: %v", err)
+	}
 }

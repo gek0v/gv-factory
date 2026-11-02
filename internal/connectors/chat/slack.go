@@ -151,18 +151,21 @@ func (s *SlackAdapter) UpdateStatus(ctx context.Context, update StatusUpdate) (*
 func (s *SlackAdapter) UpdateMessageWithDecision(ctx context.Context, channel, messageTS string, res GateResolution) error {
 	statusEmoji := "✅"
 	statusText := "APPROVED"
-	if res.Decision == "REJECT" {
+	actionPast := "approved"
+	if strings.EqualFold(res.Decision, "reject") || strings.EqualFold(res.Decision, "rejected") {
 		statusEmoji = "❌"
 		statusText = "REJECTED"
+		actionPast = "rejected"
 	}
 
-	banner := fmt.Sprintf("%s *Decision Gate %s* by <@%s>", statusEmoji, statusText, res.User)
+	banner := fmt.Sprintf("%s Gate %s by @%s", statusEmoji, actionPast, res.User)
 	blocks := []map[string]any{
 		{
 			"type": "header",
 			"text": map[string]any{
-				"type": "plain_text",
-				"text": fmt.Sprintf("Decision Gate Resolved: %s", statusText),
+				"type":  "plain_text",
+				"text":  fmt.Sprintf("Decision Gate Resolved: %s", statusText),
+				"emoji": true,
 			},
 		},
 		{
@@ -185,35 +188,55 @@ func (s *SlackAdapter) UpdateMessageWithDecision(ctx context.Context, channel, m
 }
 
 func (s *SlackAdapter) buildApprovalBlocks(req ApprovalPromptRequest) []map[string]any {
+	headerTitle := "🛑 Decision Gate: Human Approval Required"
+	if req.TaskTitle != "" {
+		headerTitle = fmt.Sprintf("🛑 Decision Gate: %s", req.TaskTitle)
+	}
+
+	fields := []map[string]any{
+		{
+			"type": "mrkdwn",
+			"text": fmt.Sprintf("*Run ID:*\n`%s`", req.RunID),
+		},
+		{
+			"type": "mrkdwn",
+			"text": "*Status:*\n`Pending Approval`",
+		},
+		{
+			"type": "mrkdwn",
+			"text": fmt.Sprintf("*Coverage:*\n`%.1f%%`", req.CoveragePercent),
+		},
+	}
+
+	if req.FindingsCount > 0 {
+		fields = append(fields, map[string]any{
+			"type": "mrkdwn",
+			"text": fmt.Sprintf("*Findings & Alerts:*\nTotal: `%d` | Critical: `%d` | High: `%d`", req.FindingsCount, req.CriticalAlerts, req.HighAlerts),
+		})
+	} else {
+		fields = append(fields, map[string]any{
+			"type": "mrkdwn",
+			"text": fmt.Sprintf("*Security Alerts:*\nCritical: `%d` | High: `%d`", req.CriticalAlerts, req.HighAlerts),
+		})
+	}
+
+	fields = append(fields, map[string]any{
+		"type": "mrkdwn",
+		"text": fmt.Sprintf("*Expires At:*\n`%s`", req.ExpiresAt.Format(time.Kitchen)),
+	})
+
 	blocks := []map[string]any{
 		{
 			"type": "header",
 			"text": map[string]any{
 				"type":  "plain_text",
-				"text":  "🛑 Decision Gate: Human Approval Required",
+				"text":  headerTitle,
 				"emoji": true,
 			},
 		},
 		{
-			"type": "section",
-			"fields": []map[string]any{
-				{
-					"type": "mrkdwn",
-					"text": fmt.Sprintf("*Run ID:*\n`%s`", req.RunID),
-				},
-				{
-					"type": "mrkdwn",
-					"text": fmt.Sprintf("*Coverage:*\n`%.1f%%`", req.CoveragePercent),
-				},
-				{
-					"type": "mrkdwn",
-					"text": fmt.Sprintf("*Security Alerts:*\nCritical: `%d` | High: `%d`", req.CriticalAlerts, req.HighAlerts),
-				},
-				{
-					"type": "mrkdwn",
-					"text": fmt.Sprintf("*Expires At:*\n`%s`", req.ExpiresAt.Format(time.Kitchen)),
-				},
-			},
+			"type":   "section",
+			"fields": fields,
 		},
 	}
 
@@ -227,12 +250,32 @@ func (s *SlackAdapter) buildApprovalBlocks(req ApprovalPromptRequest) []map[stri
 		})
 	}
 
+	if req.GateReason != "" {
+		blocks = append(blocks, map[string]any{
+			"type": "section",
+			"text": map[string]any{
+				"type": "mrkdwn",
+				"text": fmt.Sprintf("*Gate Reason:*\n%s", req.GateReason),
+			},
+		})
+	}
+
 	if req.Summary != "" {
 		blocks = append(blocks, map[string]any{
 			"type": "section",
 			"text": map[string]any{
 				"type": "mrkdwn",
 				"text": fmt.Sprintf("*Reviewer Diagnostics:*\n%s", req.Summary),
+			},
+		})
+	}
+
+	if len(req.ReviewerScores) > 0 {
+		blocks = append(blocks, map[string]any{
+			"type": "section",
+			"text": map[string]any{
+				"type": "mrkdwn",
+				"text": fmt.Sprintf("*Reviewer Scores:*\n%s", strings.Join(req.ReviewerScores, " | ")),
 			},
 		})
 	}
@@ -262,16 +305,16 @@ func (s *SlackAdapter) buildApprovalBlocks(req ApprovalPromptRequest) []map[stri
 	actionsElements := []map[string]any{
 		{
 			"type":      "button",
-			"text":      map[string]any{"type": "plain_text", "text": "Approve ✅"},
+			"text":      map[string]any{"type": "plain_text", "text": "Aprobar ✅", "emoji": true},
 			"style":     "primary",
-			"action_id": "gate_approve",
+			"action_id": "approve_gate",
 			"value":     req.Token,
 		},
 		{
 			"type":      "button",
-			"text":      map[string]any{"type": "plain_text", "text": "Reject ❌"},
+			"text":      map[string]any{"type": "plain_text", "text": "Rechazar ❌", "emoji": true},
 			"style":     "danger",
-			"action_id": "gate_reject",
+			"action_id": "reject_gate",
 			"value":     req.Token,
 		},
 	}
@@ -279,9 +322,9 @@ func (s *SlackAdapter) buildApprovalBlocks(req ApprovalPromptRequest) []map[stri
 	if req.DiffURL != "" {
 		actionsElements = append(actionsElements, map[string]any{
 			"type":      "button",
-			"text":      map[string]any{"type": "plain_text", "text": "View Diff 🔍"},
+			"text":      map[string]any{"type": "plain_text", "text": "Ver Diff 🔍", "emoji": true},
 			"url":       req.DiffURL,
-			"action_id": "gate_diff",
+			"action_id": "view_diff",
 		})
 	}
 

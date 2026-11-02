@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/gv-factory/gv-factory/internal/auth"
 )
 
 // HandlerConfig aggregates configurations and dependencies for the chat HTTP handlers.
@@ -22,6 +24,8 @@ type HandlerConfig struct {
 	DiscordPublicKey   string
 	MaxTimestampDrift  time.Duration
 	GateResolver       GateResolver
+	AuthService        *auth.Service
+	OVServerURL        string
 	CommandExecutor    CommandExecutor
 	SlackAdapter       *SlackAdapter
 	DiscordAdapter     *DiscordAdapter
@@ -115,17 +119,49 @@ func (h *ChatHandler) HandleSlackInteractions(w http.ResponseWriter, r *http.Req
 
 	for _, act := range payload.Actions {
 		var decision string
-		switch act.ActionID {
-		case "gate_approve":
+		var token string
+		actionID := act.ActionID
+		switch {
+		case actionID == "approve_gate" || strings.HasPrefix(actionID, "approve_gate:"):
+			decision = "approved"
+			if act.Value != "" {
+				token = act.Value
+			} else {
+				token = strings.TrimPrefix(actionID, "approve_gate:")
+			}
+		case actionID == "gate_approve" || strings.HasPrefix(actionID, "gate_approve:"):
 			decision = "APPROVE"
-		case "gate_reject":
+			if act.Value != "" {
+				token = act.Value
+			} else {
+				token = strings.TrimPrefix(actionID, "gate_approve:")
+			}
+		case actionID == "reject_gate" || strings.HasPrefix(actionID, "reject_gate:"):
+			decision = "rejected"
+			if act.Value != "" {
+				token = act.Value
+			} else {
+				token = strings.TrimPrefix(actionID, "reject_gate:")
+			}
+		case actionID == "gate_reject" || strings.HasPrefix(actionID, "gate_reject:"):
 			decision = "REJECT"
+			if act.Value != "" {
+				token = act.Value
+			} else {
+				token = strings.TrimPrefix(actionID, "gate_reject:")
+			}
 		default:
 			continue
 		}
 
+		runID := ""
+		if parts := strings.Split(token, ":"); len(parts) >= 2 {
+			runID = parts[0]
+		}
+
 		res := GateResolution{
-			Token:     act.Value,
+			RunID:     runID,
+			Token:     token,
 			Decision:  decision,
 			User:      username,
 			UserID:    payload.User.ID,
@@ -134,17 +170,21 @@ func (h *ChatHandler) HandleSlackInteractions(w http.ResponseWriter, r *http.Req
 			Timestamp: time.Now(),
 		}
 
-		if h.cfg.GateResolver != nil {
-			if err := h.cfg.GateResolver.ResolveGate(r.Context(), res); err != nil {
-				log.Printf("chat: error resolving gate: %v", err)
-			}
+		if err := h.dispatchGateResolution(r.Context(), res); err != nil {
+			log.Printf("chat: error resolving gate: %v", err)
 		}
 
 		if h.cfg.SlackAdapter != nil && payload.Channel.ID != "" && payload.Message.TS != "" {
 			_ = h.cfg.SlackAdapter.UpdateMessageWithDecision(r.Context(), payload.Channel.ID, payload.Message.TS, res)
 		} else if payload.ResponseURL != "" {
+			actionPast := "approved"
+			emoji := "✅"
+			if strings.EqualFold(decision, "reject") || strings.EqualFold(decision, "rejected") {
+				actionPast = "rejected"
+				emoji = "❌"
+			}
 			_ = h.postToResponseURL(payload.ResponseURL, map[string]any{
-				"text":             fmt.Sprintf("Decision gate %s by <@%s>", decision, username),
+				"text":             fmt.Sprintf("%s Gate %s by @%s", emoji, actionPast, username),
 				"replace_original": true,
 			})
 		}
@@ -297,16 +337,29 @@ func (h *ChatHandler) HandleDiscordInteractions(w http.ResponseWriter, r *http.R
 	if interaction.Type == 3 {
 		customID := interaction.Data.CustomID
 		var decision, token string
-		if strings.HasPrefix(customID, "gate_approve:") {
+		switch {
+		case strings.HasPrefix(customID, "btn_gate_approve:"):
+			decision = "approved"
+			token = strings.TrimPrefix(customID, "btn_gate_approve:")
+		case strings.HasPrefix(customID, "gate_approve:"):
 			decision = "APPROVE"
 			token = strings.TrimPrefix(customID, "gate_approve:")
-		} else if strings.HasPrefix(customID, "gate_reject:") {
+		case strings.HasPrefix(customID, "btn_gate_reject:"):
+			decision = "rejected"
+			token = strings.TrimPrefix(customID, "btn_gate_reject:")
+		case strings.HasPrefix(customID, "gate_reject:"):
 			decision = "REJECT"
 			token = strings.TrimPrefix(customID, "gate_reject:")
 		}
 
 		if decision != "" && token != "" {
+			runID := ""
+			if parts := strings.Split(token, ":"); len(parts) >= 2 {
+				runID = parts[0]
+			}
+
 			res := GateResolution{
+				RunID:     runID,
 				Token:     token,
 				Decision:  decision,
 				User:      username,
@@ -316,19 +369,19 @@ func (h *ChatHandler) HandleDiscordInteractions(w http.ResponseWriter, r *http.R
 				Timestamp: time.Now(),
 			}
 
-			if h.cfg.GateResolver != nil {
-				if err := h.cfg.GateResolver.ResolveGate(r.Context(), res); err != nil {
-					log.Printf("chat: error resolving discord gate: %v", err)
-				}
+			if err := h.dispatchGateResolution(r.Context(), res); err != nil {
+				log.Printf("chat: error resolving discord gate: %v", err)
 			}
 
 			// Respond with Type 7: UPDATE_MESSAGE
 			statusEmoji := "✅"
 			statusText := "APPROVED"
+			actionPast := "approved"
 			color := 0x10B981 // Green
-			if decision == "REJECT" {
+			if strings.EqualFold(decision, "reject") || strings.EqualFold(decision, "rejected") {
 				statusEmoji = "❌"
 				statusText = "REJECTED"
+				actionPast = "rejected"
 				color = 0xEF4444 // Red
 			}
 
@@ -337,12 +390,12 @@ func (h *ChatHandler) HandleDiscordInteractions(w http.ResponseWriter, r *http.R
 				"data": map[string]any{
 					"embeds": []any{
 						map[string]any{
-							"title":       fmt.Sprintf("%s Decision Gate Resolved: %s", statusEmoji, statusText),
-							"description": fmt.Sprintf("Decision submitted by **%s**.", username),
+							"title":       fmt.Sprintf("%s Gate %s by @%s", statusEmoji, actionPast, username),
+							"description": fmt.Sprintf("Decision submitted by **@%s** for Run `%s`.", username, runID),
 							"color":       color,
 							"fields": []map[string]any{
 								{"name": "Decision", "value": statusText, "inline": true},
-								{"name": "Resolved By", "value": username, "inline": true},
+								{"name": "Resolved By", "value": "@" + username, "inline": true},
 								{"name": "Timestamp", "value": time.Now().Format(time.RFC3339), "inline": true},
 							},
 						},
@@ -395,6 +448,71 @@ func (h *ChatHandler) HandleDiscordInteractions(w http.ResponseWriter, r *http.R
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *ChatHandler) dispatchGateResolution(ctx context.Context, res GateResolution) error {
+	// 1. Verify cryptographic HMAC approval token if AuthService is configured
+	if h.cfg.AuthService != nil {
+		if err := h.cfg.AuthService.VerifyGateToken(res.RunID, res.Token); err != nil {
+			return fmt.Errorf("cryptographic verification failed: %w", err)
+		}
+	}
+
+	// 2. Dispatch to ov-server REST endpoint if configured
+	if h.cfg.OVServerURL != "" {
+		if err := h.dispatchToOVServer(ctx, res); err != nil {
+			return fmt.Errorf("ov-server dispatch failed: %w", err)
+		}
+	}
+
+	// 3. Dispatch to custom GateResolver if configured
+	if h.cfg.GateResolver != nil {
+		if err := h.cfg.GateResolver.ResolveGate(ctx, res); err != nil {
+			return fmt.Errorf("gate resolver failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (h *ChatHandler) dispatchToOVServer(ctx context.Context, res GateResolution) error {
+	baseURL := strings.TrimRight(h.cfg.OVServerURL, "/")
+	targetURL := baseURL + "/api/v1/gates/resolve"
+
+	dec := "approved"
+	if strings.EqualFold(res.Decision, "reject") || strings.EqualFold(res.Decision, "rejected") {
+		dec = "rejected"
+	}
+
+	payload := map[string]string{
+		"run_id":   res.RunID,
+		"token":    res.Token,
+		"decision": dec,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal ov-server payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ov-server request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ov-server gate resolve error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 func (h *ChatHandler) postToResponseURL(targetURL string, payload map[string]any) error {

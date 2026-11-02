@@ -7,10 +7,19 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
+)
+
+var (
+	// ErrInvalidApprovalToken is returned when an HMAC gate approval token fails validation or has expired.
+	ErrInvalidApprovalToken = errors.New("auth: invalid or expired approval token")
+
+	// ErrRunIDMismatch is returned when the approval token's run ID does not match the expected run ID.
+	ErrRunIDMismatch = errors.New("auth: run ID mismatch")
 )
 
 // Service provides authentication and cryptographic verification for gate approvals.
@@ -74,4 +83,23 @@ func (s *Service) ValidateApprovalToken(token string) (string, bool) {
 	}
 
 	return runID, true
+}
+
+// VerifyGateToken validates that an HMAC approval token is authentic, unexpired,
+// and matches the specified runID (if runID is non-empty).
+func (s *Service) VerifyGateToken(runID, token string) error {
+	if s == nil {
+		return errors.New("auth: service not configured")
+	}
+	if token == "" {
+		return ErrInvalidApprovalToken
+	}
+	extractedRunID, valid := s.ValidateApprovalToken(token)
+	if !valid {
+		return ErrInvalidApprovalToken
+	}
+	if runID != "" && extractedRunID != runID {
+		return ErrRunIDMismatch
+	}
+	return nil
 }

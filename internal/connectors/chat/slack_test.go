@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,6 +49,20 @@ func TestVerifySlackSignature(t *testing.T) {
 		err := VerifySlackSignature(secret, h, body, now, 5*time.Minute)
 		if err == nil {
 			t.Fatal("expected signature mismatch error, got nil")
+		}
+
+		// Malformed hex in signature
+		h.Set(HeaderSlackSignature, "v0=nothexsignature!")
+		err = VerifySlackSignature(secret, h, body, now, 5*time.Minute)
+		if err == nil {
+			t.Fatal("expected hex decode error, got nil")
+		}
+
+		// Invalid prefix
+		h.Set(HeaderSlackSignature, "v1=123456")
+		err = VerifySlackSignature(secret, h, body, now, 5*time.Minute)
+		if err == nil {
+			t.Fatal("expected invalid prefix error, got nil")
 		}
 	})
 
@@ -206,6 +221,192 @@ func TestSlackAdapter_SendAndPrompt(t *testing.T) {
 		}
 		if receivedUpdateMsg["channel"] != "C123456" || receivedUpdateMsg["ts"] != "1730000000.123456" {
 			t.Errorf("expected channel and ts in update payload, got %v", receivedUpdateMsg)
+		}
+	})
+
+	t.Run("Interactive Gate Card with task title, gate reason, findings and buttons", func(t *testing.T) {
+		req := ApprovalPromptRequest{
+			RunID:           "run-gate-interactive-99",
+			Token:           "hmac-token-secret-1234",
+			TaskTitle:       "Security & Quality Gate: Payment Service",
+			GateReason:      "Coverage dropped below threshold and critical alert found",
+			FindingsCount:   7,
+			CriticalAlerts:  2,
+			HighAlerts:      5,
+			CoveragePercent: 78.4,
+			ReviewerScores:  []string{"Security: 3/5", "Architecture: 4/5"},
+			DiffURL:         "https://canvas.gv-factory.local/diff/run-99",
+			ExpiresAt:       time.Now().Add(45 * time.Minute),
+		}
+
+		ref, err := adapter.PromptApproval(ctx, req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ref == nil {
+			t.Fatal("expected non-nil MessageRef")
+		}
+
+		blocks, ok := receivedPostMsg["blocks"].([]any)
+		if !ok || len(blocks) == 0 {
+			t.Fatalf("expected blocks in post payload: %v", receivedPostMsg)
+		}
+
+		// Verify header includes task title
+		headerBlock := blocks[0].(map[string]any)
+		headerText := headerBlock["text"].(map[string]any)["text"].(string)
+		if !strings.Contains(headerText, "Security & Quality Gate: Payment Service") {
+			t.Errorf("expected header text to contain task title, got %q", headerText)
+		}
+
+		// Find actions block and inspect buttons
+		var foundActions map[string]any
+		for _, b := range blocks {
+			bm := b.(map[string]any)
+			if bm["type"] == "actions" {
+				foundActions = bm
+				break
+			}
+		}
+		if foundActions == nil {
+			t.Fatal("expected actions block with interactive buttons")
+		}
+
+		elems := foundActions["elements"].([]any)
+		var hasApprove, hasReject, hasDiff bool
+		for _, el := range elems {
+			btn := el.(map[string]any)
+			actionID, _ := btn["action_id"].(string)
+			switch actionID {
+			case "approve_gate":
+				hasApprove = true
+				if btn["style"] != "primary" {
+					t.Errorf("expected approve_gate style 'primary', got %v", btn["style"])
+				}
+				if btn["value"] != req.Token {
+					t.Errorf("expected approve_gate value to be HMAC token, got %v", btn["value"])
+				}
+			case "reject_gate":
+				hasReject = true
+				if btn["style"] != "danger" {
+					t.Errorf("expected reject_gate style 'danger', got %v", btn["style"])
+				}
+				if btn["value"] != req.Token {
+					t.Errorf("expected reject_gate value to be HMAC token, got %v", btn["value"])
+				}
+			case "view_diff":
+				hasDiff = true
+				if btn["url"] != req.DiffURL {
+					t.Errorf("expected view_diff url %s, got %v", req.DiffURL, btn["url"])
+				}
+			}
+		}
+
+		if !hasApprove {
+			t.Error("expected 'approve_gate' button in actions block")
+		}
+		if !hasReject {
+			t.Error("expected 'reject_gate' button in actions block")
+		}
+		if !hasDiff {
+			t.Error("expected 'view_diff' button in actions block")
+		}
+	})
+
+	t.Run("UpdateMessageWithDecision shows user resolved banner", func(t *testing.T) {
+		// Test approved format
+		err := adapter.UpdateMessageWithDecision(ctx, "C123456", "1730000000.123456", GateResolution{
+			RunID:     "run-gate-test-01",
+			Decision:  "approved",
+			User:      "alice",
+			Timestamp: time.Now(),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		text, _ := receivedUpdateMsg["text"].(string)
+		if !strings.Contains(text, "✅ Gate approved by @alice") {
+			t.Errorf("expected banner text to contain '✅ Gate approved by @alice', got %q", text)
+		}
+
+		// Test rejected format
+		err = adapter.UpdateMessageWithDecision(ctx, "C123456", "1730000000.123456", GateResolution{
+			RunID:     "run-gate-test-01",
+			Decision:  "rejected",
+			User:      "bob",
+			Timestamp: time.Now(),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		text, _ = receivedUpdateMsg["text"].(string)
+		if !strings.Contains(text, "❌ Gate rejected by @bob") {
+			t.Errorf("expected banner text to contain '❌ Gate rejected by @bob', got %q", text)
+		}
+	})
+
+	t.Run("SlackAdapter error paths", func(t *testing.T) {
+		if adapter.Platform() != "slack" {
+			t.Errorf("expected platform slack, got %s", adapter.Platform())
+		}
+
+		// Test levels: warning, error, default
+		_, _ = adapter.SendNotification(ctx, NotificationMessage{Channel: "C123456", Level: "warning", Title: "Warn", Body: "Warning body"})
+		_, _ = adapter.SendNotification(ctx, NotificationMessage{Channel: "C123456", Level: "error", Title: "Err", Body: "Error body"})
+		_, _ = adapter.SendNotification(ctx, NotificationMessage{Channel: "C123456", Level: "other", Title: "Other", Body: "Other body"})
+
+		// Test statuses: running, failed, other
+		_, _ = adapter.UpdateStatus(ctx, StatusUpdate{Channel: "C123456", Status: "running", StepName: "builder", Details: "Working"})
+		_, _ = adapter.UpdateStatus(ctx, StatusUpdate{Channel: "C123456", Status: "failed", StepName: "builder", Details: "Failed"})
+		_, _ = adapter.UpdateStatus(ctx, StatusUpdate{Channel: "C123456", Status: "unknown", StepName: "builder"})
+
+		noChanAdapter := NewSlackAdapter(SlackConfig{
+			BaseURL: srv.URL,
+		})
+		if _, err := noChanAdapter.SendNotification(ctx, NotificationMessage{Title: "hi"}); err != ErrChannelRequired {
+			t.Errorf("expected ErrChannelRequired, got %v", err)
+		}
+		if _, err := noChanAdapter.PromptApproval(ctx, ApprovalPromptRequest{RunID: "r1"}); err != ErrChannelRequired {
+			t.Errorf("expected ErrChannelRequired, got %v", err)
+		}
+		if _, err := noChanAdapter.UpdateStatus(ctx, StatusUpdate{RunID: "r1"}); err != ErrChannelRequired {
+			t.Errorf("expected ErrChannelRequired, got %v", err)
+		}
+
+		// Slack API error responses
+		errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok": false, "error": "invalid_auth"}`))
+		}))
+		defer errSrv.Close()
+
+		errAdapter := NewSlackAdapter(SlackConfig{
+			DefaultChannel: "C1",
+			BaseURL:        errSrv.URL,
+			HTTPClient:     errSrv.Client(),
+		})
+		if _, err := errAdapter.SendNotification(ctx, NotificationMessage{Title: "hi"}); err == nil {
+			t.Error("expected error when slack API returns ok:false")
+		}
+		if err := errAdapter.UpdateMessageWithDecision(ctx, "C1", "ts1", GateResolution{Decision: "approved"}); err == nil {
+			t.Error("expected error when slack updateMessage returns ok:false")
+		}
+
+		// Slack API invalid JSON response
+		badJsonSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`not-json`))
+		}))
+		defer badJsonSrv.Close()
+		badAdapter := NewSlackAdapter(SlackConfig{
+			DefaultChannel: "C1",
+			BaseURL:        badJsonSrv.URL,
+			HTTPClient:     badJsonSrv.Client(),
+		})
+		if _, err := badAdapter.SendNotification(ctx, NotificationMessage{Title: "hi"}); err == nil {
+			t.Error("expected error for bad json response")
+		}
+		if err := badAdapter.UpdateMessageWithDecision(ctx, "C1", "ts1", GateResolution{Decision: "approved"}); err == nil {
+			t.Error("expected error for bad json update response")
 		}
 	})
 }
