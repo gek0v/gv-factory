@@ -134,4 +134,109 @@ describe('Factory Templates & Canvas Serializer', () => {
     expect(validation.errors.some((e) => e.includes('min_coverage_percent'))).toBe(true);
     expect(validation.errors.some((e) => e.includes('max_security_alerts'))).toBe(true);
   });
+
+  it('preserves and normalizes LLM configuration in template roundtrip', () => {
+    const templateWithLLM: FactoryTemplate = {
+      apiVersion: 'factory.ov.io/v1alpha1',
+      kind: 'FactoryTemplate',
+      metadata: { name: 'llm-agent-pipeline', version: '0.1.0', description: 'Pipeline with LLM agent config' },
+      spec: {
+        entrypoint: 'trigger-hook',
+        steps: [
+          {
+            id: 'trigger-hook',
+            name: 'Webhook Ingestion',
+            plugin: 'extism://plugins/ingestion.wasm',
+          },
+          {
+            id: 'builder-agent',
+            name: 'Autonomous Builder Agent',
+            plugin: 'extism://plugins/builder-tdd.wasm',
+            depends_on: ['trigger-hook'],
+            config: {
+              llm: {
+                provider: 'anthropic',
+                model: 'claude-3-5-sonnet',
+                temperature: 0.2,
+                max_iterations: 15,
+                authorized_tools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
+              },
+            },
+          },
+        ],
+        gates: { min_coverage_percent: 90, max_security_alerts: 0, require_approval: true },
+      },
+    };
+
+    const canvas = templateToCanvas(templateWithLLM);
+    expect(canvas.isValid).toBe(true);
+    const agentNode = canvas.nodes.find((n) => n.id === 'builder-agent');
+    expect(agentNode).toBeDefined();
+    expect(agentNode?.data.model).toBe('claude-3-5-sonnet');
+    expect(agentNode?.data.llmConfig).toBeDefined();
+    const llmCfg = agentNode?.data.llmConfig as import('../types/flow').AgentLLMConfig;
+    expect(llmCfg?.provider).toBe('anthropic');
+    expect(llmCfg?.temperature).toBe(0.2);
+    expect(llmCfg?.maxIterations).toBe(15);
+    expect(llmCfg?.authorizedTools).toEqual([
+      'bash_exec',
+      'git_read',
+      'file_writer',
+      'repo_search',
+    ]);
+
+    const reconstructed = canvasToTemplate(canvas.nodes, canvas.edges, {
+      metadata: templateWithLLM.metadata,
+      gates: templateWithLLM.spec.gates,
+    });
+
+    const builderStep = reconstructed.spec.steps.find((s) => s.id === 'builder-agent');
+    expect(builderStep).toBeDefined();
+    expect(builderStep?.config?.llm).toBeDefined();
+    const exportedLLM = builderStep?.config?.llm as Record<string, unknown>;
+    expect(exportedLLM.provider).toBe('anthropic');
+    expect(exportedLLM.model).toBe('claude-3-5-sonnet');
+    expect(exportedLLM.temperature).toBe(0.2);
+    expect(exportedLLM.max_iterations).toBe(15);
+    expect(exportedLLM.authorized_tools).toEqual([
+      'bash_exec',
+      'git_read',
+      'file_writer',
+      'repo_search',
+    ]);
+  });
+
+  it('validates LLM parameters within expected ranges and formats', () => {
+    const invalidLLM: FactoryTemplate = {
+      apiVersion: 'factory.ov.io/v1alpha1',
+      kind: 'FactoryTemplate',
+      metadata: { name: 'invalid-llm', version: '0.1.0', description: 'test' },
+      spec: {
+        entrypoint: 'agent-1',
+        steps: [
+          {
+            id: 'agent-1',
+            name: 'Agent',
+            plugin: 'extism://plugins/agent.wasm',
+            config: {
+              llm: {
+                provider: 'openai',
+                model: '',
+                temperature: 2.8,
+                max_iterations: 60,
+                authorized_tools: 'not-an-array' as unknown as string[],
+              },
+            },
+          },
+        ],
+        gates: { min_coverage_percent: 90, max_security_alerts: 0, require_approval: true },
+      },
+    };
+
+    const result = validateFactoryTemplate(invalidLLM);
+    expect(result.isValid).toBe(false);
+    expect(result.errors.some((e) => e.includes('temperature'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('max_iterations'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('authorized_tools'))).toBe(true);
+  });
 });

@@ -88,6 +88,28 @@ export function templateToCanvas(input: string | FactoryTemplate): ParseResult {
 
       const sandboxFromConfig = step.config?.sandbox as import('../types/flow').NodeSandboxConfig | undefined;
 
+      const rawLlm = step.config?.llm as Record<string, unknown> | undefined;
+      const parsedLlmConfig: import('../types/flow').AgentLLMConfig | undefined = rawLlm
+        ? {
+            provider: (rawLlm.provider as string) || 'anthropic',
+            model: (rawLlm.model as string) || model || 'claude-3-5-sonnet',
+            temperature: typeof rawLlm.temperature === 'number' ? rawLlm.temperature : undefined,
+            maxIterations:
+              typeof rawLlm.max_iterations === 'number'
+                ? rawLlm.max_iterations
+                : typeof rawLlm.maxIterations === 'number'
+                  ? rawLlm.maxIterations
+                  : undefined,
+            authorizedTools: Array.isArray(rawLlm.authorized_tools)
+              ? (rawLlm.authorized_tools as string[])
+              : Array.isArray(rawLlm.authorizedTools)
+                ? (rawLlm.authorizedTools as string[])
+                : undefined,
+          }
+        : undefined;
+
+      const effectiveModel = parsedLlmConfig?.model || model || 'claude-3-5-sonnet';
+
       const nodeData: FactoryNodeData = {
         label: step.name || step.id,
         description: `Plugin: ${step.plugin}`,
@@ -96,11 +118,12 @@ export function templateToCanvas(input: string | FactoryTemplate): ParseResult {
         subtype: subtype as TriggerSubtype,
         role: role as AgentRole,
         reviewerSpecialty: reviewerSpecialty as ReviewerSpecialty,
-        model: model || 'claude-3-5-sonnet',
+        model: effectiveModel,
         pluginTag: step.plugin,
         parallel: step.parallel,
         config: step.config ? { ...step.config } : {},
         ...(sandboxFromConfig ? { sandboxConfig: sandboxFromConfig } : {}),
+        ...(parsedLlmConfig ? { llmConfig: parsedLlmConfig } : {}),
       } as FactoryNodeData;
 
       nodes.push({

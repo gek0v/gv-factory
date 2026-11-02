@@ -202,5 +202,38 @@ describe('dispatchGatewayEvent for logs, spans, and run lifecycle', () => {
     expect(pool?.workers[0].worker_id).toBe('worker-node-alpha');
     expect(pool?.workers[0].status).toBe('busy');
   });
+
+  it('handles worker.log.chunk and gate.requested events', () => {
+    const targetNode = useFactoryFlowStore.getState().nodes[0];
+    expect(targetNode).toBeTruthy();
+
+    const chunkEvent: GatewayEvent = {
+      type: 'worker.log.chunk',
+      task_id: targetNode.id,
+      payload: {
+        stream: 'stdout',
+        chunk: 'Streaming LLM cognitive reasoning line...',
+      },
+    };
+
+    dispatchGatewayEvent(chunkEvent, useFactoryFlowStore.getState());
+
+    const node = useFactoryFlowStore.getState().nodes.find((n) => n.id === targetNode.id);
+    expect(node?.data.logs?.some((l) => l.message.includes('Streaming LLM cognitive reasoning'))).toBe(true);
+
+    const gateReqEvent: GatewayEvent = {
+      type: 'gate.requested',
+      run_id: 'run-gate-s',
+      payload: {
+        token: 'sig-token-123',
+        tool_name: 'git_push',
+        arguments: { branch: 'main' },
+        caller_id: targetNode.id,
+      },
+    };
+
+    dispatchGatewayEvent(gateReqEvent, useFactoryFlowStore.getState());
+    expect(useFactoryFlowStore.getState().activeApproval?.toolName).toBe('git_push');
+  });
 });
 

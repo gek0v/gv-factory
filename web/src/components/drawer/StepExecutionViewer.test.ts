@@ -137,4 +137,82 @@ describe('extractStepSandboxTelemetry helper', () => {
     const telemetry = extractStepSandboxTelemetry(plainStep);
     expect(telemetry).toBeNull();
   });
+
+  it('extracts cognitive telemetry (reasoning chain and tool calls)', async () => {
+    const { extractStepCognitiveTelemetry, getToolCallStatusBadgeClass } = await import('./StepExecutionViewer');
+
+    expect(getToolCallStatusBadgeClass('executing')).toBe('tool-status-executing');
+    expect(getToolCallStatusBadgeClass('gate-waiting')).toBe('tool-status-gate-waiting');
+    expect(getToolCallStatusBadgeClass('completed')).toBe('tool-status-completed');
+    expect(getToolCallStatusBadgeClass('failed')).toBe('tool-status-failed');
+
+    const cognitiveStep: RunStep = {
+      id: 'step-cog-1',
+      run_id: 'run-1',
+      step_name: 'builder_tdd',
+      status: 'RUNNING',
+      duration_ms: 1500,
+      created_at: '2026-11-01T10:00:00Z',
+      reasoning: 'Analyzing test failure in auth_test.go...\nProposing token validation check.',
+      tool_calls: [
+        {
+          id: 'call-1',
+          name: 'bash_exec',
+          arguments: { command: 'go test -v ./internal/auth' },
+          status: 'completed',
+          durationMs: 340,
+          result: { exit_code: 0, stdout: 'PASS' },
+        },
+        {
+          id: 'call-2',
+          name: 'file_writer',
+          arguments: { path: 'internal/auth/token.go', content: 'package auth' },
+          status: 'gate-waiting',
+        },
+      ],
+    };
+
+    const extracted = extractStepCognitiveTelemetry(cognitiveStep);
+    expect(extracted.reasoning).toBe('Analyzing test failure in auth_test.go...\nProposing token validation check.');
+    expect(extracted.toolCalls).toHaveLength(2);
+    expect(extracted.toolCalls[0].name).toBe('bash_exec');
+    expect(extracted.toolCalls[0].status).toBe('completed');
+    expect(extracted.toolCalls[0].durationMs).toBe(340);
+    expect(extracted.toolCalls[1].name).toBe('file_writer');
+    expect(extracted.toolCalls[1].status).toBe('gate-waiting');
+  });
+
+  it('extracts cognitive telemetry from step.output when nested', async () => {
+    const { extractStepCognitiveTelemetry } = await import('./StepExecutionViewer');
+
+    const nestedStep: RunStep = {
+      id: 'step-nested-cog',
+      run_id: 'run-1',
+      step_name: 'spec_writer',
+      status: 'COMPLETED',
+      duration_ms: 800,
+      created_at: '2026-11-01T10:00:00Z',
+      output: {
+        reasoning: [
+          { id: 'b1', content: 'Step 1: Inspect issue requirements' },
+          { id: 'b2', content: 'Step 2: Generate SDD specification' },
+        ],
+        tool_calls: [
+          {
+            id: 'tc-nested',
+            name: 'repo_search',
+            arguments: 'pattern: "handleAuth"',
+            status: 'completed',
+            durationMs: 120,
+          },
+        ],
+      },
+    };
+
+    const extracted = extractStepCognitiveTelemetry(nestedStep);
+    expect(extracted.reasoning).toContain('Step 1: Inspect issue requirements');
+    expect(extracted.reasoning).toContain('Step 2: Generate SDD specification');
+    expect(extracted.toolCalls).toHaveLength(1);
+    expect(extracted.toolCalls[0].name).toBe('repo_search');
+  });
 });

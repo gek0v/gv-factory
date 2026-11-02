@@ -24,6 +24,28 @@ export interface StepSandboxTelemetry {
   security_level?: string;
 }
 
+export type ToolCallStatus = 'executing' | 'gate-waiting' | 'completed' | 'failed';
+
+export interface ToolCallTelemetry {
+  id: string;
+  name: string;
+  arguments?: Record<string, unknown> | string;
+  status: ToolCallStatus;
+  result?: unknown;
+  errorMessage?: string;
+  durationMs?: number;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface AgentReasoningBlock {
+  id: string;
+  content: string;
+  isStreaming?: boolean;
+  startedAt?: string;
+  completedAt?: string;
+}
+
 export interface RunStep {
   id: string;
   run_id: string;
@@ -38,6 +60,8 @@ export interface RunStep {
   cgroups_enforced?: boolean;
   resource_limits?: StepResourceLimits;
   runtime_engine?: string;
+  reasoning?: string | AgentReasoningBlock[];
+  tool_calls?: ToolCallTelemetry[];
 }
 
 export type WorkerStatus = 'ready' | 'busy' | 'offline';
