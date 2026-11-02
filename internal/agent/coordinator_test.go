@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/brain"
+	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
 )
 
 // =========================================================================
@@ -97,6 +98,22 @@ func (m *mockEpisodeRecorder) RecordEpisode(ctx context.Context, ep brain.TaskEp
 		return m.recordFn(ctx, ep)
 	}
 	return &ep, nil
+}
+
+type mockCoordinatorMergeQueue struct {
+	enqueueFn func(ctx context.Context, req merger.MergeRequest) error
+	requests  []merger.MergeRequest
+	mu        sync.Mutex
+}
+
+func (m *mockCoordinatorMergeQueue) Enqueue(ctx context.Context, req merger.MergeRequest) error {
+	m.mu.Lock()
+	m.requests = append(m.requests, req)
+	m.mu.Unlock()
+	if m.enqueueFn != nil {
+		return m.enqueueFn(ctx, req)
+	}
+	return nil
 }
 
 // =========================================================================
@@ -1268,3 +1285,249 @@ func TestFactoryCoordinator_LearningLoop_EdgeCases(t *testing.T) {
 		TotalIterations: 1,
 	}, nil)
 }
+
+func TestFactoryCoordinator_MergeQueue_ApprovedOutcome_EnqueuesSuccessfully(t *testing.T) {
+	specMock := &mockSpecGenerator{}
+	buildMock := &mockTaskBuilder{}
+	approverMock := &mockGateApprover{}
+	mqMock := &mockCoordinatorMergeQueue{}
+
+	var eventsMu sync.Mutex
+	var stageEvents []string
+	var mergeEnqueuedPayload any
+
+	cfg := CoordinatorConfig{
+		SpecWriter:  specMock,
+		Builder:     buildMock,
+		Approver:    approverMock,
+		MergeQueue:  mqMock,
+		MaxRetries:  3,
+		MinCoverage: 0.90,
+		EventHook: func(stage string, payload any) {
+			eventsMu.Lock()
+			stageEvents = append(stageEvents, stage)
+			if stage == EventMergeEnqueued {
+				mergeEnqueuedPayload = payload
+			}
+			eventsMu.Unlock()
+		},
+	}
+
+	coord := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-approved-1",
+		Title:  "Implement feature with merge",
+	}
+
+	outcome, err := coord.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if outcome.Decision != DecisionApproved {
+		t.Fatalf("expected decision APPROVED, got %s", outcome.Decision)
+	}
+
+	if outcome.MergeStatus != "enqueued" {
+		t.Fatalf("expected MergeStatus to be 'enqueued', got %q", outcome.MergeStatus)
+	}
+
+	mqMock.mu.Lock()
+	defer mqMock.mu.Unlock()
+	if len(mqMock.requests) != 1 {
+		t.Fatalf("expected 1 merge request, got %d", len(mqMock.requests))
+	}
+
+	req := mqMock.requests[0]
+	if req.RunID != "task-approved-1" {
+		t.Errorf("expected RunID 'task-approved-1', got %q", req.RunID)
+	}
+	if req.SourceBranch != "ov-run/task-approved-1" {
+		t.Errorf("expected SourceBranch 'ov-run/task-approved-1', got %q", req.SourceBranch)
+	}
+	if req.TargetBranch != "main" {
+		t.Errorf("expected TargetBranch 'main', got %q", req.TargetBranch)
+	}
+
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	found := false
+	for _, st := range stageEvents {
+		if st == EventMergeEnqueued {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected EventMergeEnqueued stage event, got %v", stageEvents)
+	}
+	if mergeEnqueuedPayload == nil {
+		t.Errorf("expected non-nil mergeEnqueuedPayload")
+	}
+}
+
+func TestFactoryCoordinator_MergeQueue_WithOption_EnqueuesSuccessfully(t *testing.T) {
+	specMock := &mockSpecGenerator{}
+	buildMock := &mockTaskBuilder{}
+	approverMock := &mockGateApprover{}
+	mqMock := &mockCoordinatorMergeQueue{}
+
+	cfg := CoordinatorConfig{
+		SpecWriter: specMock,
+		Builder:    buildMock,
+		Approver:   approverMock,
+	}
+
+	coord := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-option-1",
+		Title:  "Implement with option",
+	}
+
+	outcome, err := coord.RunPipeline(context.Background(), task, WithMergeQueue(mqMock))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if outcome.MergeStatus != "enqueued" {
+		t.Fatalf("expected MergeStatus 'enqueued', got %q", outcome.MergeStatus)
+	}
+
+	mqMock.mu.Lock()
+	defer mqMock.mu.Unlock()
+	if len(mqMock.requests) != 1 {
+		t.Fatalf("expected 1 merge request enqueued, got %d", len(mqMock.requests))
+	}
+}
+
+func TestFactoryCoordinator_MergeQueue_NonApproved_DoesNotEnqueue(t *testing.T) {
+	specMock := &mockSpecGenerator{}
+	buildMock := &mockTaskBuilder{}
+	approverMock := &mockGateApprover{
+		decideFn: func(ctx context.Context, req ApprovalRequest) (*ApprovalDecision, error) {
+			return &ApprovalDecision{
+				DecisionType:      DecisionHumanGate,
+				ConsolidatedScore: 0.5,
+				RequiresHumanSign: true,
+				GateReason:        "Manual audit required",
+			}, nil
+		},
+	}
+	mqMock := &mockCoordinatorMergeQueue{}
+
+	cfg := CoordinatorConfig{
+		SpecWriter: specMock,
+		Builder:    buildMock,
+		Approver:   approverMock,
+		MergeQueue: mqMock,
+	}
+
+	coord := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-gate-1",
+		Title:  "Task requiring gate",
+	}
+
+	outcome, err := coord.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if outcome.Decision != DecisionHumanGate {
+		t.Fatalf("expected decision HUMAN_GATE, got %s", outcome.Decision)
+	}
+
+	if outcome.MergeStatus != "" {
+		t.Errorf("expected empty MergeStatus for non-approved run, got %q", outcome.MergeStatus)
+	}
+
+	mqMock.mu.Lock()
+	defer mqMock.mu.Unlock()
+	if len(mqMock.requests) != 0 {
+		t.Errorf("expected 0 merge requests enqueued for human gate, got %d", len(mqMock.requests))
+	}
+}
+
+func TestFactoryCoordinator_MergeQueue_EnqueueError_RecordsFailedStatus(t *testing.T) {
+	specMock := &mockSpecGenerator{}
+	buildMock := &mockTaskBuilder{}
+	approverMock := &mockGateApprover{}
+	mqMock := &mockCoordinatorMergeQueue{
+		enqueueFn: func(ctx context.Context, req merger.MergeRequest) error {
+			return errors.New("queue full or disk full")
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		SpecWriter: specMock,
+		Builder:    buildMock,
+		Approver:   approverMock,
+		MergeQueue: mqMock,
+	}
+
+	coord := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-err-1",
+		Title:  "Task with enqueue failure",
+	}
+
+	outcome, err := coord.RunPipeline(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error when enqueue fails, got nil")
+	}
+
+	if outcome == nil {
+		t.Fatal("expected non-nil outcome")
+	}
+
+	if outcome.MergeStatus != "enqueue_failed" {
+		t.Errorf("expected MergeStatus 'enqueue_failed', got %q", outcome.MergeStatus)
+	}
+}
+
+func TestFactoryCoordinator_MergeQueue_MetadataCustomBranches(t *testing.T) {
+	specMock := &mockSpecGenerator{}
+	buildMock := &mockTaskBuilder{}
+	approverMock := &mockGateApprover{}
+	mqMock := &mockCoordinatorMergeQueue{}
+
+	cfg := CoordinatorConfig{
+		SpecWriter: specMock,
+		Builder:    buildMock,
+		Approver:   approverMock,
+		MergeQueue: mqMock,
+	}
+
+	coord := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-custom-branches",
+		Title:  "Custom branches test",
+		Metadata: map[string]any{
+			"source_branch": "feat/my-custom-branch",
+			"target_branch": "develop",
+		},
+	}
+
+	outcome, err := coord.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if outcome.MergeStatus != "enqueued" {
+		t.Errorf("expected 'enqueued', got %q", outcome.MergeStatus)
+	}
+
+	mqMock.mu.Lock()
+	defer mqMock.mu.Unlock()
+	if len(mqMock.requests) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(mqMock.requests))
+	}
+	req := mqMock.requests[0]
+	if req.SourceBranch != "feat/my-custom-branch" {
+		t.Errorf("expected 'feat/my-custom-branch', got %q", req.SourceBranch)
+	}
+	if req.TargetBranch != "develop" {
+		t.Errorf("expected 'develop', got %q", req.TargetBranch)
+	}
+}
+

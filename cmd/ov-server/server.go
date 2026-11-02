@@ -16,12 +16,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/agent"
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/chat"
 	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
 	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 	"github.com/gv-factory/gv-factory/pkg/schema"
@@ -911,7 +913,11 @@ func NewServerMuxWithRunner(
 
 	// Autonomous Factory execution and status endpoints
 	if runner == nil {
-		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw}
+		var mq agent.MergeQueue
+		if gw != nil {
+			mq = merger.NewQueue(nil, gw, nil, nil, merger.Config{RepoPath: ".", BaseBranch: "main"})
+		}
+		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw, mergeQueue: mq}
 	}
 	RegisterFactoryEndpoints(mux, gw, runner)
 

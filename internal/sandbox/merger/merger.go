@@ -32,6 +32,13 @@ const (
 	StatusFailed       MergeStatus = "FAILED"
 )
 
+// MergeQueue coordinates sequential integration to target branches with in-memory conflict pre-validation.
+type MergeQueue interface {
+	Enqueue(ctx context.Context, req MergeRequest) error
+	ProcessNext(ctx context.Context) (*ProcessResult, error)
+	Len() int
+}
+
 // MergeRequest represents an approved factory output queued for sequential integration.
 type MergeRequest struct {
 	RunID        string         `json:"run_id"`
@@ -114,6 +121,7 @@ type Queue struct {
 	queueMu   sync.Mutex
 	processMu sync.Mutex
 	items     []*MergeRequest
+	notify    chan struct{}
 	git       GitExecutor
 	publisher EventPublisher
 	prCreator PRCreator
@@ -138,6 +146,7 @@ func NewQueue(
 
 	return &Queue{
 		items:     make([]*MergeRequest, 0),
+		notify:    make(chan struct{}, 100),
 		git:       git,
 		publisher: publisher,
 		prCreator: prCreator,
@@ -147,8 +156,11 @@ func NewQueue(
 }
 
 // Enqueue adds an approved run to the thread-safe sequential integration queue.
-func (q *Queue) Enqueue(req *MergeRequest) error {
-	if req == nil {
+func (q *Queue) Enqueue(ctx context.Context, req MergeRequest) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if req.RunID == "" && req.SourceBranch == "" {
 		return ErrNilRequest
 	}
 	if req.TargetBranch == "" {
@@ -160,8 +172,29 @@ func (q *Queue) Enqueue(req *MergeRequest) error {
 
 	q.queueMu.Lock()
 	defer q.queueMu.Unlock()
-	q.items = append(q.items, req)
+	reqCopy := req
+	q.items = append(q.items, &reqCopy)
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
 	return nil
+}
+
+// EnqueueRequest is a backward-compatible helper for pointer requests.
+func (q *Queue) EnqueueRequest(req *MergeRequest) error {
+	if req == nil {
+		return ErrNilRequest
+	}
+	return q.Enqueue(context.Background(), *req)
+}
+
+// EnqueueApproval adapts MergeQueueReceiver contract from the decision gate engine.
+func (q *Queue) EnqueueApproval(ctx context.Context, runID string, metadata map[string]any) error {
+	return q.Enqueue(ctx, MergeRequest{
+		RunID:    runID,
+		Metadata: metadata,
+	})
 }
 
 // Len returns the current count of queued merge requests.
@@ -316,6 +349,22 @@ func (q *Queue) ProcessNext(ctx context.Context) (*ProcessResult, error) {
 		}
 	}
 
+	// 6. Emit gateway.TopicMergeCompleted event over internal/gateway
+	if q.publisher != nil {
+		_ = q.publisher.PublishTaskEvent(ctx, gateway.Event{
+			Type:  gateway.TopicMergeCompleted,
+			RunID: req.RunID,
+			Payload: map[string]any{
+				"run_id":        req.RunID,
+				"source_branch": source,
+				"target_branch": target,
+				"status":        string(StatusMerged),
+				"tree_sha":      sim.TreeSHA,
+			},
+			Timestamp: time.Now().Unix(),
+		})
+	}
+
 	return &ProcessResult{
 		Request:    req,
 		Status:     StatusMerged,
@@ -381,7 +430,7 @@ func (q *Queue) divertToPR(
 	// 3. Emit merger.diverted_to_pr event over internal/gateway
 	if q.publisher != nil {
 		_ = q.publisher.PublishTaskEvent(ctx, gateway.Event{
-			Type:  gateway.TopicMergerDivertedToPR,
+			Type:  gateway.TopicMergeDiverted,
 			RunID: req.RunID,
 			Payload: map[string]any{
 				"run_id":         req.RunID,
@@ -424,4 +473,42 @@ func (q *Queue) ProcessAll(ctx context.Context) ([]*ProcessResult, error) {
 		results = append(results, res)
 	}
 	return results, nil
+}
+
+// RunWorker continuously processes queued merge requests sequentially until ctx is canceled.
+func (q *Queue) RunWorker(ctx context.Context, pollInterval time.Duration) error {
+	if pollInterval <= 0 {
+		pollInterval = 50 * time.Millisecond
+	}
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-q.notify:
+		case <-ticker.C:
+		}
+
+		for q.Len() > 0 {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			_, err := q.ProcessNext(ctx)
+			if err != nil && errors.Is(err, ErrQueueEmpty) {
+				break
+			}
+		}
+	}
+}
+
+// StartWorker launches a background goroutine running RunWorker and returns a channel that closes when stopped.
+func (q *Queue) StartWorker(ctx context.Context, pollInterval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = q.RunWorker(ctx, pollInterval)
+	}()
+	return done
 }
