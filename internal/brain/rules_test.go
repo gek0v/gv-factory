@@ -59,9 +59,10 @@ func (r *mockRow) Scan(dest ...any) error {
 }
 
 type mockRows struct {
-	data [][]any
-	idx  int
-	err  error
+	data    [][]any
+	idx     int
+	err     error
+	scanErr error
 }
 
 func (m *mockRows) Close()                                       {}
@@ -76,6 +77,9 @@ func (m *mockRows) Next() bool {
 	return false
 }
 func (m *mockRows) Scan(dest ...any) error {
+	if m.scanErr != nil {
+		return m.scanErr
+	}
 	return mockScan(m.data[m.idx-1], dest)
 }
 func (m *mockRows) Values() ([]any, error) { return nil, nil }
