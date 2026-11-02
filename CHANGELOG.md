@@ -8,6 +8,18 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.6.0](https://github.com/gek0v/gv-factory/compare/v1.5.0...v1.6.0) (2026-11-02)
+
+
+### Features
+
+* **plugins,server:** support dry-run/mock plugin execution when WASM binaries are missing ([#115](https://github.com/gek0v/gv-factory/issues/115)) ([#117](https://github.com/gek0v/gv-factory/issues/117)) ([beecf4d](https://github.com/gek0v/gv-factory/commit/beecf4d0aa4bf8d487282a886320b51944026c3e))
+
+
+### Bug Fixes
+
+* **web:** enforce valid extism:// URIs in initial canvas flow and palette presets ([#114](https://github.com/gek0v/gv-factory/issues/114)) ([#116](https://github.com/gek0v/gv-factory/issues/116)) ([6af9701](https://github.com/gek0v/gv-factory/commit/6af97019dc5e0570c2d83a272e08f9b2371cfa28))
+
 ## [1.5.0](https://github.com/gek0v/gv-factory/compare/v1.4.1...v1.5.0) (2026-11-02)
 
 
