@@ -179,7 +179,7 @@ export const NodeInspector: React.FC = () => {
             {currentStatus === 'awaiting_approval' && (
               <div className="gate-action-prompt-box">
                 <div className="prompt-title">
-                  {selectedNode.data.role === 'approver' || !selectedNode.id.includes('builder')
+                  {nodeData.nodeType === 'decision_gate' || selectedNode.data.role === 'approver' || !selectedNode.id.includes('builder')
                     ? '⚠ Human Decision Gate Required'
                     : '⚙️ Sensitive MCP Tool Gate Approval Required'}
                 </div>
@@ -193,6 +193,70 @@ export const NodeInspector: React.FC = () => {
                 >
                   Inspect &amp; Resolve Gate Modal
                 </button>
+              </div>
+            )}
+
+            {nodeData.nodeType === 'decision_gate' && (
+              <div className="inspector-field-group gate-field-group">
+                <div className="group-title">
+                  <ShieldIcon size={14} className="inspector-title-icon" />
+                  <span>Gate Governance &amp; Thresholds</span>
+                </div>
+                <div className="inspector-field">
+                  <label className="inspector-label" htmlFor="gate-threshold-input">
+                    Required Minimum Coverage (%)
+                  </label>
+                  <input
+                    id="gate-threshold-input"
+                    type="number"
+                    min="0"
+                    max="100"
+                    className="inspector-input"
+                    value={nodeData.thresholdScore ?? 90}
+                    onChange={(e) =>
+                      updateNodeData(selectedNode.id, {
+                        thresholdScore: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+                <div className="inspector-field">
+                  <label className="inspector-label" htmlFor="gate-max-alerts-input">
+                    Max Security Alerts Allowed
+                  </label>
+                  <input
+                    id="gate-max-alerts-input"
+                    type="number"
+                    min="0"
+                    className="inspector-input"
+                    value={nodeData.maxSecurityAlerts ?? 0}
+                    onChange={(e) =>
+                      updateNodeData(selectedNode.id, {
+                        maxSecurityAlerts: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+                {nodeData.diagnostics && nodeData.diagnostics.length > 0 && (
+                  <div className="inspector-field">
+                    <label className="inspector-label">Security &amp; Review Diagnostics</label>
+                    <div className="gate-diagnostics-list">
+                      {nodeData.diagnostics.map((diag, i) => (
+                        <div key={i} className={`gate-diagnostic-card diag-${diag.status}`}>
+                          <div className="diag-header">
+                            <span className="diag-name">{diag.reviewerName}</span>
+                            <span className="diag-status">{diag.status.toUpperCase()}</span>
+                          </div>
+                          <ul className="diag-findings">
+                            {diag.findings.map((f, fi) => (
+                              <li key={fi}>{f}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

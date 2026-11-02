@@ -44,4 +44,14 @@ describe('initialFlow and palette extism URI conformity', () => {
       expect(item.data.pluginTag).toMatch(/^extism:\/\/plugins\/[a-z0-9_-]+\.wasm$/);
     }
   });
+
+  it('includes Decision Gate under Logic & Governance in PALETTE_GROUPS', () => {
+    const logicGovernanceGroup = PALETTE_GROUPS.find((g) => g.name === 'Logic & Governance');
+    expect(logicGovernanceGroup).toBeDefined();
+
+    const decisionGateItem = logicGovernanceGroup?.items.find((item) => item.type === 'decision_gate');
+    expect(decisionGateItem).toBeDefined();
+    expect(decisionGateItem?.label).toBe('Decision Gate');
+    expect(decisionGateItem?.data.nodeType).toBe('decision_gate');
+  });
 });

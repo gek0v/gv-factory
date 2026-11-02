@@ -3709,3 +3709,268 @@ body,
   white-space: pre-wrap;
   border-top: 1px solid rgba(99, 102, 241, 0.2);
 }
+
+/* =========================================================================
+   Issue #120: Interactive DecisionGate Canvas Node Styles
+   ========================================================================= */
+
+.item-decision_gate .palette-item-icon {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+}
+
+.type-decision_gate {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.gate-icon {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.border-gate-pending {
+  border-color: #f59e0b;
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.35);
+  animation: pulseApproval 2.2s infinite ease-in-out;
+}
+
+.border-gate-approved {
+  border-color: #10b981;
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.35);
+}
+
+.border-gate-rejected {
+  border-color: #ef4444;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.45);
+}
+
+.border-gate-timeout {
+  border-color: #64748b;
+  box-shadow: 0 0 8px rgba(100, 116, 139, 0.25);
+}
+
+.gate-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+}
+
+.gate-badge-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.gate-badge-approved {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.gate-badge-rejected {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.gate-badge-timeout {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.4);
+}
+
+.gate-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+}
+
+.gate-metric-card {
+  background: #090d16;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 0.35rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: center;
+}
+
+.gate-metric-label {
+  font-size: 0.62rem;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.gate-metric-value {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.gate-timer-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px dashed rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-family: monospace;
+  margin-bottom: 0.5rem;
+}
+
+.gate-timer-box.timer-expired {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.gate-rejection-notice {
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 3px solid #ef4444;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0 4px 4px 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.7rem;
+}
+
+.gate-rejection-notice .notice-title {
+  display: block;
+  font-weight: 600;
+  color: #f87171;
+}
+
+.gate-rejection-notice .notice-text {
+  margin: 0.15rem 0 0;
+  color: #fca5a5;
+}
+
+.gate-actions-row {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.gate-actions-row .gate-btn {
+  flex: 1;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.68rem;
+  border-radius: 4px;
+}
+
+.gate-btn-inspect {
+  background: #1e293b;
+  color: #38bdf8;
+  border: 1px solid #334155;
+}
+
+.gate-btn-inspect:hover:not(:disabled) {
+  background: #334155;
+  color: #7dd3fc;
+}
+
+.gate-dual-branches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-top: 1px solid #1e293b;
+  padding-top: 0.5rem;
+}
+
+.branch-approved-row,
+.branch-rejected-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  height: 22px;
+}
+
+.label-approved {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #34d399;
+}
+
+.label-rejected {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #f87171;
+}
+
+.handle-branch-approved {
+  background: #10b981 !important;
+  border-color: #047857 !important;
+}
+
+.handle-branch-rejected {
+  background: #ef4444 !important;
+  border-color: #b91c1c !important;
+}
+
+.handle-gate {
+  background: #f59e0b !important;
+  border-color: #b45309 !important;
+}
+
+.gate-field-group {
+  border: 1px solid rgba(245, 158, 11, 0.25) !important;
+  background: rgba(245, 158, 11, 0.03);
+  border-radius: 8px;
+  padding: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.gate-diagnostics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.gate-diagnostic-card {
+  background: #090d16;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+
+.gate-diagnostic-card.diag-passed {
+  border-left: 3px solid #10b981;
+}
+
+.gate-diagnostic-card.diag-failed {
+  border-left: 3px solid #ef4444;
+}
+
+.gate-diagnostic-card.diag-warning {
+  border-left: 3px solid #f59e0b;
+}
+
+.diag-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.diag-status {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+

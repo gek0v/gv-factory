@@ -128,4 +128,31 @@ describe('NodeInspector Steps Integration', () => {
     expect(llmCfg?.maxIterations).toBe(20);
     expect(llmCfg?.authorizedTools).toEqual(['bash_exec', 'file_writer']);
   });
+
+  it('updates decision_gate thresholds and diagnostics in store', () => {
+    const store = useFactoryFlowStore.getState();
+    const gateNode = store.nodes.find((n) => n.data.nodeType === 'decision_gate');
+    expect(gateNode).toBeDefined();
+
+    if (gateNode) {
+      store.updateNodeData(gateNode.id, {
+        thresholdScore: 95,
+        maxSecurityAlerts: 1,
+        diagnostics: [
+          {
+            reviewerId: 'sec-1',
+            reviewerName: 'Security Reviewer',
+            specialty: 'security',
+            status: 'passed',
+            findings: ['0 vulnerabilities found in worktree'],
+          },
+        ],
+      });
+
+      const updatedGate = useFactoryFlowStore.getState().nodes.find((n) => n.id === gateNode.id);
+      expect((updatedGate?.data as any).thresholdScore).toBe(95);
+      expect((updatedGate?.data as any).maxSecurityAlerts).toBe(1);
+      expect((updatedGate?.data as any).diagnostics).toHaveLength(1);
+    }
+  });
 });
