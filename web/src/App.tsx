@@ -24,6 +24,7 @@ import { NodeInspector } from './components/drawer/NodeInspector';
 import { Toolbar } from './components/Toolbar';
 import { GateResolutionModal } from './components/gate/GateResolutionModal';
 import { WorkerClusterHealthButton, WorkerDashboardModal } from './components/workers/WorkerDashboard';
+import { BrainExplorerButton, BrainExplorerModal } from './components/BrainExplorerModal';
 import { defaultGatewayClient } from './api/gateway';
 
 export const App: React.FC = () => {
@@ -127,6 +128,7 @@ export const App: React.FC = () => {
         </div>
 
         <div className="header-actions">
+          <BrainExplorerButton />
           <WorkerClusterHealthButton />
           <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
             <span className={`status-dot dot-${gatewayStatus}`} />
@@ -210,6 +212,7 @@ export const App: React.FC = () => {
 
       <GateResolutionModal />
       <WorkerDashboardModal />
+      <BrainExplorerModal />
     </div>
   );
 };
