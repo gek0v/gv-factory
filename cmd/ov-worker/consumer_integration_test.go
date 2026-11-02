@@ -230,3 +230,51 @@ func TestWorker_Integration_RealHandlersDispatch(t *testing.T) {
 		}
 	}
 }
+
+func TestWorker_InitLLMClient_Variants(t *testing.T) {
+	// 1. Anthropic provider
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OLLAMA_BASE_URL", "")
+
+	c1 := initLLMClient("anthropic")
+	if c1 == nil {
+		t.Errorf("expected non-nil Anthropic client")
+	}
+
+	// 2. OpenAI provider
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "sk-proj-test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+	c2 := initLLMClient("openai")
+	if c2 == nil {
+		t.Errorf("expected non-nil OpenAI client")
+	}
+
+	// 3. Ollama provider
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+	c3 := initLLMClient("ollama")
+	if c3 == nil {
+		t.Errorf("expected non-nil Ollama client")
+	}
+
+	// 4. Auto detection
+	c4 := initLLMClient("auto")
+	if c4 == nil {
+		t.Errorf("expected non-nil auto-detected client for Ollama")
+	}
+
+	// 5. None configured
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OLLAMA_BASE_URL", "")
+	t.Setenv("LLM_PROVIDER", "")
+
+	c5 := initLLMClient("")
+	if c5 != nil {
+		t.Errorf("expected nil client when no keys or URLs set")
+	}
+}
