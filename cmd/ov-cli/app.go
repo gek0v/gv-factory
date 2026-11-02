@@ -78,6 +78,9 @@ func (app *CLIApp) Run(ctx context.Context, args []string) int {
 	case "templates":
 		return ExecuteTemplatesCommand(ctx, cmdArgs, app.Out, app.Color)
 
+	case "factory":
+		return ExecuteFactoryCommand(ctx, cmdArgs, app.Out, app.Color)
+
 	default:
 		fmt.Fprintf(app.Err, "%s unknown command %q\n\n", app.Color.Red("Error:"), command)
 		app.PrintUsage()
@@ -96,6 +99,7 @@ func (app *CLIApp) PrintUsage() {
 	fmt.Fprintln(app.Out, "  worker       Start a persistent local sandbox worker daemon")
 	fmt.Fprintln(app.Out, "  status       Inspect real-time DAG node status and logs for a run")
 	fmt.Fprintln(app.Out, "  templates    List available built-in software factory templates")
+	fmt.Fprintln(app.Out, "  factory      Autonomous factory execution and pipeline status tracking")
 	fmt.Fprintln(app.Out, "  version      Display current CLI version")
 	fmt.Fprintln(app.Out, "  help         Show this usage documentation")
 	fmt.Fprintln(app.Out, "\nUse 'ov-cli <command> --help' for details on a specific command.")
