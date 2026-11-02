@@ -23,6 +23,7 @@ import type {
   NodeTelemetryUpdate,
   RunLifecycleState,
 } from './types/flow';
+import type { PipelineStage, FactoryRunOutcome } from './api/factory';
 import { validateConnection } from './utils/validation';
 import { initialNodes, initialEdges } from './initialFlow';
 
@@ -64,6 +65,12 @@ export interface FactoryFlowState {
   setActiveApproval: (approval: GateApprovalPayload | null) => void;
   setShowGateModal: (show: boolean) => void;
   setActiveRun: (runId: string | null, state?: RunLifecycleState | null) => void;
+  showFactoryRunModal: boolean;
+  setShowFactoryRunModal: (show: boolean) => void;
+  activePipelineStage: PipelineStage;
+  setActivePipelineStage: (stage: PipelineStage) => void;
+  activeRunOutcome: FactoryRunOutcome | null;
+  setActiveRunOutcome: (outcome: FactoryRunOutcome | null) => void;
   resolveApproval: (
     decision: 'APPROVE' | 'REJECT',
     rejectionReason?: string
@@ -89,6 +96,9 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   showGateModal: false,
   activeRunId: null,
   activeRunState: null,
+  showFactoryRunModal: false,
+  activePipelineStage: 'idle',
+  activeRunOutcome: null,
   showWorkerDashboard: false,
   showBrainExplorer: false,
   workerPool: null,
@@ -420,5 +430,99 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
 
   setNodes: (nodes) => set({ nodes }),
   setEdges: (edges) => set({ edges }),
+  setShowFactoryRunModal: (show: boolean) => set({ showFactoryRunModal: show }),
+
+  setActiveRunOutcome: (outcome: FactoryRunOutcome | null) => {
+    set({ activeRunOutcome: outcome });
+    if (outcome?.stage) {
+      get().setActivePipelineStage(outcome.stage);
+    }
+  },
+
+  setActivePipelineStage: (stage: PipelineStage) => {
+    const currentOutcome = get().activeRunOutcome;
+    const currentApproval = get().activeApproval;
+    const runId = currentOutcome?.run_id || currentOutcome?.runId || get().activeRunId;
+    const token = currentOutcome?.approval_token || currentOutcome?.approvalToken || currentApproval?.token;
+
+    let shouldOpenGate = false;
+    if (stage === 'gate_waiting' && runId && token) {
+      shouldOpenGate = true;
+      if (!currentApproval || currentApproval.runId !== runId) {
+        set({
+          activeApproval: {
+            runId,
+            token,
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+            gateType: 'pipeline',
+            coveragePercent: 94.2,
+            securityAlerts: 0,
+            minCoveragePercent: 90.0,
+            maxSecurityAlerts: 0,
+          },
+        });
+      }
+    }
+
+    const updatedNodes = get().nodes.map((node) => {
+      let highlighted = false;
+      const label = (node.data.label || '').toLowerCase();
+      const role = ((node.data as unknown as { role?: string }).role || '').toLowerCase();
+      const type = (node.data.nodeType || node.type || '').toLowerCase();
+      const id = node.id.toLowerCase();
+
+      if (stage === 'spec_generated') {
+        highlighted =
+          role === 'spec_writer' ||
+          label.includes('spec') ||
+          label.includes('ingest') ||
+          id.includes('spec') ||
+          id.includes('ingest') ||
+          type === 'trigger';
+      } else if (stage === 'building') {
+        highlighted =
+          role === 'builder_tdd' ||
+          label.includes('builder') ||
+          label.includes('tdd') ||
+          id.includes('builder') ||
+          id.includes('tdd');
+      } else if (stage === 'reviewing') {
+        highlighted =
+          role === 'reviewer' ||
+          role === 'approver' ||
+          label.includes('reviewer') ||
+          label.includes('approver') ||
+          id.includes('reviewer') ||
+          id.includes('approver');
+      } else if (stage === 'gate_waiting') {
+        highlighted =
+          type === 'decision_gate' ||
+          label.includes('gate') ||
+          label.includes('approver') ||
+          id.includes('gate') ||
+          id.includes('approver');
+      }
+
+      return {
+        ...node,
+        selected: highlighted,
+        className: highlighted ? 'stage-highlighted' : undefined,
+        data: {
+          ...node.data,
+          highlighted,
+          ...(highlighted && stage === 'building' ? { status: 'running' as const } : {}),
+          ...(highlighted && stage === 'reviewing' ? { status: 'running' as const } : {}),
+          ...(highlighted && stage === 'gate_waiting' ? { status: 'awaiting_approval' as const } : {}),
+          ...(highlighted && stage === 'spec_generated' ? { status: 'completed' as const } : {}),
+        },
+      };
+    });
+
+    set({
+      activePipelineStage: stage,
+      nodes: updatedNodes,
+      ...(shouldOpenGate ? { showGateModal: true } : {}),
+    });
+  },
 }));
 

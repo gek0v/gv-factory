@@ -24,6 +24,7 @@ export const Toolbar: React.FC = () => {
     activeRunId,
     activeRunState,
     setActiveRun,
+    setShowFactoryRunModal,
   } = useFactoryFlowStore();
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('feature-complete');
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
@@ -104,6 +105,11 @@ export const Toolbar: React.FC = () => {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleOpenRunModal = () => {
+    setRunDropdownOpen(false);
+    setShowFactoryRunModal(true);
   };
 
   const handleRunServerLive = async () => {
@@ -210,11 +216,11 @@ export const Toolbar: React.FC = () => {
             <button
               type="button"
               className="run-primary-btn"
-              title="Run Pipeline on Server (Live via SSE)"
+              title="Run Pipeline (Autonomous Execution Modal)"
               disabled={isRunningServer || isSimulating}
-              onClick={handleRunServerLive}
+              onClick={handleOpenRunModal}
             >
-              {isRunningServer ? '⏳ Submitting...' : '▶ Run on Server (Live)'}
+              ▶ Run Pipeline
             </button>
             <button
               type="button"
@@ -232,10 +238,19 @@ export const Toolbar: React.FC = () => {
                 type="button"
                 className="run-dropdown-item"
                 disabled={isRunningServer || isSimulating}
+                onClick={handleOpenRunModal}
+              >
+                <div className="dropdown-item-title">▶ Run Pipeline (Modal)</div>
+                <div className="dropdown-item-desc">Execute pipeline with custom title, labels, and constraints</div>
+              </button>
+              <button
+                type="button"
+                className="run-dropdown-item"
+                disabled={isRunningServer || isSimulating}
                 onClick={handleRunServerLive}
               >
-                <div className="dropdown-item-title">▶ Run on Server (Live)</div>
-                <div className="dropdown-item-desc">Executes on ov-server backend and streams via SSE</div>
+                <div className="dropdown-item-title">⚡ Quick Run (Live SSE)</div>
+                <div className="dropdown-item-desc">Executes current canvas on ov-server backend and streams via SSE</div>
               </button>
               <button
                 type="button"

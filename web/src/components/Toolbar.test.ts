@@ -84,5 +84,16 @@ describe('Toolbar integration and state interaction', () => {
     expect(cancelSpy).toHaveBeenCalledWith('run-test-active-1');
     expect(useFactoryFlowStore.getState().activeRunState).toBe('CANCELLED');
   });
+
+  it('toggles showFactoryRunModal when Run Pipeline is triggered', () => {
+    useFactoryFlowStore.getState().setShowFactoryRunModal(false);
+    expect(useFactoryFlowStore.getState().showFactoryRunModal).toBe(false);
+
+    useFactoryFlowStore.getState().setShowFactoryRunModal(true);
+    expect(useFactoryFlowStore.getState().showFactoryRunModal).toBe(true);
+
+    useFactoryFlowStore.getState().setShowFactoryRunModal(false);
+    expect(useFactoryFlowStore.getState().showFactoryRunModal).toBe(false);
+  });
 });
 
