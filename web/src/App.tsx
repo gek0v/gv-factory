@@ -23,6 +23,7 @@ import { NodePalette } from './components/palette/NodePalette';
 import { NodeInspector } from './components/drawer/NodeInspector';
 import { Toolbar } from './components/Toolbar';
 import { GateResolutionModal } from './components/gate/GateResolutionModal';
+import { FactoryRunModal } from './components/factory/FactoryRunModal';
 import { WorkerClusterHealthButton, WorkerDashboardModal } from './components/workers/WorkerDashboard';
 import { BrainExplorerButton, BrainExplorerModal } from './components/BrainExplorerModal';
 import { defaultGatewayClient } from './api/gateway';
@@ -213,6 +214,7 @@ export const App: React.FC = () => {
       <GateResolutionModal />
       <WorkerDashboardModal />
       <BrainExplorerModal />
+      <FactoryRunModal />
     </div>
   );
 };
