@@ -1,12 +1,12 @@
 module github.com/gv-factory/gv-factory
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/extism/go-sdk v1.7.1
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/nats-io/nats.go v1.39.0
-	github.com/pgvector/pgvector-go v0.2.2
+	github.com/pgvector/pgvector-go v0.4.1
 	github.com/prometheus/client_golang v1.21.1
 	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	github.com/tetratelabs/wazero v1.9.0
