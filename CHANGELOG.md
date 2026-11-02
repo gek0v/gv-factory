@@ -8,6 +8,13 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.4.1](https://github.com/gek0v/gv-factory/compare/v1.4.0...v1.4.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **web:** proxy /events and /api endpoints to backend in vite dev server ([#104](https://github.com/gek0v/gv-factory/issues/104)) ([#105](https://github.com/gek0v/gv-factory/issues/105)) ([d1f5c79](https://github.com/gek0v/gv-factory/commit/d1f5c791049492fc721d687f772172f5b2cac106))
+
 ## [1.4.0](https://github.com/gek0v/gv-factory/compare/v1.3.0...v1.4.0) (2026-11-02)
 
 
