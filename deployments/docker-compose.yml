@@ -16,7 +16,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ../migrations/brain:/docker-entrypoint-initdb.d:ro
+      - ../migrations/brain/000001_init_pgvector.up.sql:/docker-entrypoint-initdb.d/000001_init_pgvector.up.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ov_user} -d ${POSTGRES_DB:-ov_factory}"]
       interval: 5s
@@ -70,7 +70,7 @@ services:
   ov-server:
     build:
       context: ..
-      dockerfile: build/package/Dockerfile.server
+      dockerfile: deployments/Dockerfile.server
     image: gv-factory/ov-server:latest
     container_name: ov-server
     restart: unless-stopped
@@ -78,6 +78,7 @@ services:
       PORT: "8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-ov_user}:${POSTGRES_PASSWORD:-ov_password}@postgres:5432/${POSTGRES_DB:-ov_factory}?sslmode=disable
       NATS_URL: nats://nats:4222
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-factory-default-secret-key-change-in-production}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-dev_github_secret}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-dev_gitlab_secret}
       SENTRY_WEBHOOK_SECRET: ${SENTRY_WEBHOOK_SECRET:-dev_sentry_secret}
@@ -104,7 +105,7 @@ services:
   ov-worker:
     build:
       context: ..
-      dockerfile: build/package/Dockerfile.worker
+      dockerfile: deployments/Dockerfile.worker
     image: gv-factory/ov-worker:latest
     container_name: ov-worker
     restart: unless-stopped
@@ -131,10 +132,10 @@ services:
       retries: 5
       start_period: 5s
 
-  ov-web:
+  web:
     build:
       context: ..
-      dockerfile: build/package/Dockerfile.web
+      dockerfile: web/Dockerfile
     image: gv-factory/ov-web:latest
     container_name: ov-web
     restart: unless-stopped
@@ -154,4 +155,3 @@ volumes:
   pgdata:
   natsdata:
   sandboxes:
-
