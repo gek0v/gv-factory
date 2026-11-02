@@ -8,6 +8,23 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.8.0](https://github.com/gek0v/gv-factory/compare/v1.7.0...v1.8.0) (2026-11-02)
+
+
+### Features
+
+* **agent:** implement autonomous FactoryPipeline coordinator unifying SpecWriter, Builder, and Approver with feedback loop ([#161](https://github.com/gek0v/gv-factory/issues/161)) ([563f423](https://github.com/gek0v/gv-factory/commit/563f42343a6b65dad0968d635c05641c7f7e854b))
+* **agent:** implement autonomous SpecWriter agent with Brain context and TDD plan generation ([#156](https://github.com/gek0v/gv-factory/issues/156)) ([8b45aff](https://github.com/gek0v/gv-factory/commit/8b45affd5e4830d59e5e5866b36cf812640cf278))
+* **agent:** implement autonomous TDD builder agent with Red-Green-Refactor loop ([#159](https://github.com/gek0v/gv-factory/issues/159)) ([f3a8194](https://github.com/gek0v/gv-factory/commit/f3a819470a90569d12131df270cf58ab05eab84b))
+* **agent:** implement parallel reviewers and approver decision engine ([#160](https://github.com/gek0v/gv-factory/issues/160)) ([b57b650](https://github.com/gek0v/gv-factory/commit/b57b6508375bef761e7cb9856260f2878a2ff6cc))
+* **brain:** implement hybrid search engine combining pgvector cosine distance and PostgreSQL full-text search ([#153](https://github.com/gek0v/gv-factory/issues/153)) ([8a943ff](https://github.com/gek0v/gv-factory/commit/8a943fffa4989bd3837e30ce1d9f1c2a2bb65e8b))
+* **brain:** implement repository AST indexer and incremental git change watcher ([#154](https://github.com/gek0v/gv-factory/issues/154)) ([df957df](https://github.com/gek0v/gv-factory/commit/df957dffd4e66a6719a64f1bc2f35a860c5fb176))
+* **mcp,brain:** implement in-process Brain MCP tool server and tool registration ([#157](https://github.com/gek0v/gv-factory/issues/157)) ([0aea0b8](https://github.com/gek0v/gv-factory/commit/0aea0b88e771336d85ea1dd65e632b0ca5a43de2))
+* **server,agent:** implement learning feedback loop to brain and factory execution endpoints ([#164](https://github.com/gek0v/gv-factory/issues/164)) ([194d899](https://github.com/gek0v/gv-factory/commit/194d8995fca24fcf1a43ce2c3ab8dbc03ed74c7c))
+* **server,cli:** expose brain search and sync endpoints over HTTP and CLI commands ([#155](https://github.com/gek0v/gv-factory/issues/155)) ([7f29b77](https://github.com/gek0v/gv-factory/commit/7f29b77b99c8971bb07ed6a0714218fce0a8303c))
+* **web:** implement Brain & Memory Explorer panel with live search, ADR rules viewer, and stats ([#162](https://github.com/gek0v/gv-factory/issues/162)) ([b59ce17](https://github.com/gek0v/gv-factory/commit/b59ce171c172655e5c1228af2b54eed1a748caf6))
+* **web:** implement live factory execution from canvas with active stage visualization and gate triggering ([#163](https://github.com/gek0v/gv-factory/issues/163)) ([210da53](https://github.com/gek0v/gv-factory/commit/210da53fa55af04789af4ba4b06454dc80a8d529))
+
 ## [1.7.0](https://github.com/gek0v/gv-factory/compare/v1.6.0...v1.7.0) (2026-11-02)
 
 
