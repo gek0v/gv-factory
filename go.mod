@@ -1,10 +1,10 @@
 module github.com/gv-factory/gv-factory
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/extism/go-sdk v1.7.1
-	github.com/jackc/pgx/v5 v5.7.2
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/nats-io/nats.go v1.39.0
 	github.com/pgvector/pgvector-go v0.2.2
 	github.com/prometheus/client_golang v1.21.1
