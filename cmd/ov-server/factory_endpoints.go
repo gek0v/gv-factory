@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -121,9 +122,18 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		model = os.Getenv("OPENAI_MODEL")
 	}
 
+	sandboxDir := filepath.Join(os.TempDir(), "ov-sandboxes", sanitizeIdentifier(task.TaskID))
+	_ = os.MkdirAll(sandboxDir, 0755)
+
+	goModPath := filepath.Join(sandboxDir, "go.mod")
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		modContent := fmt.Sprintf("module %s\n\ngo 1.22\n", strings.ToLower(sanitizeIdentifier(task.TaskID)))
+		_ = os.WriteFile(goModPath, []byte(modContent), 0644)
+	}
+
 	cfg := agent.CoordinatorConfig{
 		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc, LLM: llmClient, Model: model}),
-		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: ".", LLMClient: llmClient}),
+		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient}),
 		Approver:    agent.NewApprover(nil, agent.ApproverConfig{}),
 		Brain:       d.brainSvc,
 		MergeQueue:  d.mergeQueue,
@@ -133,6 +143,22 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 
 	coord := agent.NewFactoryCoordinator(cfg)
 	return coord.RunPipeline(ctx, task)
+}
+
+func sanitizeIdentifier(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	res := b.String()
+	if res == "" {
+		return "task"
+	}
+	return res
 }
 
 func broadcastStageEvent(gw *gateway.Gateway, runID string, stage string, payload any) {

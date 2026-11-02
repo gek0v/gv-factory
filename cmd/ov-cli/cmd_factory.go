@@ -226,7 +226,7 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 		}
 
 		printSyncOutcomeTable(out, color, &outcome)
-		if !outcome.Success {
+		if !outcome.Success && outcome.Decision != agent.DecisionHumanGate {
 			return 1
 		}
 		return 0
@@ -274,10 +274,10 @@ func printSyncOutcomeTable(out io.Writer, color *Colorizer, outcome *agent.Pipel
 	fmt.Fprintln(out, color.Bold("═════════════════════════════════════════════════════════════════════════"))
 
 	statusBadge := color.BadgeStatus("completed")
-	if !outcome.Success || outcome.Decision == "FAILED" {
-		statusBadge = color.BadgeStatus("failed")
-	} else if outcome.Decision == agent.DecisionHumanGate {
+	if outcome.Decision == agent.DecisionHumanGate {
 		statusBadge = color.BadgeStatus("gate_waiting")
+	} else if !outcome.Success || outcome.Decision == "FAILED" {
+		statusBadge = color.BadgeStatus("failed")
 	}
 
 	fmt.Fprintf(out, "  Status:           %s\n", statusBadge)
