@@ -27,6 +27,7 @@ import { FactoryRunModal } from './components/factory/FactoryRunModal';
 import { WorkerClusterHealthButton, WorkerDashboardModal } from './components/workers/WorkerDashboard';
 import { BrainExplorerButton, BrainExplorerModal } from './components/BrainExplorerModal';
 import { ExecutionTimelineDrawer, TimelineButton } from './components/timeline/ExecutionTimelineDrawer';
+import { CostBudgetButton, CostBudgetModal } from './components/telemetry/CostBudgetModal';
 import { defaultGatewayClient } from './api/gateway';
 
 export const App: React.FC = () => {
@@ -133,6 +134,7 @@ export const App: React.FC = () => {
           <TimelineButton />
           <BrainExplorerButton />
           <WorkerClusterHealthButton />
+          <CostBudgetButton />
           <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
             <span className={`status-dot dot-${gatewayStatus}`} />
             <span className="gateway-status-text">
@@ -218,6 +220,7 @@ export const App: React.FC = () => {
       <WorkerDashboardModal />
       <BrainExplorerModal />
       <FactoryRunModal />
+      <CostBudgetModal />
     </div>
   );
 };

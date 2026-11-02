@@ -15,6 +15,7 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
 // =========================================================================
@@ -1530,4 +1531,135 @@ func TestFactoryCoordinator_MergeQueue_MetadataCustomBranches(t *testing.T) {
 		t.Errorf("expected 'develop', got %q", req.TargetBranch)
 	}
 }
+
+func TestFactoryCoordinator_BudgetGuardrails(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("Exceeded before spec generation", func(t *testing.T) {
+		ct := telemetry.NewCostTracker(telemetry.BudgetGuardrail{MaxBudgetUSD: 1.0})
+		// Pre-exhaust budget
+		_, _ = ct.RecordUsage("run-budget-spec", "task-spec", "claude-3-5-sonnet", 1_000_000, 1_000_000)
+
+		cfg := CoordinatorConfig{
+			SpecWriter:  &mockSpecGenerator{},
+			Builder:     &mockTaskBuilder{},
+			Approver:    &mockGateApprover{},
+			CostTracker: ct,
+		}
+		coord := NewFactoryCoordinator(cfg)
+		task := TaskContext{TaskID: "run-budget-spec", Title: "Budget Spec Test"}
+
+		outcome, err := coord.RunPipeline(ctx, task)
+		if err == nil || !errors.Is(err, telemetry.ErrBudgetExceeded) {
+			t.Fatalf("expected ErrBudgetExceeded, got %v", err)
+		}
+		if outcome == nil || outcome.Success {
+			t.Errorf("expected failed outcome, got %+v", outcome)
+		}
+		if outcome.Decision != DecisionFailed {
+			t.Errorf("expected DecisionFailed, got %v", outcome.Decision)
+		}
+	})
+
+	t.Run("Exceeded before build via WithCostTracker option", func(t *testing.T) {
+		ct := telemetry.NewCostTracker(telemetry.BudgetGuardrail{MaxTokens: 50_000})
+
+		specCalled := false
+		specWriter := &mockSpecGenerator{
+			specFn: func(ctx context.Context, task TaskContext) (*SpecDocument, error) {
+				specCalled = true
+				// Simulate consuming tokens during spec generation
+				_, _ = ct.RecordUsage(task.TaskID, task.TaskID, "claude-3-5-sonnet", 40_000, 20_000)
+				return &SpecDocument{Title: task.Title}, nil
+			},
+		}
+
+		builderCalled := false
+		builder := &mockTaskBuilder{
+			buildFn: func(ctx context.Context, spec *SpecDocument) ([]*BuildResult, error) {
+				builderCalled = true
+				return []*BuildResult{{Success: true}}, nil
+			},
+		}
+
+		cfg := CoordinatorConfig{
+			SpecWriter: specWriter,
+			Builder:    builder,
+			Approver:   &mockGateApprover{},
+		}
+		coord := NewFactoryCoordinator(cfg)
+		task := TaskContext{TaskID: "run-budget-build", Title: "Budget Build Test"}
+
+		outcome, err := coord.RunPipeline(ctx, task, WithCostTracker(ct))
+		if err == nil || !errors.Is(err, telemetry.ErrBudgetExceeded) {
+			t.Fatalf("expected ErrBudgetExceeded before build, got %v", err)
+		}
+		if !specCalled {
+			t.Errorf("expected specWriter to be called")
+		}
+		if builderCalled {
+			t.Errorf("expected builder NOT to be called after budget exceeded")
+		}
+		if outcome.Decision != DecisionFailed {
+			t.Errorf("expected DecisionFailed, got %v", outcome.Decision)
+		}
+	})
+
+	t.Run("Exceeded before retry iteration", func(t *testing.T) {
+		ct := telemetry.NewCostTracker(telemetry.BudgetGuardrail{MaxBudgetUSD: 5.0})
+
+		builderAttempts := 0
+		builder := &mockTaskBuilder{
+			buildFn: func(ctx context.Context, spec *SpecDocument) ([]*BuildResult, error) {
+				builderAttempts++
+				return []*BuildResult{{Success: true}}, nil
+			},
+		}
+
+		approver := &mockGateApprover{
+			decideFn: func(ctx context.Context, req ApprovalRequest) (*ApprovalDecision, error) {
+				// On retry decision, exhaust budget
+				_, _ = ct.RecordUsage(req.RunID, req.RunID, "claude-3-5-sonnet", 500_000, 300_000)
+				return &ApprovalDecision{
+					DecisionType:    DecisionRetry,
+					FeedbackSummary: "Fix bugs",
+				}, nil
+			},
+		}
+
+		cfg := CoordinatorConfig{
+			SpecWriter:  &mockSpecGenerator{},
+			Builder:     builder,
+			Approver:    approver,
+			CostTracker: ct,
+			MaxRetries:  3,
+		}
+		coord := NewFactoryCoordinator(cfg)
+		task := TaskContext{TaskID: "run-budget-retry", Title: "Budget Retry Test"}
+
+		outcome, err := coord.RunPipeline(ctx, task)
+		if err == nil || !errors.Is(err, telemetry.ErrBudgetExceeded) {
+			t.Fatalf("expected ErrBudgetExceeded on retry iteration, got %v", err)
+		}
+		if builderAttempts != 1 {
+			t.Errorf("expected exactly 1 build attempt before halting retry loop, got %d", builderAttempts)
+		}
+		if outcome.Decision != DecisionFailed {
+			t.Errorf("expected DecisionFailed, got %v", outcome.Decision)
+		}
+	})
+
+	t.Run("Getter and Setter for CostTracker", func(t *testing.T) {
+		coord := NewFactoryCoordinator(CoordinatorConfig{})
+		if coord.CostTracker() != nil {
+			t.Errorf("expected nil initial cost tracker")
+		}
+		ct := telemetry.NewCostTracker()
+		coord.SetCostTracker(ct)
+		if coord.CostTracker() != ct {
+			t.Errorf("expected set cost tracker to match")
+		}
+	})
+}
+
 

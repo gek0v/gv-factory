@@ -15,6 +15,7 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
+	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
 // Standard domain constants and events for FactoryCoordinator.
@@ -35,6 +36,7 @@ const (
 	EventRetryStarted      = "retry_started"
 	EventPipelineCompleted = "pipeline_completed"
 	EventMergeEnqueued     = "merge_enqueued"
+	EventBudgetExceeded    = "budget_exceeded"
 )
 
 // Standard domain errors for FactoryCoordinator.
@@ -77,6 +79,7 @@ type CoordinatorConfig struct {
 	Approver           GateApprover
 	Brain              EpisodeRecorder
 	MergeQueue         MergeQueue
+	CostTracker        *telemetry.CostTracker
 	MaxRetries         int
 	MinCoverage        float32
 	EventHook          func(stage string, payload any)
@@ -130,6 +133,7 @@ type FactoryCoordinator struct {
 	approver           GateApprover
 	brain              EpisodeRecorder
 	mergeQueue         MergeQueue
+	costTracker        *telemetry.CostTracker
 	maxRetries         int
 	minCoverage        float32
 	eventHook          func(stage string, payload any)
@@ -141,13 +145,21 @@ type FactoryCoordinator struct {
 type PipelineOption func(*pipelineRunOptions)
 
 type pipelineRunOptions struct {
-	mergeQueue MergeQueue
+	mergeQueue  MergeQueue
+	costTracker *telemetry.CostTracker
 }
 
 // WithMergeQueue provides or overrides the MergeQueue for a specific pipeline execution.
 func WithMergeQueue(mq MergeQueue) PipelineOption {
 	return func(opts *pipelineRunOptions) {
 		opts.mergeQueue = mq
+	}
+}
+
+// WithCostTracker provides or overrides the CostTracker for a specific pipeline execution.
+func WithCostTracker(ct *telemetry.CostTracker) PipelineOption {
+	return func(opts *pipelineRunOptions) {
+		opts.costTracker = ct
 	}
 }
 
@@ -160,6 +172,7 @@ func NewFactoryCoordinator(cfg CoordinatorConfig) *FactoryCoordinator {
 		approver:           cfg.Approver,
 		brain:              cfg.Brain,
 		mergeQueue:         cfg.MergeQueue,
+		costTracker:        cfg.CostTracker,
 		maxRetries:         cfg.MaxRetries,
 		minCoverage:        cfg.MinCoverage,
 		eventHook:          cfg.EventHook,
@@ -170,6 +183,27 @@ func NewFactoryCoordinator(cfg CoordinatorConfig) *FactoryCoordinator {
 // NewCoordinator is an alias for NewFactoryCoordinator.
 func NewCoordinator(cfg CoordinatorConfig) *FactoryCoordinator {
 	return NewFactoryCoordinator(cfg)
+}
+
+// CostTracker returns the configured telemetry cost tracker.
+func (c *FactoryCoordinator) CostTracker() *telemetry.CostTracker {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.costTracker
+}
+
+// SetCostTracker dynamically updates the coordinator's telemetry cost tracker.
+func (c *FactoryCoordinator) SetCostTracker(ct *telemetry.CostTracker) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.costTracker = ct
+}
+
+func (c *FactoryCoordinator) checkBudget(ct *telemetry.CostTracker, runID string) error {
+	if ct == nil || runID == "" {
+		return nil
+	}
+	return ct.CheckBudget(runID)
 }
 
 // RunPipeline executes the autonomous lifecycle: Spec Synthesis -> Build -> Review Gate -> Feedback Loop.
@@ -189,10 +223,12 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext, 
 	maxRetries := c.maxRetries
 	minCov := c.minCoverage
 	activeMergeQueue := c.mergeQueue
+	activeCostTracker := c.costTracker
 	c.mu.RUnlock()
 
 	runOpts := pipelineRunOptions{
-		mergeQueue: activeMergeQueue,
+		mergeQueue:  activeMergeQueue,
+		costTracker: activeCostTracker,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -219,6 +255,25 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext, 
 	var retryFeedbackHistory []string
 
 	// Stage 1: Spec Synthesis
+	if err := c.checkBudget(runOpts.costTracker, task.TaskID); err != nil {
+		duration := time.Since(startTime)
+		outcome := &PipelineOutcome{
+			TaskID:          task.TaskID,
+			Success:         false,
+			Decision:        DecisionFailed,
+			TotalIterations: 0,
+			Duration:        duration,
+			ErrorMessage:    fmt.Sprintf("pipeline budget guardrail exceeded before spec generation: %v", err),
+		}
+		c.emitEvent(EventBudgetExceeded, map[string]any{
+			"task_id": task.TaskID,
+			"error":   err.Error(),
+			"stage":   "spec_synthesis",
+		})
+		c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
+		return outcome, err
+	}
+
 	spec, err := specWriter.GenerateSpec(ctx, task)
 	if err != nil {
 		duration := time.Since(startTime)
@@ -247,6 +302,29 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext, 
 		totalIterations++
 
 		if attempt > 0 {
+			if err := c.checkBudget(runOpts.costTracker, task.TaskID); err != nil {
+				duration := time.Since(startTime)
+				outcome := &PipelineOutcome{
+					TaskID:          task.TaskID,
+					Success:         false,
+					Decision:        DecisionFailed,
+					Spec:            spec,
+					BuildResult:     lastBuildResult,
+					Approval:        lastApproval,
+					TotalIterations: totalIterations,
+					Duration:        duration,
+					ErrorMessage:    fmt.Sprintf("pipeline budget guardrail exceeded before retry: %v", err),
+				}
+				c.emitEvent(EventBudgetExceeded, map[string]any{
+					"task_id": task.TaskID,
+					"error":   err.Error(),
+					"stage":   "retry",
+					"attempt": attempt,
+				})
+				c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
+				return outcome, err
+			}
+
 			feedback := ""
 			if lastApproval != nil {
 				feedback = lastApproval.FeedbackSummary
@@ -259,6 +337,29 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext, 
 		}
 
 		// Stage 2: Implementation (Builder)
+		if err := c.checkBudget(runOpts.costTracker, task.TaskID); err != nil {
+			duration := time.Since(startTime)
+			outcome := &PipelineOutcome{
+				TaskID:          task.TaskID,
+				Success:         false,
+				Decision:        DecisionFailed,
+				Spec:            spec,
+				BuildResult:     lastBuildResult,
+				Approval:        lastApproval,
+				TotalIterations: totalIterations,
+				Duration:        duration,
+				ErrorMessage:    fmt.Sprintf("pipeline budget guardrail exceeded before build: %v", err),
+			}
+			c.emitEvent(EventBudgetExceeded, map[string]any{
+				"task_id": task.TaskID,
+				"error":   err.Error(),
+				"stage":   "builder",
+				"attempt": attempt,
+			})
+			c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
+			return outcome, err
+		}
+
 		buildResults, err := builder.BuildSpec(ctx, spec)
 		if err != nil {
 			duration := time.Since(startTime)
@@ -281,6 +382,29 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext, 
 		c.emitEvent(EventBuildCompleted, lastBuildResult)
 
 		// Stage 3: Review & Gate Decision (Approver)
+		if err := c.checkBudget(runOpts.costTracker, task.TaskID); err != nil {
+			duration := time.Since(startTime)
+			outcome := &PipelineOutcome{
+				TaskID:          task.TaskID,
+				Success:         false,
+				Decision:        DecisionFailed,
+				Spec:            spec,
+				BuildResult:     lastBuildResult,
+				Approval:        lastApproval,
+				TotalIterations: totalIterations,
+				Duration:        duration,
+				ErrorMessage:    fmt.Sprintf("pipeline budget guardrail exceeded before review: %v", err),
+			}
+			c.emitEvent(EventBudgetExceeded, map[string]any{
+				"task_id": task.TaskID,
+				"error":   err.Error(),
+				"stage":   "approver",
+				"attempt": attempt,
+			})
+			c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
+			return outcome, err
+		}
+
 		coverage := c.calculateCoverage(ctx, lastBuildResult, task)
 		approvalReq := ApprovalRequest{
 			RunID:        task.TaskID,
