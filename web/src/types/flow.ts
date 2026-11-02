@@ -17,7 +17,13 @@ export type RunLifecycleState =
   | 'FAILED'
   | 'CANCELLED';
 
-export type FactoryNodeType = 'trigger' | 'agent' | 'logic' | 'action';
+export type FactoryNodeType = 'trigger' | 'agent' | 'logic' | 'action' | 'decision_gate';
+
+export type DecisionGateStatus =
+  | 'pending_approval'
+  | 'approved'
+  | 'rejected'
+  | 'timed_out';
 
 export type TriggerSubtype = 'webhook' | 'github_issue' | 'chat_listener' | 'cron';
 
@@ -162,13 +168,29 @@ export interface ActionNodeData extends BaseNodeData {
   branchName?: string;
 }
 
+export interface DecisionGateNodeData extends BaseNodeData {
+  nodeType: 'decision_gate';
+  gateType?: GateType | 'pipeline_gate' | 'tool_gate';
+  gateStatus?: DecisionGateStatus;
+  thresholdScore?: number;
+  maxSecurityAlerts?: number;
+  currentCoverage?: number;
+  criticalFindingsCount?: number;
+  expiresAt?: string;
+  tokenPrefix?: string;
+  toolName?: string;
+  rejectionReason?: string;
+  diagnostics?: ReviewerDiagnostic[];
+}
+
 export * from './worker';
 
 export type FactoryNodeData =
   | TriggerNodeData
   | AgentNodeData
   | LogicNodeData
-  | ActionNodeData;
+  | ActionNodeData
+  | DecisionGateNodeData;
 
 export type FactoryFlowNode = Node<FactoryNodeData>;
 export type FactoryFlowEdge = Edge;

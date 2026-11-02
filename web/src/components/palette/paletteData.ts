@@ -140,8 +140,24 @@ export const PALETTE_GROUPS: { name: string; items: PaletteItem[] }[] = [
     ],
   },
   {
-    name: 'Logic & Branching',
+    name: 'Logic & Governance',
     items: [
+      {
+        type: 'decision_gate',
+        label: 'Decision Gate',
+        description: 'HMAC-signed Human-in-the-Loop decision point',
+        iconName: 'shield-check',
+        data: {
+          nodeType: 'decision_gate',
+          gateType: 'pipeline_gate',
+          label: 'Decision Gate (HMAC)',
+          description: 'Requires signed approval before merging or deploying',
+          thresholdScore: 90,
+          maxSecurityAlerts: 0,
+          gateStatus: 'pending_approval',
+          status: 'awaiting_approval',
+        },
+      },
       {
         type: 'logic',
         label: 'If / Else Branch',

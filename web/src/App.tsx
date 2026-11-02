@@ -18,6 +18,7 @@ import { TriggerNode } from './components/nodes/TriggerNode';
 import { AgentNode } from './components/nodes/AgentNode';
 import { LogicNode } from './components/nodes/LogicNode';
 import { ActionNode } from './components/nodes/ActionNode';
+import { DecisionGateNode } from './components/nodes/DecisionGateNode';
 import { NodePalette } from './components/palette/NodePalette';
 import { NodeInspector } from './components/drawer/NodeInspector';
 import { Toolbar } from './components/Toolbar';
@@ -52,6 +53,7 @@ export const App: React.FC = () => {
       agent: AgentNode,
       logic: LogicNode,
       action: ActionNode,
+      decision_gate: DecisionGateNode,
     }),
     []
   );
@@ -82,6 +84,8 @@ export const App: React.FC = () => {
         return '#7c3aed';
       case 'logic':
         return '#d97706';
+      case 'decision_gate':
+        return '#f59e0b';
       case 'action':
         return '#059669';
       default:

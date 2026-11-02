@@ -12,6 +12,7 @@ import {
   BrainIcon,
   CodeIcon,
   ShieldIcon,
+  ShieldCheckIcon,
   CheckCircleIcon,
   GitBranchIcon,
   SlidersIcon,
@@ -38,6 +39,8 @@ const getPaletteIcon = (iconName: string) => {
       return <CodeIcon size={15} />;
     case 'shield':
       return <ShieldIcon size={15} />;
+    case 'shield-check':
+      return <ShieldCheckIcon size={15} />;
     case 'check-circle':
       return <CheckCircleIcon size={15} />;
     case 'branch':
