@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/brain"
+	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
 )
 
 // Standard domain constants and events for FactoryCoordinator.
@@ -33,6 +34,7 @@ const (
 	EventReviewDecided     = "review_decided"
 	EventRetryStarted      = "retry_started"
 	EventPipelineCompleted = "pipeline_completed"
+	EventMergeEnqueued     = "merge_enqueued"
 )
 
 // Standard domain errors for FactoryCoordinator.
@@ -63,12 +65,18 @@ type EpisodeRecorder interface {
 	RecordEpisode(ctx context.Context, ep brain.TaskEpisode) (*brain.TaskEpisode, error)
 }
 
+// MergeQueue abstracts enqueuing approved factory outputs into the sequential merge queue.
+type MergeQueue interface {
+	Enqueue(ctx context.Context, req merger.MergeRequest) error
+}
+
 // CoordinatorConfig configures execution thresholds, agents, and telemetry for the pipeline.
 type CoordinatorConfig struct {
 	SpecWriter         SpecGenerator
 	Builder            TaskBuilder
 	Approver           GateApprover
 	Brain              EpisodeRecorder
+	MergeQueue         MergeQueue
 	MaxRetries         int
 	MinCoverage        float32
 	EventHook          func(stage string, payload any)
@@ -96,6 +104,7 @@ type PipelineOutcome struct {
 	TotalIterations int               `json:"total_iterations"`
 	Duration        time.Duration     `json:"duration"`
 	ErrorMessage    string            `json:"error_message,omitempty"`
+	MergeStatus     string            `json:"merge_status,omitempty"`
 }
 
 // IsApproved returns true if the final gate decision is APPROVED.
@@ -120,11 +129,26 @@ type FactoryCoordinator struct {
 	builder            TaskBuilder
 	approver           GateApprover
 	brain              EpisodeRecorder
+	mergeQueue         MergeQueue
 	maxRetries         int
 	minCoverage        float32
 	eventHook          func(stage string, payload any)
 	coverageCalculator func(ctx context.Context, build *BuildResult, task TaskContext) float32
 	mu                 sync.RWMutex
+}
+
+// PipelineOption configures runtime parameters for a pipeline execution.
+type PipelineOption func(*pipelineRunOptions)
+
+type pipelineRunOptions struct {
+	mergeQueue MergeQueue
+}
+
+// WithMergeQueue provides or overrides the MergeQueue for a specific pipeline execution.
+func WithMergeQueue(mq MergeQueue) PipelineOption {
+	return func(opts *pipelineRunOptions) {
+		opts.mergeQueue = mq
+	}
 }
 
 // NewFactoryCoordinator constructs a new FactoryCoordinator with normalized config.
@@ -135,6 +159,7 @@ func NewFactoryCoordinator(cfg CoordinatorConfig) *FactoryCoordinator {
 		builder:            cfg.Builder,
 		approver:           cfg.Approver,
 		brain:              cfg.Brain,
+		mergeQueue:         cfg.MergeQueue,
 		maxRetries:         cfg.MaxRetries,
 		minCoverage:        cfg.MinCoverage,
 		eventHook:          cfg.EventHook,
@@ -148,7 +173,7 @@ func NewCoordinator(cfg CoordinatorConfig) *FactoryCoordinator {
 }
 
 // RunPipeline executes the autonomous lifecycle: Spec Synthesis -> Build -> Review Gate -> Feedback Loop.
-func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) (*PipelineOutcome, error) {
+func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext, opts ...PipelineOption) (*PipelineOutcome, error) {
 	if c == nil {
 		return nil, ErrNilCoordinator
 	}
@@ -163,7 +188,17 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 	approver := c.approver
 	maxRetries := c.maxRetries
 	minCov := c.minCoverage
+	activeMergeQueue := c.mergeQueue
 	c.mu.RUnlock()
+
+	runOpts := pipelineRunOptions{
+		mergeQueue: activeMergeQueue,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&runOpts)
+		}
+	}
 
 	if specWriter == nil {
 		return nil, ErrNilSpecWriter
@@ -327,8 +362,47 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 		Duration:        duration,
 	}
 
+	// Automatic Merge Queue Integration upon DecisionApproved
+	var enqueueErr error
+	if outcome.Decision == DecisionApproved && runOpts.mergeQueue != nil {
+		branch := fmt.Sprintf("ov-run/%s", task.TaskID)
+		if b, ok := task.Metadata["source_branch"].(string); ok && strings.TrimSpace(b) != "" {
+			branch = strings.TrimSpace(b)
+		} else if b, ok := task.Metadata["branch"].(string); ok && strings.TrimSpace(b) != "" {
+			branch = strings.TrimSpace(b)
+		}
+
+		targetBranch := "main"
+		if tb, ok := task.Metadata["target_branch"].(string); ok && strings.TrimSpace(tb) != "" {
+			targetBranch = strings.TrimSpace(tb)
+		}
+
+		mReq := merger.MergeRequest{
+			RunID:        task.TaskID,
+			SourceBranch: branch,
+			TargetBranch: targetBranch,
+			Metadata:     task.Metadata,
+		}
+
+		if err := runOpts.mergeQueue.Enqueue(ctx, mReq); err != nil {
+			outcome.MergeStatus = "enqueue_failed"
+			outcome.ErrorMessage = fmt.Sprintf("failed to enqueue to merge queue: %v", err)
+			enqueueErr = fmt.Errorf("failed to enqueue to merge queue: %w", err)
+		} else {
+			outcome.MergeStatus = "enqueued"
+			c.emitEvent(EventMergeEnqueued, map[string]any{
+				"run_id":        task.TaskID,
+				"source_branch": branch,
+				"target_branch": targetBranch,
+			})
+		}
+	}
+
 	c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
 	c.emitEvent(EventPipelineCompleted, outcome)
+	if enqueueErr != nil {
+		return outcome, enqueueErr
+	}
 	return outcome, nil
 }
 

@@ -23,6 +23,8 @@ const (
 	TopicGateResolved         = "gate.resolved"
 	TopicGateAudit            = "gate.audit"
 	TopicMergerDivertedToPR   = "merger.diverted_to_pr"
+	TopicMergeDiverted        = TopicMergerDivertedToPR
+	TopicMergeCompleted       = "merger.completed"
 	TopicWorkTasks            = "ov.work.tasks"
 	TopicWorkTasksFilter      = "ov.work.>"
 	TopicWorkerHeartbeat      = "ov.worker.heartbeat"

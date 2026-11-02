@@ -95,10 +95,11 @@ func (t *FactoryRunTracker) List() []*FactoryRunResponse {
 	return list
 }
 
-// defaultFactoryRunner wires default agent components with Brain and Gateway telemetry.
+// defaultFactoryRunner wires default agent components with Brain, Gateway telemetry, and sequential Merge Queue.
 type defaultFactoryRunner struct {
-	brainSvc *brain.Service
-	gw       *gateway.Gateway
+	brainSvc   *brain.Service
+	gw         *gateway.Gateway
+	mergeQueue agent.MergeQueue
 }
 
 func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
@@ -111,6 +112,7 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		Builder:    agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: "."}),
 		Approver:   agent.NewApprover(nil, agent.ApproverConfig{}),
 		Brain:      d.brainSvc,
+		MergeQueue: d.mergeQueue,
 		EventHook:  hook,
 	}
 

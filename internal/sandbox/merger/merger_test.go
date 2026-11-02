@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
 )
@@ -204,7 +205,7 @@ func TestQueue_HappyPathFastForwardRebase(t *testing.T) {
 		SkipPush:   true,
 	})
 
-	_ = q.Enqueue(&MergeRequest{
+	_ = q.EnqueueRequest(&MergeRequest{
 		RunID:        "run-ff-01",
 		SourceBranch: "ov-run/run-ff-01",
 		TargetBranch: "main",
@@ -260,7 +261,7 @@ func TestQueue_ConflictPathDivertedToPR(t *testing.T) {
 		SkipPush:   true,
 	})
 
-	_ = q.Enqueue(&MergeRequest{
+	_ = q.EnqueueRequest(&MergeRequest{
 		RunID:        "run-conflict-02",
 		SourceBranch: "ov-run/run-conflict-02",
 		TargetBranch: "main",
@@ -336,7 +337,7 @@ func TestQueue_TestVerificationRegressionDivertsToPR(t *testing.T) {
 		SkipPush:   true,
 	})
 
-	_ = q.Enqueue(&MergeRequest{
+	_ = q.EnqueueRequest(&MergeRequest{
 		RunID:        "run-test-fail",
 		SourceBranch: "ov-run/run-test-fail",
 		TargetBranch: "main",
@@ -361,7 +362,7 @@ func TestQueue_ThreadSafeFIFOOrderAndRace(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			_ = q.Enqueue(&MergeRequest{
+			_ = q.EnqueueRequest(&MergeRequest{
 				RunID: string(rune('a' + id)),
 			})
 			_ = q.Len()
@@ -449,7 +450,7 @@ func TestQueue_LegacyGitFallback_HappyPathFastForward(t *testing.T) {
 		SkipPush:   true,
 	})
 
-	_ = q.Enqueue(&MergeRequest{
+	_ = q.EnqueueRequest(&MergeRequest{
 		RunID:        "run-legacy-01",
 		SourceBranch: "ov-run/run-legacy-01",
 		TargetBranch: "main",
@@ -537,7 +538,7 @@ func TestQueue_LegacyGitFallback_ConflictPathDivertedToPR(t *testing.T) {
 		SkipPush:   true,
 	})
 
-	_ = q.Enqueue(&MergeRequest{
+	_ = q.EnqueueRequest(&MergeRequest{
 		RunID:        "run-conflict-legacy",
 		SourceBranch: "ov-run/run-conflict-legacy",
 		TargetBranch: "main",
@@ -643,3 +644,402 @@ func TestIsUnknownOption(t *testing.T) {
 		})
 	}
 }
+
+func TestQueue_ImplementsMergeQueueInterface(t *testing.T) {
+	var _ MergeQueue = (*Queue)(nil)
+}
+
+func TestQueue_HappyPathEmitsTopicMergeCompleted(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	runGit("checkout", "-b", "ov-run/run-event-01", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "completed_event.txt"), []byte("hello completed event\n"), 0644)
+	runGit("add", "completed_event.txt")
+	runGit("commit", "-m", "feat: completed event")
+
+	pub := &mockMergerPublisher{}
+	q := NewQueue(nil, pub, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+
+	err := q.Enqueue(context.Background(), MergeRequest{
+		RunID:        "run-event-01",
+		SourceBranch: "ov-run/run-event-01",
+		TargetBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("enqueue failed: %v", err)
+	}
+
+	res, err := q.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Status != StatusMerged {
+		t.Fatalf("expected StatusMerged, got %s", res.Status)
+	}
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.events) != 1 {
+		t.Fatalf("expected 1 event published, got %d", len(pub.events))
+	}
+	ev := pub.events[0]
+	if ev.Type != gateway.TopicMergeCompleted {
+		t.Errorf("expected event type %s, got %s", gateway.TopicMergeCompleted, ev.Type)
+	}
+	if ev.RunID != "run-event-01" {
+		t.Errorf("expected runID 'run-event-01', got %s", ev.RunID)
+	}
+}
+
+func TestQueue_ConflictEmitsTopicMergeDiverted(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	// Divergent change on main
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Divergent Main\n"), 0644)
+	runGit("add", "README.md")
+	runGit("commit", "-m", "main: edit readme")
+
+	// Branch with conflicting change
+	runGit("checkout", "-b", "ov-run/run-conflict-event", "HEAD~1")
+	_ = os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Divergent Branch\n"), 0644)
+	runGit("add", "README.md")
+	runGit("commit", "-m", "branch: edit readme")
+
+	pub := &mockMergerPublisher{}
+	pr := &mockMergerPRCreator{}
+	q := NewQueue(nil, pub, pr, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+
+	_ = q.Enqueue(context.Background(), MergeRequest{
+		RunID:        "run-conflict-event",
+		SourceBranch: "ov-run/run-conflict-event",
+		TargetBranch: "main",
+	})
+
+	res, err := q.ProcessNext(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Status != StatusDivertedToPR {
+		t.Fatalf("expected StatusDivertedToPR, got %s", res.Status)
+	}
+
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	if len(pub.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(pub.events))
+	}
+	if pub.events[0].Type != gateway.TopicMergeDiverted {
+		t.Errorf("expected event type %s, got %s", gateway.TopicMergeDiverted, pub.events[0].Type)
+	}
+	if len(res.Simulation.ConflictFiles) == 0 {
+		t.Errorf("expected conflicting files to be reported")
+	}
+}
+
+func TestQueue_ProcessAll_And_ContextCancellation(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	// Create 2 branches
+	runGit("checkout", "-b", "ov-run/multi-1", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "file1.txt"), []byte("1"), 0644)
+	runGit("add", "file1.txt")
+	runGit("commit", "-m", "add file1")
+
+	runGit("checkout", "-b", "ov-run/multi-2", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "file2.txt"), []byte("2"), 0644)
+	runGit("add", "file2.txt")
+	runGit("commit", "-m", "add file2")
+
+	q := NewQueue(nil, nil, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+
+	_ = q.Enqueue(context.Background(), MergeRequest{RunID: "multi-1"})
+	_ = q.Enqueue(context.Background(), MergeRequest{RunID: "multi-2"})
+
+	if q.Len() != 2 {
+		t.Fatalf("expected 2 items, got %d", q.Len())
+	}
+
+	results, err := q.ProcessAll(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Test ProcessAll on empty queue
+	resEmpty, err := q.ProcessAll(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error on empty: %v", err)
+	}
+	if len(resEmpty) != 0 {
+		t.Fatalf("expected 0 results, got %d", len(resEmpty))
+	}
+
+	// Test ProcessAll with canceled context
+	_ = q.Enqueue(context.Background(), MergeRequest{RunID: "multi-canceled"})
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = q.ProcessAll(canceledCtx)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestQueue_RunWorker_SequentialProcessing(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	runGit("checkout", "-b", "ov-run/worker-1", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "worker1.txt"), []byte("w1"), 0644)
+	runGit("add", "worker1.txt")
+	runGit("commit", "-m", "worker 1")
+
+	pub := &mockMergerPublisher{}
+	q := NewQueue(nil, pub, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+
+	_ = q.Enqueue(context.Background(), MergeRequest{RunID: "worker-1"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := q.StartWorker(ctx, 10*time.Millisecond)
+
+	// Wait for queue to drain
+	for i := 0; i < 50; i++ {
+		if q.Len() == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	<-done
+
+	if q.Len() != 0 {
+		t.Errorf("expected queue to be drained by worker, got len=%d", q.Len())
+	}
+}
+
+func TestQueue_EnqueueValidation_And_EmptyQueue(t *testing.T) {
+	q := NewQueue(nil, nil, nil, nil, Config{})
+
+	// Enqueue empty request
+	err := q.Enqueue(context.Background(), MergeRequest{})
+	if !errors.Is(err, ErrNilRequest) {
+		t.Errorf("expected ErrNilRequest, got %v", err)
+	}
+
+	// Enqueue with canceled context
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = q.Enqueue(canceledCtx, MergeRequest{RunID: "valid-run"})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+
+	// ProcessNext on empty queue
+	_, err = q.ProcessNext(context.Background())
+	if !errors.Is(err, ErrQueueEmpty) {
+		t.Errorf("expected ErrQueueEmpty, got %v", err)
+	}
+}
+
+type mockCommandSelectiveGitExecutor struct {
+	realGit   GitExecutor
+	failMatch func(args []string) bool
+}
+
+func (m *mockCommandSelectiveGitExecutor) Run(ctx context.Context, dir string, args ...string) (string, error) {
+	if m.failMatch != nil && m.failMatch(args) {
+		return "simulated error", errors.New("simulated git error")
+	}
+	if m.realGit != nil {
+		return m.realGit.Run(ctx, dir, args...)
+	}
+	return "", nil
+}
+
+func TestQueue_EnqueueHelpers(t *testing.T) {
+	q := NewQueue(nil, nil, nil, nil, Config{})
+
+	if err := q.EnqueueRequest(nil); !errors.Is(err, ErrNilRequest) {
+		t.Errorf("expected ErrNilRequest, got %v", err)
+	}
+
+	req := &MergeRequest{RunID: "req-1"}
+	if err := q.EnqueueRequest(req); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if err := q.EnqueueApproval(context.Background(), "appr-1", map[string]any{"source": "test"}); err != nil {
+		t.Errorf("unexpected error on EnqueueApproval: %v", err)
+	}
+
+	if q.Len() != 2 {
+		t.Errorf("expected 2 items, got %d", q.Len())
+	}
+}
+
+func TestParseConflicts_Formats(t *testing.T) {
+	output := `
+Auto-merging README.md
+CONFLICT (content): Merge conflict in README.md
+CONFLICT (modify/delete): deleted.go deleted in HEAD and modified in branch. Version branch of deleted.go left in tree.
+Merge conflict in "pkg/quoted.go"
+Merge conflict in 'pkg/single_quoted.go'
+Some random line without conflict
+`
+	conflicts := parseConflicts(output)
+	if len(conflicts) < 3 {
+		t.Errorf("expected at least 3 conflict files parsed, got %d: %v", len(conflicts), conflicts)
+	}
+}
+
+func TestQueue_ProcessNext_GitFailurePaths(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	runGit("checkout", "-b", "ov-run/fail-path", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "fail.txt"), []byte("fail"), 0644)
+	runGit("add", "fail.txt")
+	runGit("commit", "-m", "fail path")
+
+	// 1. Checkout target branch failure
+	mockGit := &mockCommandSelectiveGitExecutor{
+		realGit: &OSGitExecutor{},
+		failMatch: func(args []string) bool {
+			return len(args) >= 2 && args[0] == "checkout" && args[1] == "main"
+		},
+	}
+	q1 := NewQueue(mockGit, nil, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+	_ = q1.Enqueue(context.Background(), MergeRequest{RunID: "fail-path"})
+	_, err := q1.ProcessNext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "failed to checkout target branch") {
+		t.Errorf("expected failed to checkout target branch error, got %v", err)
+	}
+
+	// 2. Merge --ff-only failure
+	mockGitMerge := &mockCommandSelectiveGitExecutor{
+		realGit: &OSGitExecutor{},
+		failMatch: func(args []string) bool {
+			return len(args) >= 2 && args[0] == "merge" && args[1] == "--ff-only"
+		},
+	}
+	q2 := NewQueue(mockGitMerge, nil, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+	_ = q2.Enqueue(context.Background(), MergeRequest{RunID: "fail-path"})
+	_, err = q2.ProcessNext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "fast-forward merge") {
+		t.Errorf("expected fast-forward merge error, got %v", err)
+	}
+
+	// 3. Push to remote failure (when SkipPush is false)
+	mockGitPush := &mockCommandSelectiveGitExecutor{
+		realGit: &OSGitExecutor{},
+		failMatch: func(args []string) bool {
+			return len(args) >= 1 && args[0] == "push"
+		},
+	}
+	q3 := NewQueue(mockGitPush, nil, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   false,
+	})
+	_ = q3.Enqueue(context.Background(), MergeRequest{RunID: "fail-path"})
+	_, err = q3.ProcessNext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "push to origin") {
+		t.Errorf("expected push to origin error, got %v", err)
+	}
+}
+
+func TestQueue_ProcessAll_ErrorPropagation(t *testing.T) {
+	repoDir := setupGitFixture(t)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s failed: %v (output: %s)", strings.Join(args, " "), err, string(out))
+		}
+	}
+
+	runGit("checkout", "-b", "ov-run/err-item", "main")
+	_ = os.WriteFile(filepath.Join(repoDir, "err.txt"), []byte("err"), 0644)
+	runGit("add", "err.txt")
+	runGit("commit", "-m", "err item")
+
+	mockGit := &mockCommandSelectiveGitExecutor{
+		realGit: &OSGitExecutor{},
+		failMatch: func(args []string) bool {
+			return len(args) >= 2 && args[0] == "checkout" && args[1] == "main"
+		},
+	}
+	q := NewQueue(mockGit, nil, nil, nil, Config{
+		RepoPath:   repoDir,
+		BaseBranch: "main",
+		SkipPush:   true,
+	})
+	_ = q.Enqueue(context.Background(), MergeRequest{RunID: "err-item"})
+	_, err := q.ProcessAll(context.Background())
+	if err == nil {
+		t.Error("expected error from ProcessAll when ProcessNext fails")
+	}
+}
+
+
