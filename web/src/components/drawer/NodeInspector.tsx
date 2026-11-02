@@ -3,9 +3,9 @@
 
 import React, { useState } from 'react';
 import { useFactoryFlowStore } from '../../store';
-import type { ExecutionStatus, FactoryNodeData } from '../../types/flow';
+import type { ExecutionStatus, FactoryNodeData, SandboxRuntime, SandboxNetworkPolicy } from '../../types/flow';
 import { StatusBadge } from '../badges/StatusBadge';
-import { TrashIcon, XIcon, SlidersIcon } from '../icons/Icons';
+import { TrashIcon, XIcon, SlidersIcon, ShieldIcon } from '../icons/Icons';
 import { LogStreamViewer } from './LogStreamViewer';
 import { GitDiffViewer } from './GitDiffViewer';
 import { StepExecutionViewer } from './StepExecutionViewer';
@@ -16,6 +16,35 @@ const STATUS_OPTIONS: { status: ExecutionStatus; label: string }[] = [
   { status: 'completed', label: 'Completed' },
   { status: 'failed', label: 'Failed' },
   { status: 'awaiting_approval', label: 'Action Required' },
+];
+
+const RUNTIME_OPTIONS: { value: SandboxRuntime; label: string }[] = [
+  { value: 'auto', label: 'Auto (Best Available / OCI)' },
+  { value: 'oci', label: 'Container (Podman / Docker Rootless)' },
+  { value: 'host', label: 'Host (In-Process Isolated)' },
+  { value: 'microvm', label: 'MicroVM (Strict Hardware Isolation)' },
+];
+
+const CPU_LIMIT_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Uncapped (Host Default)' },
+  { value: '0.5', label: '0.5 vCPU' },
+  { value: '1.0', label: '1.0 vCPU' },
+  { value: '2.0', label: '2.0 vCPU' },
+  { value: '4.0', label: '4.0 vCPU' },
+];
+
+const MEMORY_LIMIT_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'Uncapped (Host Default)' },
+  { value: '256m', label: '256 MB' },
+  { value: '512m', label: '512 MB' },
+  { value: '1024m', label: '1024 MB (1GB)' },
+  { value: '2048m', label: '2048 MB (2GB)' },
+];
+
+const NETWORK_POLICY_OPTIONS: { value: SandboxNetworkPolicy; label: string }[] = [
+  { value: 'none', label: 'Isolated (No egress / Loopback only)' },
+  { value: 'bridge', label: 'Outbound / Bridge (DNS + HTTPS)' },
+  { value: 'host', label: 'Host Network (Unrestricted)' },
 ];
 
 export const NodeInspector: React.FC = () => {
@@ -232,6 +261,183 @@ export const NodeInspector: React.FC = () => {
                 )}
               </div>
             )}
+
+            <div className="inspector-field-group sandbox-field-group">
+              <div className="group-title sandbox-title-row">
+                <div className="sandbox-title-left">
+                  <ShieldIcon size={14} className="sandbox-title-icon" />
+                  <span>Sandbox &amp; Security Isolation</span>
+                </div>
+                <span className="sandbox-tech-badge">OCI / cgroups v2</span>
+              </div>
+
+              <div className="inspector-field">
+                <label className="inspector-label" htmlFor="sandbox-runtime-select">
+                  Runtime Environment
+                </label>
+                <select
+                  id="sandbox-runtime-select"
+                  className="inspector-select"
+                  value={nodeData.sandboxConfig?.runtime || 'auto'}
+                  onChange={(e) =>
+                    updateNodeData(selectedNode.id, {
+                      sandboxConfig: {
+                        ...(nodeData.sandboxConfig || {}),
+                        runtime: e.target.value as SandboxRuntime,
+                      },
+                    })
+                  }
+                >
+                  {RUNTIME_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sandbox-quotas-grid">
+                <div className="inspector-field">
+                  <label className="inspector-label" htmlFor="sandbox-cpu-select">
+                    CPU Limit
+                  </label>
+                  <select
+                    id="sandbox-cpu-select"
+                    className="inspector-select"
+                    value={nodeData.sandboxConfig?.cpuLimit || ''}
+                    onChange={(e) =>
+                      updateNodeData(selectedNode.id, {
+                        sandboxConfig: {
+                          ...(nodeData.sandboxConfig || {}),
+                          cpuLimit: e.target.value,
+                        },
+                      })
+                    }
+                  >
+                    {CPU_LIMIT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="inspector-field">
+                  <label className="inspector-label" htmlFor="sandbox-memory-select">
+                    Memory Ceiling
+                  </label>
+                  <select
+                    id="sandbox-memory-select"
+                    className="inspector-select"
+                    value={nodeData.sandboxConfig?.memoryLimit || ''}
+                    onChange={(e) =>
+                      updateNodeData(selectedNode.id, {
+                        sandboxConfig: {
+                          ...(nodeData.sandboxConfig || {}),
+                          memoryLimit: e.target.value,
+                        },
+                      })
+                    }
+                  >
+                    {MEMORY_LIMIT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="inspector-field">
+                <label className="inspector-label" htmlFor="sandbox-pids-input">
+                  Max Process Count (PIDs Limit)
+                </label>
+                <input
+                  id="sandbox-pids-input"
+                  type="number"
+                  min="16"
+                  max="4096"
+                  placeholder="e.g. 256 (Empty for uncapped)"
+                  className="inspector-input"
+                  value={nodeData.sandboxConfig?.pidsLimit !== undefined ? nodeData.sandboxConfig.pidsLimit : ''}
+                  onChange={(e) => {
+                    const parsed = e.target.value.trim() ? parseInt(e.target.value, 10) : undefined;
+                    updateNodeData(selectedNode.id, {
+                      sandboxConfig: {
+                        ...(nodeData.sandboxConfig || {}),
+                        pidsLimit: isNaN(parsed as number) ? undefined : parsed,
+                      },
+                    });
+                  }}
+                />
+              </div>
+
+              <div className="inspector-field">
+                <label className="inspector-label" htmlFor="sandbox-network-select">
+                  Network Policy
+                </label>
+                <select
+                  id="sandbox-network-select"
+                  className="inspector-select"
+                  value={nodeData.sandboxConfig?.networkPolicy || 'bridge'}
+                  onChange={(e) =>
+                    updateNodeData(selectedNode.id, {
+                      sandboxConfig: {
+                        ...(nodeData.sandboxConfig || {}),
+                        networkPolicy: e.target.value as SandboxNetworkPolicy,
+                      },
+                    })
+                  }
+                >
+                  {NETWORK_POLICY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="inspector-field">
+                <label className="inspector-label">Security Posture</label>
+                <div className="security-posture-toggle-group">
+                  <button
+                    type="button"
+                    className={`posture-btn ${
+                      (nodeData.sandboxConfig?.securityLevel || 'standard') === 'standard'
+                        ? 'active'
+                        : ''
+                    }`}
+                    onClick={() =>
+                      updateNodeData(selectedNode.id, {
+                        sandboxConfig: {
+                          ...(nodeData.sandboxConfig || {}),
+                          securityLevel: 'standard',
+                        },
+                      })
+                    }
+                  >
+                    Standard
+                  </button>
+                  <button
+                    type="button"
+                    className={`posture-btn strict-posture ${
+                      nodeData.sandboxConfig?.securityLevel === 'strict' ? 'active' : ''
+                    }`}
+                    onClick={() =>
+                      updateNodeData(selectedNode.id, {
+                        sandboxConfig: {
+                          ...(nodeData.sandboxConfig || {}),
+                          securityLevel: 'strict',
+                        },
+                      })
+                    }
+                    title="Rootless user + drop all capabilities + read-only rootfs + no new privileges"
+                  >
+                    Strict (Rootless + Drop Caps)
+                  </button>
+                </div>
+              </div>
+            </div>
 
             <div className="inspector-actions">
               <button

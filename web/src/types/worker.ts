@@ -8,6 +8,22 @@ export type RunStepStatus =
   | 'FAILED'
   | 'SKIPPED';
 
+export interface StepResourceLimits {
+  cpu?: string;
+  memory?: string;
+  pids?: number;
+}
+
+export interface StepSandboxTelemetry {
+  sandbox_mode?: string;
+  container_id?: string;
+  cgroups_enforced?: boolean;
+  resource_limits?: StepResourceLimits;
+  runtime_engine?: string;
+  network_policy?: string;
+  security_level?: string;
+}
+
 export interface RunStep {
   id: string;
   run_id: string;
@@ -17,6 +33,11 @@ export interface RunStep {
   error_message?: string;
   output?: Record<string, unknown>;
   created_at: string;
+  sandbox_mode?: string;
+  container_id?: string;
+  cgroups_enforced?: boolean;
+  resource_limits?: StepResourceLimits;
+  runtime_engine?: string;
 }
 
 export type WorkerStatus = 'ready' | 'busy' | 'offline';

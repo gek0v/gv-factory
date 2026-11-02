@@ -56,4 +56,48 @@ describe('NodeInspector Steps Integration', () => {
     store.setSelectedNodeId(null);
     expect(useFactoryFlowStore.getState().selectedNodeId).toBeNull();
   });
+
+  it('updates node sandboxConfig with security policies and resource limits', () => {
+    const store = useFactoryFlowStore.getState();
+    const targetNode = store.nodes[0];
+
+    // Initial check: sandboxConfig should be undefined or empty
+    expect(targetNode.data.sandboxConfig).toBeUndefined();
+
+    // Mutate sandbox config with strict OCI isolation policies
+    store.updateNodeData(targetNode.id, {
+      sandboxConfig: {
+        runtime: 'oci',
+        cpuLimit: '2.0',
+        memoryLimit: '1024m',
+        pidsLimit: 256,
+        networkPolicy: 'none',
+        securityLevel: 'strict',
+      },
+    });
+
+    const updatedNode = useFactoryFlowStore.getState().nodes.find((n) => n.id === targetNode.id);
+    expect(updatedNode?.data.sandboxConfig).toBeDefined();
+    expect(updatedNode?.data.sandboxConfig?.runtime).toBe('oci');
+    expect(updatedNode?.data.sandboxConfig?.cpuLimit).toBe('2.0');
+    expect(updatedNode?.data.sandboxConfig?.memoryLimit).toBe('1024m');
+    expect(updatedNode?.data.sandboxConfig?.pidsLimit).toBe(256);
+    expect(updatedNode?.data.sandboxConfig?.networkPolicy).toBe('none');
+    expect(updatedNode?.data.sandboxConfig?.securityLevel).toBe('strict');
+
+    // Partial update to switch security posture to standard and network to bridge
+    store.updateNodeData(targetNode.id, {
+      sandboxConfig: {
+        ...updatedNode?.data.sandboxConfig,
+        securityLevel: 'standard',
+        networkPolicy: 'bridge',
+      },
+    });
+
+    const patchedNode = useFactoryFlowStore.getState().nodes.find((n) => n.id === targetNode.id);
+    expect(patchedNode?.data.sandboxConfig?.runtime).toBe('oci');
+    expect(patchedNode?.data.sandboxConfig?.securityLevel).toBe('standard');
+    expect(patchedNode?.data.sandboxConfig?.networkPolicy).toBe('bridge');
+    expect(patchedNode?.data.sandboxConfig?.pidsLimit).toBe(256);
+  });
 });

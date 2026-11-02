@@ -4,8 +4,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useFactoryFlowStore } from '../../store';
 import { fetchRunSteps } from '../../api/steps';
-import type { RunStep, RunStepStatus } from '../../types/worker';
-import { RefreshCwIcon, ChevronDownIcon, ChevronRightIcon, AlertCircleIcon, CheckCircleIcon } from '../icons/Icons';
+import type { RunStep, RunStepStatus, StepSandboxTelemetry, StepResourceLimits } from '../../types/worker';
+import { RefreshCwIcon, ChevronDownIcon, ChevronRightIcon, AlertCircleIcon, CheckCircleIcon, ShieldIcon } from '../icons/Icons';
 
 export interface StepExecutionViewerProps {
   nodeId: string;
@@ -42,6 +42,68 @@ export function getStatusBadgeClass(status: RunStepStatus): string {
     default:
       return 'step-badge-pending';
   }
+}
+
+export function getSandboxBadgeClass(mode?: string): string {
+  switch (mode?.toLowerCase()) {
+    case 'oci':
+      return 'step-sandbox-oci';
+    case 'microvm':
+      return 'step-sandbox-microvm';
+    case 'host':
+      return 'step-sandbox-host';
+    case 'auto':
+      return 'step-sandbox-auto';
+    default:
+      return 'step-sandbox-none';
+  }
+}
+
+export function getSandboxBadgeLabel(mode?: string): string {
+  switch (mode?.toLowerCase()) {
+    case 'oci':
+      return 'OCI Container';
+    case 'microvm':
+      return 'MicroVM';
+    case 'host':
+      return 'Host In-Process';
+    case 'auto':
+      return 'Auto Sandbox';
+    default:
+      return '';
+  }
+}
+
+export function extractStepSandboxTelemetry(step: RunStep): StepSandboxTelemetry | null {
+  const out = (step.output || {}) as Record<string, unknown>;
+  const rawLimits = (step.resource_limits || out.resource_limits || {}) as StepResourceLimits;
+
+  const mode = (step.sandbox_mode || out.sandbox_mode || (out.sandbox_enabled ? 'oci' : undefined)) as string | undefined;
+  const containerId = (step.container_id || out.container_id) as string | undefined;
+  const cgroups = typeof step.cgroups_enforced === 'boolean'
+    ? step.cgroups_enforced
+    : typeof out.cgroups_enforced === 'boolean'
+      ? (out.cgroups_enforced as boolean)
+      : undefined;
+  const engine = (step.runtime_engine || out.runtime_engine) as string | undefined;
+  const network = (out.network_policy || out.networkPolicy) as string | undefined;
+  const security = (out.security_level || out.securityLevel) as string | undefined;
+
+  const hasLimits = Boolean(rawLimits.cpu || rawLimits.memory || rawLimits.pids);
+
+  if (!mode && !containerId && cgroups === undefined && !engine && !hasLimits && !network && !security) {
+    return null;
+  }
+
+  return {
+    sandbox_mode: mode || (engine && engine !== 'host' ? 'oci' : 'host'),
+    container_id: containerId,
+    cgroups_enforced: cgroups,
+    resource_limits: hasLimits ? rawLimits : undefined,
+    runtime_engine: engine,
+    network_policy: network,
+    security_level: security,
+  };
 }
 
 export const StepExecutionViewer: React.FC<StepExecutionViewerProps> = ({ nodeId, stepName }) => {
@@ -143,6 +205,8 @@ export const StepExecutionViewer: React.FC<StepExecutionViewerProps> = ({ nodeId
             step.step_name.toLowerCase() === nodeId.toLowerCase();
           const isDistributed =
             step.output && (step.output.distributed === true || step.output.worker_id !== undefined);
+          const sandboxTelemetry = extractStepSandboxTelemetry(step);
+          const sandboxBadgeLabel = getSandboxBadgeLabel(sandboxTelemetry?.sandbox_mode);
 
           return (
             <div
@@ -165,6 +229,14 @@ export const StepExecutionViewer: React.FC<StepExecutionViewerProps> = ({ nodeId
                 </div>
 
                 <div className="step-item-meta-col">
+                  {sandboxBadgeLabel && (
+                    <span
+                      className={`step-badge ${getSandboxBadgeClass(sandboxTelemetry?.sandbox_mode)}`}
+                      title={`Isolation Mode: ${sandboxBadgeLabel}`}
+                    >
+                      {sandboxBadgeLabel}
+                    </span>
+                  )}
                   <span className={`step-badge ${getStatusBadgeClass(step.status)}`}>
                     {step.status}
                   </span>
@@ -200,6 +272,88 @@ export const StepExecutionViewer: React.FC<StepExecutionViewerProps> = ({ nodeId
                     <span className="detail-label">Created At:</span>
                     <span className="detail-value">{new Date(step.created_at).toLocaleString()}</span>
                   </div>
+
+                  {sandboxTelemetry && (
+                    <div className="step-sandbox-card">
+                      <div className="step-sandbox-header">
+                        <ShieldIcon size={14} />
+                        <span>Sandbox &amp; Security Telemetry</span>
+                      </div>
+                      <div className="step-sandbox-grid">
+                        {sandboxTelemetry.runtime_engine && (
+                          <div className="sandbox-metric-cell">
+                            <span className="sandbox-metric-label">Runtime Engine</span>
+                            <span className="sandbox-metric-value engine-pill">
+                              {sandboxTelemetry.runtime_engine}
+                            </span>
+                          </div>
+                        )}
+                        {sandboxTelemetry.container_id && (
+                          <div className="sandbox-metric-cell">
+                            <span className="sandbox-metric-label">Container ID</span>
+                            <span
+                              className="sandbox-metric-value mono container-id-tag"
+                              title={sandboxTelemetry.container_id}
+                            >
+                              {sandboxTelemetry.container_id.length > 12
+                                ? `${sandboxTelemetry.container_id.slice(0, 12)}…`
+                                : sandboxTelemetry.container_id}
+                            </span>
+                          </div>
+                        )}
+                        {sandboxTelemetry.cgroups_enforced !== undefined && (
+                          <div className="sandbox-metric-cell">
+                            <span className="sandbox-metric-label">cgroups v2</span>
+                            <span
+                              className={`sandbox-metric-value cgroups-pill ${
+                                sandboxTelemetry.cgroups_enforced ? 'enforced' : 'disabled'
+                              }`}
+                            >
+                              {sandboxTelemetry.cgroups_enforced ? 'Enforced' : 'Disabled'}
+                            </span>
+                          </div>
+                        )}
+                        {sandboxTelemetry.network_policy && (
+                          <div className="sandbox-metric-cell">
+                            <span className="sandbox-metric-label">Network Posture</span>
+                            <span className="sandbox-metric-value">
+                              {sandboxTelemetry.network_policy.toUpperCase()}
+                            </span>
+                          </div>
+                        )}
+                        {sandboxTelemetry.security_level && (
+                          <div className="sandbox-metric-cell">
+                            <span className="sandbox-metric-label">Security Posture</span>
+                            <span className="sandbox-metric-value">
+                              {sandboxTelemetry.security_level.toUpperCase()}
+                            </span>
+                          </div>
+                        )}
+                        {sandboxTelemetry.resource_limits && (
+                          <div className="sandbox-metric-cell full-width">
+                            <span className="sandbox-metric-label">Resource Quotas</span>
+                            <div className="sandbox-limits-chips">
+                              {sandboxTelemetry.resource_limits.cpu && (
+                                <span className="limit-chip">
+                                  CPU: {sandboxTelemetry.resource_limits.cpu} vCPU
+                                </span>
+                              )}
+                              {sandboxTelemetry.resource_limits.memory && (
+                                <span className="limit-chip">
+                                  Mem: {sandboxTelemetry.resource_limits.memory}
+                                </span>
+                              )}
+                              {sandboxTelemetry.resource_limits.pids !== undefined && (
+                                <span className="limit-chip">
+                                  PIDs: {sandboxTelemetry.resource_limits.pids}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {step.output && Object.keys(step.output).length > 0 ? (
                     <div className="step-output-container">

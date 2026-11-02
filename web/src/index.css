@@ -3201,3 +3201,216 @@ body,
   font-style: italic;
 }
 
+/* =========================================================================
+   Issue #101: Sandbox Isolation Policy & Security Telemetry
+   ========================================================================= */
+
+.sandbox-field-group {
+  border: 1px solid rgba(139, 92, 246, 0.25) !important;
+  background: rgba(139, 92, 246, 0.03);
+  border-radius: 8px;
+  padding: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.sandbox-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.sandbox-title-left {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  color: #c084fc;
+}
+
+.sandbox-title-icon {
+  color: #a855f7;
+}
+
+.sandbox-tech-badge {
+  font-size: 0.62rem;
+  font-weight: 600;
+  background: rgba(168, 85, 247, 0.15);
+  color: #d8b4fe;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+}
+
+.sandbox-quotas-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.security-posture-toggle-group {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.posture-btn {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  color: #94a3b8;
+  font-size: 0.72rem;
+  padding: 0.38rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+  text-align: center;
+}
+
+.posture-btn:hover {
+  background: #1e293b;
+  color: #f1f5f9;
+}
+
+.posture-btn.active {
+  background: #334155;
+  color: #f8fafc;
+  border-color: #64748b;
+  font-weight: 600;
+}
+
+.posture-btn.strict-posture.active {
+  background: rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  border-color: #a855f7;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.2);
+}
+
+/* Step Execution Viewer Sandbox Badges */
+.step-sandbox-oci {
+  background: rgba(168, 85, 247, 0.15) !important;
+  color: #d8b4fe !important;
+  border: 1px solid rgba(168, 85, 247, 0.4) !important;
+}
+
+.step-sandbox-microvm {
+  background: rgba(56, 189, 248, 0.15) !important;
+  color: #7dd3fc !important;
+  border: 1px solid rgba(56, 189, 248, 0.4) !important;
+}
+
+.step-sandbox-host {
+  background: rgba(234, 179, 8, 0.12) !important;
+  color: #fde047 !important;
+  border: 1px solid rgba(234, 179, 8, 0.35) !important;
+}
+
+.step-sandbox-auto {
+  background: rgba(148, 163, 184, 0.12) !important;
+  color: #cbd5e1 !important;
+  border: 1px solid rgba(148, 163, 184, 0.3) !important;
+}
+
+.step-sandbox-none {
+  display: none !important;
+}
+
+/* Step Execution Viewer Sandbox Telemetry Card */
+.step-sandbox-card {
+  margin-top: 0.4rem;
+  background: #020617;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.step-sandbox-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #c084fc;
+}
+
+.step-sandbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.sandbox-metric-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.sandbox-metric-cell.full-width {
+  grid-column: span 2;
+}
+
+.sandbox-metric-label {
+  font-size: 0.65rem;
+  color: #64748b;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.sandbox-metric-value {
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.engine-pill {
+  font-family: monospace;
+  color: #a78bfa;
+}
+
+.container-id-tag {
+  color: #38bdf8;
+  font-size: 0.7rem;
+}
+
+.cgroups-pill {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  display: inline-block;
+  width: fit-content;
+}
+
+.cgroups-pill.enforced {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.cgroups-pill.disabled {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.sandbox-limits-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+
+.limit-chip {
+  font-size: 0.65rem;
+  font-family: monospace;
+  background: #1e293b;
+  color: #93c5fd;
+  border: 1px solid #334155;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+}

@@ -86,6 +86,8 @@ export function templateToCanvas(input: string | FactoryTemplate): ParseResult {
       const xPos = d * 280 + 80;
       const yPos = idx * 140 + 80;
 
+      const sandboxFromConfig = step.config?.sandbox as import('../types/flow').NodeSandboxConfig | undefined;
+
       const nodeData: FactoryNodeData = {
         label: step.name || step.id,
         description: `Plugin: ${step.plugin}`,
@@ -98,6 +100,7 @@ export function templateToCanvas(input: string | FactoryTemplate): ParseResult {
         pluginTag: step.plugin,
         parallel: step.parallel,
         config: step.config ? { ...step.config } : {},
+        ...(sandboxFromConfig ? { sandboxConfig: sandboxFromConfig } : {}),
       } as FactoryNodeData;
 
       nodes.push({
