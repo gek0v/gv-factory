@@ -37,6 +37,19 @@ export async function simulatePipelineRun(): Promise<void> {
 
   // 1. Trigger
   if (triggerNode) {
+    store.addExecutionEvent({
+      stage: 'spec_generated',
+      timestamp: new Date().toISOString(),
+      payload: {
+        title: 'Feature: Automated Worktree Lifecycle & Sandbox Pools',
+        impactedFiles: [
+          'internal/sandbox/worktree.go',
+          'internal/sandbox/pool.go',
+          'internal/sandbox/pool_test.go',
+        ],
+        specMarkdown: '## Feature Specification\n\n- Ephemeral git worktree allocations per task\n- Rootless container runtime enforcement\n- Zero leaks on cancellation or timeout',
+      },
+    });
     dispatchGatewayEvent({ type: 'step.started', task_id: triggerNode.id }, store);
     await sleep(400);
     dispatchGatewayEvent(
@@ -72,6 +85,19 @@ export async function simulatePipelineRun(): Promise<void> {
       store
     );
     await sleep(600);
+    store.addExecutionEvent({
+      stage: 'build_completed',
+      timestamp: new Date().toISOString(),
+      payload: {
+        phases: [
+          { phase: 'red', name: 'Red (Unit Tests Fail)', exitCode: 1, durationMs: 780 },
+          { phase: 'green', name: 'Green (Patch Satisfies Tests)', exitCode: 0, durationMs: 1420 },
+          { phase: 'refactor', name: 'Refactor (AST Lint & Cleanup)', exitCode: 0, durationMs: 850 },
+        ],
+        filesModified: ['internal/service.go', 'internal/service_test.go'],
+        diff: SAMPLE_BUILDER_DIFF,
+      },
+    });
     dispatchGatewayEvent(
       {
         type: 'step.completed',
@@ -92,6 +118,36 @@ export async function simulatePipelineRun(): Promise<void> {
       dispatchGatewayEvent({ type: 'step.started', task_id: rev.id }, store);
     });
     await sleep(700);
+    store.addExecutionEvent({
+      stage: 'review_decided',
+      timestamp: new Date().toISOString(),
+      payload: {
+        consolidatedScore: 98,
+        severity: 'clean',
+        reviewers: [
+          {
+            id: 'sec-audit',
+            name: 'Security Reviewer',
+            severity: 'clean',
+            score: 100,
+            findings: [
+              'Zero OWASP Top 10 vulnerabilities detected',
+              'Rootless container isolation active',
+            ],
+          },
+          {
+            id: 'arch-audit',
+            name: 'Architecture Reviewer',
+            severity: 'clean',
+            score: 96,
+            findings: [
+              'Domain boundary respected between sandbox and gateway',
+              'Dependency graph acyclic and modular',
+            ],
+          },
+        ],
+      },
+    });
     reviewerNodes.forEach((rev) => {
       dispatchGatewayEvent(
         {
@@ -110,6 +166,16 @@ export async function simulatePipelineRun(): Promise<void> {
   // 4. Gate Approval Required
   if (approverNode) {
     await sleep(400);
+    store.addExecutionEvent({
+      stage: 'pipeline_completed',
+      timestamp: new Date().toISOString(),
+      payload: {
+        decision: 'HUMAN_GATE',
+        totalDurationMs: 4620,
+        requiresHumanGate: true,
+        summary: 'Quality metrics passed. Awaiting human authorization before fast-forward merge.',
+      },
+    });
     dispatchGatewayEvent(
       {
         type: 'gate.approval_required',

@@ -309,6 +309,43 @@ describe('useFactoryFlowStore', () => {
       expect(updated.activeRunOutcome?.run_id).toBe('run-sync-test');
       expect(updated.activePipelineStage).toBe('building');
     });
+
+    it('toggles showExecutionTimeline and records executionEvents', () => {
+      const store = useFactoryFlowStore.getState();
+      expect(store.showExecutionTimeline).toBe(false);
+      expect(store.executionEvents).toEqual([]);
+
+      store.setShowExecutionTimeline(true);
+      expect(useFactoryFlowStore.getState().showExecutionTimeline).toBe(true);
+
+      store.addExecutionEvent({
+        stage: 'spec_generated',
+        timestamp: '2026-11-02T12:00:00Z',
+        payload: { title: 'Spec Alpha', impactedFiles: ['pkg/a.go'] },
+      });
+
+      store.addExecutionEvent({
+        stage: 'build_completed',
+        payload: { filesModified: ['pkg/a.go'] },
+      });
+
+      const events = useFactoryFlowStore.getState().executionEvents;
+      expect(events).toHaveLength(2);
+      expect(events[0].stage).toBe('spec_generated');
+      expect(events[0].timestamp).toBe('2026-11-02T12:00:00Z');
+      expect(events[0].payload.title).toBe('Spec Alpha');
+
+      expect(events[1].stage).toBe('build_completed');
+      expect(events[1].timestamp).toBeTruthy();
+      expect(events[1].payload.filesModified).toEqual(['pkg/a.go']);
+
+      store.clearExecutionEvents();
+      expect(useFactoryFlowStore.getState().executionEvents).toEqual([]);
+
+      store.setShowExecutionTimeline(false);
+      expect(useFactoryFlowStore.getState().showExecutionTimeline).toBe(false);
+    });
   });
 });
+
 
