@@ -31,8 +31,9 @@ const (
 	TopicAllEvents            = "ov.>"
 
 	// Inbound trigger topics
-	TopicTriggerPrefix = "factory.triggers."
-	TopicAllTriggers   = "factory.triggers.>"
+	TopicTriggerPrefix     = "factory.triggers."
+	TopicAllTriggers       = "factory.triggers.>"
+	TopicPipelineTriggered = "pipeline.triggered"
 )
 
 // TaskLogPayload defines the payload for TopicTaskLog ("ov.task.log").

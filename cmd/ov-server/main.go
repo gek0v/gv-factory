@@ -133,11 +133,23 @@ func main() {
 	)
 	defer orchestrator.Stop()
 
+	triggerMgr := inbound.NewPipelineTriggerManager(
+		inbound.DefaultTriggerManagerConfig(),
+		orchestrator,
+		gw,
+		nil,
+		nil,
+	)
+	defer triggerMgr.Close()
+
 	webhookIngestor := inbound.NewIngestor(inbound.Config{
 		GitHubSecret: os.Getenv("GITHUB_WEBHOOK_SECRET"),
 		GitLabSecret: os.Getenv("GITLAB_WEBHOOK_SECRET"),
 		SentrySecret: os.Getenv("SENTRY_WEBHOOK_SECRET"),
-	}, inbound.NewGatewayDispatcher(gw))
+	}, inbound.NewMultiDispatcher(
+		inbound.NewGatewayDispatcher(gw),
+		triggerMgr,
+	))
 	_ = webhookIngestor
 
 	outboundDispatcher := outbound.NewDefaultDispatcher()
