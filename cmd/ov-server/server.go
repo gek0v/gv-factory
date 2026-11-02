@@ -112,6 +112,22 @@ func NewServerMux(
 	workerReg *WorkerRegistry,
 	tel ...*telemetry.Telemetry,
 ) http.Handler {
+	return NewServerMuxWithRunner(brainSvc, gw, webhookIngestor, chatHandler, orchestrator, authSvc, st, workerReg, nil, tel...)
+}
+
+// NewServerMuxWithRunner configures and returns the HTTP request multiplexer for ov-server with an explicit factory runner.
+func NewServerMuxWithRunner(
+	brainSvc *brain.Service,
+	gw *gateway.Gateway,
+	webhookIngestor http.Handler,
+	chatHandler *chat.ChatHandler,
+	orchestrator PipelineOrchestrator,
+	authSvc *auth.Service,
+	st store.Store,
+	workerReg *WorkerRegistry,
+	runner FactoryPipelineRunner,
+	tel ...*telemetry.Telemetry,
+) http.Handler {
 	if st == nil {
 		st = store.NewMemoryStore()
 	}
@@ -776,6 +792,12 @@ func NewServerMux(
 
 	// Codebase Brain endpoints (search, sync ADRs, repository indexer, stats)
 	registerBrainEndpoints(mux, brainSvc)
+
+	// Autonomous Factory execution and status endpoints
+	if runner == nil {
+		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw}
+	}
+	RegisterFactoryEndpoints(mux, gw, runner)
 
 	var handler http.Handler = corsMiddleware(mux)
 	if t != nil && t.Metrics != nil {
