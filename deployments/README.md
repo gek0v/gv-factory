@@ -167,6 +167,6 @@ docker compose -f deployments/docker-compose.yml down -v
 | **`nats`** | `nats:2.10-alpine` | Alpine (JetStream `-js`) | `4222`, `8222` | HTTP `/healthz` (8222) | High-throughput distributed event broker and pub/sub bus. |
 | **`hatchet`** | `ghcr.io/hatchet-dev/hatchet/hatchet-engine:latest` | Distroless | `7077` | TCP / gRPC | Durable workflow orchestrator managing DAG execution. |
 | **`svix`** | `svix/svix-server:latest` | Rust / Distroless | `8071` | TCP / HTTP | Reliable outbound webhook dispatcher with HMAC signatures. |
-| **`ov-server`** | `build/package/Dockerfile.server` | `alpine:3.21` (UID 10001) | `8080` | HTTP `/healthz` | REST API, SSE streaming, webhook ingester, chat connector. |
-| **`ov-worker`** | `build/package/Dockerfile.worker` | `alpine:3.21` (UID 10001) | `8081` | HTTP `/healthz` | Ephemeral Git worktree runner & WASM plugin executor. |
-| **`ov-web`** | `build/package/Dockerfile.web` | `nginx:alpine-slim` (UID 10001) | `3000` | HTTP `/healthz` | Visual DAG canvas (@xyflow/react) and real-time dashboard. |
+| **`ov-server`** | `deployments/Dockerfile.server` | `alpine:3.21` (UID 10001) | `8080` | HTTP `/healthz` | REST API, SSE streaming, webhook ingester, chat connector. |
+| **`ov-worker`** | `deployments/Dockerfile.worker` | `alpine:3.21` (UID 10001) | `8081` | HTTP `/healthz` | Ephemeral Git worktree runner & WASM plugin executor. |
+| **`web`** | `web/Dockerfile` | `nginx:alpine-slim` (UID 10001) | `3000` | HTTP `/healthz` | Visual DAG canvas (@xyflow/react) and real-time dashboard. |
