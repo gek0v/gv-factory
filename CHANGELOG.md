@@ -8,6 +8,15 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.5.0](https://github.com/gek0v/gv-factory/compare/v1.4.1...v1.5.0) (2026-11-02)
+
+
+### Features
+
+* **llm:** implement multi-provider LLM connector with tool calling and MCP schema mapping ([#107](https://github.com/gek0v/gv-factory/issues/107)) ([8c65b15](https://github.com/gek0v/gv-factory/commit/8c65b15e8e813564d7ced718c235e8e98400d303))
+* **web:** add LLM model selection in NodeInspector and live reasoning/tool-call stream viewer ([#108](https://github.com/gek0v/gv-factory/issues/108)) ([0fc9181](https://github.com/gek0v/gv-factory/commit/0fc9181ec1fccd58948f23c86c58931db832a623))
+* **worker:** implement cognitive AgentStepExecutor with MCP tool loop and live reasoning streaming ([#109](https://github.com/gek0v/gv-factory/issues/109)) ([#113](https://github.com/gek0v/gv-factory/issues/113)) ([c8d9926](https://github.com/gek0v/gv-factory/commit/c8d992687ac05b3eb9a7897612cfad31dd1e83c3))
+
 ## [1.4.1](https://github.com/gek0v/gv-factory/compare/v1.4.0...v1.4.1) (2026-11-02)
 
 
