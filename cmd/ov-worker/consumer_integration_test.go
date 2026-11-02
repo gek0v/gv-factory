@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/sandbox"
 	"github.com/gv-factory/gv-factory/internal/worker"
 )
 
@@ -20,6 +21,9 @@ func TestWorker_DistributedConsumer_Lifecycle(t *testing.T) {
 		MaxConcurrent:     2,
 		HeartbeatInterval: 20 * time.Millisecond,
 		DrainTimeout:      1 * time.Second,
+		SandboxConfig: sandbox.ContainerSandboxConfig{
+			Runtime: sandbox.RuntimeHost,
+		},
 	})
 	defer w.Close()
 
@@ -95,6 +99,9 @@ func TestWorker_DistributedConsumer_AgentStepAndSandbox(t *testing.T) {
 		DisableNATS:   true,
 		WorkerID:      "test-worker-steps",
 		MaxConcurrent: 2,
+		SandboxConfig: sandbox.ContainerSandboxConfig{
+			Runtime: sandbox.RuntimeHost,
+		},
 	})
 	defer w.Close()
 
@@ -154,6 +161,9 @@ func TestWorker_Integration_RealHandlersDispatch(t *testing.T) {
 		DisableNATS:   true,
 		WorkerID:      "test-worker-real-dispatch",
 		MaxConcurrent: 2,
+		SandboxConfig: sandbox.ContainerSandboxConfig{
+			Runtime: sandbox.RuntimeHost,
+		},
 	})
 	defer w.Close()
 

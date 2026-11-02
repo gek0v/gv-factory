@@ -102,7 +102,14 @@ func NewWorker(cfg WorkerConfig) *Worker {
 	router := worker.NewTaskRouter()
 
 	// Container sandbox executor with cgroups quotas and mount isolation
-	containerExec := sandbox.NewContainerSandboxExecutor(cfg.SandboxConfig)
+	sandboxCfg := cfg.SandboxConfig
+	if sandboxCfg.Runtime == "" {
+		sandboxCfg = sandbox.NewDefaultContainerSandboxConfig()
+	}
+	if sandboxCfg.Image == "" {
+		sandboxCfg.Image = sandbox.DefaultSandboxImage
+	}
+	containerExec := sandbox.NewContainerSandboxExecutor(sandboxCfg)
 
 	// Register concrete execution sub-engine handlers
 	router.RegisterHandler(worker.TaskTypeWasmPlugin, worker.NewWasmPluginHandler(pluginHost))

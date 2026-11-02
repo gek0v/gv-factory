@@ -325,7 +325,11 @@ func (e *ContainerSandboxExecutor) BuildContainerArgs(dir string, name string, a
 	}
 
 	// Container image
-	cmdArgs = append(cmdArgs, e.config.Image)
+	img := e.config.Image
+	if img == "" {
+		img = DefaultSandboxImage
+	}
+	cmdArgs = append(cmdArgs, img)
 
 	// Command and parameters
 	if name != "" {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/sandbox"
 	pdk "github.com/gv-factory/gv-factory/plugins-sdk/go"
 	"github.com/gv-factory/gv-factory/pkg/schema"
 )
@@ -34,6 +35,9 @@ func TestWorker_PipelineExecution(t *testing.T) {
 		DisableNATS:    true,
 		DefaultRetries: 2,
 		DefaultTimeout: 2 * time.Second,
+		SandboxConfig: sandbox.ContainerSandboxConfig{
+			Runtime: sandbox.RuntimeHost,
+		},
 	})
 	defer worker.Close()
 
@@ -113,6 +117,9 @@ func TestWorker_MultiFactoryPipelineSubmission(t *testing.T) {
 		DefaultRetries: 1,
 		DefaultTimeout: 5 * time.Second,
 		MaxConcurrent:  2,
+		SandboxConfig: sandbox.ContainerSandboxConfig{
+			Runtime: sandbox.RuntimeHost,
+		},
 	})
 	defer worker.Close()
 
