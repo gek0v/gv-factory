@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // ANSI color escape codes
@@ -40,17 +41,17 @@ func (c *Colorizer) Colorize(code, text string) string {
 	return code + text + colorReset
 }
 
-func (c *Colorizer) Red(text string) string     { return c.Colorize(colorRed, text) }
-func (c *Colorizer) Green(text string) string   { return c.Colorize(colorGreen, text) }
-func (c *Colorizer) Yellow(text string) string  { return c.Colorize(colorYellow, text) }
-func (c *Colorizer) Blue(text string) string    { return c.Colorize(colorBlue, text) }
-func (c *Colorizer) Cyan(text string) string    { return c.Colorize(colorCyan, text) }
-func (c *Colorizer) Gray(text string) string    { return c.Colorize(colorGray, text) }
-func (c *Colorizer) Bold(text string) string    { return c.Colorize(colorBold, text) }
+func (c *Colorizer) Red(text string) string    { return c.Colorize(colorRed, text) }
+func (c *Colorizer) Green(text string) string  { return c.Colorize(colorGreen, text) }
+func (c *Colorizer) Yellow(text string) string { return c.Colorize(colorYellow, text) }
+func (c *Colorizer) Blue(text string) string   { return c.Colorize(colorBlue, text) }
+func (c *Colorizer) Cyan(text string) string   { return c.Colorize(colorCyan, text) }
+func (c *Colorizer) Gray(text string) string   { return c.Colorize(colorGray, text) }
+func (c *Colorizer) Bold(text string) string   { return c.Colorize(colorBold, text) }
 
 // BadgeStatus returns a stylized, colorized status badge.
 func (c *Colorizer) BadgeStatus(status string) string {
-	switch status {
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "pending":
 		return c.Yellow("[ PENDING   ]")
 	case "running":
@@ -59,6 +60,8 @@ func (c *Colorizer) BadgeStatus(status string) string {
 		return c.Green("[ COMPLETED ]")
 	case "failed", "error":
 		return c.Red("[ FAILED    ]")
+	case "gate_waiting", "gate-waiting", "waiting":
+		return c.Yellow("[ GATE_WAITING ]")
 	default:
 		return fmt.Sprintf("[%s]", status)
 	}

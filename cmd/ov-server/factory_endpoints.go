@@ -299,6 +299,19 @@ func registerFactoryEndpointsWithTracker(mux *http.ServeMux, gw *gateway.Gateway
 		})
 	})
 
+	// GET /api/v1/factory/runs
+	mux.HandleFunc("/api/v1/factory/runs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		runs := tracker.List()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(runs)
+	})
+
 	// GET /api/v1/factory/runs/:run_id
 	mux.HandleFunc("/api/v1/factory/runs/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
