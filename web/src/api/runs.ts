@@ -113,10 +113,10 @@ export function serializeCanvasToTemplate(
 /**
  * Validates the current canvas graph structure and schema.
  */
-export function validateCanvasGraph(
+export const validateCanvasGraph = (
   nodes: Node<FactoryNodeData>[] | FactoryFlowNode[],
   edges: Edge[] | FactoryFlowEdge[]
-): CanvasValidationResult {
+): CanvasValidationResult => {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -189,7 +189,13 @@ export function validateCanvasGraph(
     warnings,
     template,
   };
-}
+};
+
+/**
+ * Validates a pipeline defined by canvas nodes and edges.
+ * Alias for validateCanvasGraph to conform to standard validation API naming.
+ */
+export const validatePipeline = validateCanvasGraph;
 
 /**
  * Serializes React Flow nodes and edges into a CanvasGraphDTO compatible with ov-server.
