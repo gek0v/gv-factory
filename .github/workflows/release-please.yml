@@ -4,9 +4,11 @@
 name: Release Please & Distribution
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+  # Desactivado temporalmente
+  # push:
+  #   branches:
+  #     - main
 
 permissions:
   contents: write

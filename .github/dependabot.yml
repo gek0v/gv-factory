@@ -8,7 +8,7 @@ updates:
       day: "monday"
       time: "04:00"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "backend"
@@ -25,7 +25,7 @@ updates:
       day: "monday"
       time: "04:30"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "frontend"
@@ -42,7 +42,7 @@ updates:
       day: "monday"
       time: "05:00"
       timezone: "Etc/UTC"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     labels:
       - "dependencies"
       - "ci-cd"
