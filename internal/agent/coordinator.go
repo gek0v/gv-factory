@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gv-factory/gv-factory/internal/brain"
 )
 
 // Standard domain constants and events for FactoryCoordinator.
@@ -56,11 +58,17 @@ type GateApprover interface {
 	Decide(ctx context.Context, req ApprovalRequest) (*ApprovalDecision, error)
 }
 
+// EpisodeRecorder defines the contract for persisting task execution learnings into the Brain.
+type EpisodeRecorder interface {
+	RecordEpisode(ctx context.Context, ep brain.TaskEpisode) (*brain.TaskEpisode, error)
+}
+
 // CoordinatorConfig configures execution thresholds, agents, and telemetry for the pipeline.
 type CoordinatorConfig struct {
 	SpecWriter         SpecGenerator
 	Builder            TaskBuilder
 	Approver           GateApprover
+	Brain              EpisodeRecorder
 	MaxRetries         int
 	MinCoverage        float32
 	EventHook          func(stage string, payload any)
@@ -111,6 +119,7 @@ type FactoryCoordinator struct {
 	specWriter         SpecGenerator
 	builder            TaskBuilder
 	approver           GateApprover
+	brain              EpisodeRecorder
 	maxRetries         int
 	minCoverage        float32
 	eventHook          func(stage string, payload any)
@@ -125,6 +134,7 @@ func NewFactoryCoordinator(cfg CoordinatorConfig) *FactoryCoordinator {
 		specWriter:         cfg.SpecWriter,
 		builder:            cfg.Builder,
 		approver:           cfg.Approver,
+		brain:              cfg.Brain,
 		maxRetries:         cfg.MaxRetries,
 		minCoverage:        cfg.MinCoverage,
 		eventHook:          cfg.EventHook,
@@ -171,6 +181,7 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 	task.Normalize()
 
 	startTime := time.Now()
+	var retryFeedbackHistory []string
 
 	// Stage 1: Spec Synthesis
 	spec, err := specWriter.GenerateSpec(ctx, task)
@@ -184,6 +195,7 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 			Duration:        duration,
 			ErrorMessage:    fmt.Sprintf("spec generation failed: %v", err),
 		}
+		c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
 		return outcome, err
 	}
 	c.emitEvent(EventSpecGenerated, spec)
@@ -226,6 +238,7 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 				Duration:        duration,
 				ErrorMessage:    fmt.Sprintf("build execution failed: %v", err),
 			}
+			c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
 			return outcome, err
 		}
 
@@ -257,6 +270,7 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 				Duration:        duration,
 				ErrorMessage:    fmt.Sprintf("approval evaluation failed: %v", err),
 			}
+			c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
 			return outcome, err
 		}
 		lastApproval = approval
@@ -266,6 +280,14 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 		if approval.IsRetry() && attempt < maxRetries {
 			feedbackMsg := fmt.Sprintf("Reviewer feedback (retry %d/%d): %s", attempt+1, maxRetries, approval.FeedbackSummary)
 			task.Constraints = append(task.Constraints, feedbackMsg)
+
+			findingMsgs := []string{approval.FeedbackSummary}
+			for _, res := range approval.ReviewerResults {
+				for _, f := range res.Findings {
+					findingMsgs = append(findingMsgs, fmt.Sprintf("[%s] %s: %s", f.Severity, f.RuleCode, f.Message))
+				}
+			}
+			retryFeedbackHistory = append(retryFeedbackHistory, strings.Join(findingMsgs, " - "))
 
 			c.applyFeedbackToSpec(spec, attempt, approval, minCov)
 			continue
@@ -305,8 +327,111 @@ func (c *FactoryCoordinator) RunPipeline(ctx context.Context, task TaskContext) 
 		Duration:        duration,
 	}
 
+	c.recordPipelineEpisode(ctx, task, outcome, retryFeedbackHistory)
 	c.emitEvent(EventPipelineCompleted, outcome)
 	return outcome, nil
+}
+
+func (c *FactoryCoordinator) recordPipelineEpisode(ctx context.Context, task TaskContext, outcome *PipelineOutcome, retryFeedback []string) {
+	if c == nil || outcome == nil {
+		return
+	}
+	c.mu.RLock()
+	brainRec := c.brain
+	c.mu.RUnlock()
+	if brainRec == nil {
+		return
+	}
+
+	var epOutcome string
+	var lessons string
+
+	switch outcome.Decision {
+	case DecisionApproved:
+		if len(retryFeedback) > 0 || outcome.TotalIterations > 1 {
+			epOutcome = "retry_resolved"
+			if len(retryFeedback) > 0 {
+				lessons = fmt.Sprintf("Reviewer findings resolved during retries (%d iterations): %s", outcome.TotalIterations, strings.Join(retryFeedback, "; "))
+			} else {
+				lessons = fmt.Sprintf("Reviewer findings resolved during retries (%d iterations)", outcome.TotalIterations)
+			}
+		} else {
+			epOutcome = "success"
+			lessons = fmt.Sprintf("Pipeline completed successfully on iteration %d with all quality checks passing", outcome.TotalIterations)
+		}
+
+	case DecisionRetry:
+		epOutcome = "retry_resolved"
+		if len(retryFeedback) > 0 {
+			lessons = fmt.Sprintf("Reviewer findings: %s", strings.Join(retryFeedback, "; "))
+		} else {
+			lessons = "Pipeline in retry state"
+		}
+
+	case DecisionHumanGate:
+		epOutcome = "gate_required"
+		var findings []string
+		if outcome.Approval != nil {
+			if outcome.Approval.GateReason != "" {
+				findings = append(findings, "Gate reason: "+outcome.Approval.GateReason)
+			}
+			if outcome.Approval.FeedbackSummary != "" {
+				findings = append(findings, "Feedback: "+outcome.Approval.FeedbackSummary)
+			}
+			for _, res := range outcome.Approval.ReviewerResults {
+				for _, f := range res.Findings {
+					findings = append(findings, fmt.Sprintf("[%s] %s: %s", f.Severity, f.RuleCode, f.Message))
+				}
+			}
+		}
+		if len(findings) == 0 {
+			findings = append(findings, "Human gate intervention required")
+		}
+		lessons = strings.Join(findings, "; ")
+
+	case DecisionFailed:
+		fallthrough
+	default:
+		epOutcome = "failed"
+		var failureCauses []string
+		if outcome.ErrorMessage != "" {
+			failureCauses = append(failureCauses, outcome.ErrorMessage)
+		}
+		if outcome.Approval != nil {
+			if outcome.Approval.FeedbackSummary != "" {
+				failureCauses = append(failureCauses, outcome.Approval.FeedbackSummary)
+			}
+			for _, res := range outcome.Approval.ReviewerResults {
+				for _, f := range res.Findings {
+					failureCauses = append(failureCauses, fmt.Sprintf("[%s] %s: %s", f.Severity, f.RuleCode, f.Message))
+				}
+			}
+		}
+		if len(failureCauses) == 0 {
+			failureCauses = append(failureCauses, "Pipeline execution failed")
+		}
+		lessons = strings.Join(failureCauses, "; ")
+	}
+
+	summary := fmt.Sprintf("Task %s (%s): outcome=%s, decision=%s, iterations=%d, duration=%v",
+		task.TaskID, task.Title, epOutcome, outcome.Decision, outcome.TotalIterations, outcome.Duration.Round(time.Millisecond))
+
+	episode := brain.TaskEpisode{
+		RunID:          task.TaskID,
+		TaskName:       task.Title,
+		Outcome:        epOutcome,
+		Summary:        summary,
+		LessonsLearned: lessons,
+	}
+
+	recordCtx := ctx
+	if recordCtx == nil || recordCtx.Err() != nil {
+		var cancel context.CancelFunc
+		recordCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+
+	_, _ = brainRec.RecordEpisode(recordCtx, episode)
 }
 
 func (c *FactoryCoordinator) emitEvent(stage string, payload any) {

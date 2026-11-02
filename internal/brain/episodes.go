@@ -102,6 +102,12 @@ func (s *Service) CreateEpisode(ctx context.Context, episode TaskEpisode) (*Task
 	return &created, nil
 }
 
+// RecordEpisode persists a task episode into the brain database.
+// It implements agent.EpisodeRecorder.
+func (s *Service) RecordEpisode(ctx context.Context, episode TaskEpisode) (*TaskEpisode, error) {
+	return s.CreateEpisode(ctx, episode)
+}
+
 // GetEpisodesByRunID fetches all episodic records associated with a specific factory run.
 func (s *Service) GetEpisodesByRunID(ctx context.Context, runID string) ([]TaskEpisode, error) {
 	id := strings.TrimSpace(runID)

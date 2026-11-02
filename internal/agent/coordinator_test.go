@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gv-factory/gv-factory/internal/brain"
 )
 
 // =========================================================================
@@ -77,6 +79,24 @@ func (m *mockGateApprover) Decide(ctx context.Context, req ApprovalRequest) (*Ap
 		ConsolidatedScore: 1.0,
 		FeedbackSummary:   "All checks passed",
 	}, nil
+}
+
+type mockEpisodeRecorder struct {
+	recordFn  func(ctx context.Context, ep brain.TaskEpisode) (*brain.TaskEpisode, error)
+	episodes  []brain.TaskEpisode
+	callCount int32
+	mu        sync.Mutex
+}
+
+func (m *mockEpisodeRecorder) RecordEpisode(ctx context.Context, ep brain.TaskEpisode) (*brain.TaskEpisode, error) {
+	atomic.AddInt32(&m.callCount, 1)
+	m.mu.Lock()
+	m.episodes = append(m.episodes, ep)
+	m.mu.Unlock()
+	if m.recordFn != nil {
+		return m.recordFn(ctx, ep)
+	}
+	return &ep, nil
 }
 
 // =========================================================================
@@ -891,4 +911,360 @@ func TestFactoryCoordinator_RealAgentWiring(t *testing.T) {
 	if coord == nil {
 		t.Fatal("expected non-nil coordinator from real agents wiring")
 	}
+}
+
+func TestFactoryCoordinator_LearningLoop_Success(t *testing.T) {
+	recorder := &mockEpisodeRecorder{}
+	cfg := CoordinatorConfig{
+		SpecWriter:  &mockSpecGenerator{},
+		Builder:     &mockTaskBuilder{},
+		Approver:    &mockGateApprover{},
+		Brain:       recorder,
+		MaxRetries:  3,
+		MinCoverage: 0.90,
+	}
+
+	coordinator := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-learn-1",
+		Title:  "Implement Payment Gateway",
+	}
+
+	outcome, err := coordinator.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !outcome.Success {
+		t.Fatalf("expected outcome.Success=true")
+	}
+
+	if atomic.LoadInt32(&recorder.callCount) != 1 {
+		t.Fatalf("expected 1 episode recorded, got %d", recorder.callCount)
+	}
+
+	ep := recorder.episodes[0]
+	if ep.RunID != "task-learn-1" {
+		t.Errorf("expected RunID 'task-learn-1', got %q", ep.RunID)
+	}
+	if ep.TaskName != "Implement Payment Gateway" {
+		t.Errorf("expected TaskName 'Implement Payment Gateway', got %q", ep.TaskName)
+	}
+	if ep.Outcome != "success" {
+		t.Errorf("expected Outcome 'success', got %q", ep.Outcome)
+	}
+	if ep.Summary == "" {
+		t.Error("expected non-empty Summary")
+	}
+	if !strings.Contains(ep.LessonsLearned, "iteration") && !strings.Contains(ep.LessonsLearned, "success") {
+		t.Errorf("expected lessons learned to mention iterations or success, got %q", ep.LessonsLearned)
+	}
+}
+
+func TestFactoryCoordinator_LearningLoop_RetryResolved(t *testing.T) {
+	recorder := &mockEpisodeRecorder{}
+	attempt := 0
+	approver := &mockGateApprover{
+		decideFn: func(ctx context.Context, req ApprovalRequest) (*ApprovalDecision, error) {
+			attempt++
+			if attempt == 1 {
+				return &ApprovalDecision{
+					DecisionType:    DecisionRetry,
+					FeedbackSummary: "Add error handling for nil pointers",
+					ReviewerResults: []ReviewResult{
+						{
+							ReviewerName: "quality",
+							Passed:       false,
+							Findings: []Finding{
+								{Severity: "ERROR", RuleCode: "ERR-001", Message: "Missing nil check"},
+							},
+						},
+					},
+				}, nil
+			}
+			return &ApprovalDecision{
+				DecisionType:      DecisionApproved,
+				ConsolidatedScore: 0.98,
+				FeedbackSummary:   "All checks passed after retry",
+			}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		SpecWriter:  &mockSpecGenerator{},
+		Builder:     &mockTaskBuilder{},
+		Approver:    approver,
+		Brain:       recorder,
+		MaxRetries:  3,
+		MinCoverage: 0.90,
+	}
+
+	coordinator := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-retry-resolved",
+		Title:  "Refactor Auth Token Parser",
+	}
+
+	outcome, err := coordinator.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !outcome.Success {
+		t.Fatalf("expected outcome.Success=true")
+	}
+
+	if atomic.LoadInt32(&recorder.callCount) != 1 {
+		t.Fatalf("expected 1 episode recorded, got %d", recorder.callCount)
+	}
+
+	ep := recorder.episodes[0]
+	if ep.Outcome != "retry_resolved" {
+		t.Errorf("expected Outcome 'retry_resolved', got %q", ep.Outcome)
+	}
+	if !strings.Contains(ep.LessonsLearned, "Missing nil check") && !strings.Contains(ep.LessonsLearned, "nil pointers") {
+		t.Errorf("expected LessonsLearned to contain retry feedback, got %q", ep.LessonsLearned)
+	}
+}
+
+func TestFactoryCoordinator_LearningLoop_HumanGate(t *testing.T) {
+	recorder := &mockEpisodeRecorder{}
+	approver := &mockGateApprover{
+		decideFn: func(ctx context.Context, req ApprovalRequest) (*ApprovalDecision, error) {
+			return &ApprovalDecision{
+				DecisionType:      DecisionHumanGate,
+				ConsolidatedScore: 0.40,
+				RequiresHumanSign: true,
+				GateReason:        "Critical security vulnerability detected",
+				FeedbackSummary:   "SQL injection risk in raw query builder",
+				ReviewerResults: []ReviewResult{
+					{
+						ReviewerName: "security",
+						Passed:       false,
+						Findings: []Finding{
+							{Severity: "CRITICAL", RuleCode: "SEC-SQLI", Message: "Unsanitized user input in query"},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		SpecWriter:  &mockSpecGenerator{},
+		Builder:     &mockTaskBuilder{},
+		Approver:    approver,
+		Brain:       recorder,
+		MaxRetries:  1,
+		MinCoverage: 0.90,
+	}
+
+	coordinator := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-gate",
+		Title:  "Add Raw Query Feature",
+	}
+
+	outcome, err := coordinator.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome.Success {
+		t.Fatalf("expected outcome.Success=false for human gate")
+	}
+	if outcome.Decision != DecisionHumanGate {
+		t.Fatalf("expected DecisionHumanGate, got %s", outcome.Decision)
+	}
+
+	if atomic.LoadInt32(&recorder.callCount) != 1 {
+		t.Fatalf("expected 1 episode recorded, got %d", recorder.callCount)
+	}
+
+	ep := recorder.episodes[0]
+	if ep.Outcome != "gate_required" {
+		t.Errorf("expected Outcome 'gate_required', got %q", ep.Outcome)
+	}
+	if !strings.Contains(ep.LessonsLearned, "Critical security vulnerability") && !strings.Contains(ep.LessonsLearned, "SEC-SQLI") {
+		t.Errorf("expected critical findings in LessonsLearned, got %q", ep.LessonsLearned)
+	}
+}
+
+func TestFactoryCoordinator_LearningLoop_Failed(t *testing.T) {
+	recorder := &mockEpisodeRecorder{}
+	builder := &mockTaskBuilder{
+		buildFn: func(ctx context.Context, spec *SpecDocument) ([]*BuildResult, error) {
+			return nil, errors.New("compilation failed with 5 errors")
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		SpecWriter:  &mockSpecGenerator{},
+		Builder:     builder,
+		Approver:    &mockGateApprover{},
+		Brain:       recorder,
+		MaxRetries:  1,
+		MinCoverage: 0.90,
+	}
+
+	coordinator := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-failed",
+		Title:  "Broken Feature Build",
+	}
+
+	outcome, err := coordinator.RunPipeline(context.Background(), task)
+	if err == nil {
+		t.Fatal("expected error from failed build")
+	}
+	if outcome == nil {
+		t.Fatal("expected non-nil outcome")
+	}
+	if outcome.Decision != DecisionFailed {
+		t.Fatalf("expected DecisionFailed, got %s", outcome.Decision)
+	}
+
+	if atomic.LoadInt32(&recorder.callCount) != 1 {
+		t.Fatalf("expected 1 episode recorded, got %d", recorder.callCount)
+	}
+
+	ep := recorder.episodes[0]
+	if ep.Outcome != "failed" {
+		t.Errorf("expected Outcome 'failed', got %q", ep.Outcome)
+	}
+	if !strings.Contains(ep.LessonsLearned, "compilation failed") && !strings.Contains(ep.Summary, "compilation failed") {
+		t.Errorf("expected failure cause in LessonsLearned or Summary, got lessons=%q summary=%q", ep.LessonsLearned, ep.Summary)
+	}
+}
+
+func TestFactoryCoordinator_LearningLoop_NilRecorder(t *testing.T) {
+	cfg := CoordinatorConfig{
+		SpecWriter:  &mockSpecGenerator{},
+		Builder:     &mockTaskBuilder{},
+		Approver:    &mockGateApprover{},
+		Brain:       nil,
+		MaxRetries:  1,
+		MinCoverage: 0.90,
+	}
+
+	coordinator := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-nil-brain",
+		Title:  "Task with nil Brain",
+	}
+
+	outcome, err := coordinator.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !outcome.Success {
+		t.Errorf("expected success")
+	}
+}
+
+func TestFactoryCoordinator_LearningLoop_RecorderError_Graceful(t *testing.T) {
+	recorder := &mockEpisodeRecorder{
+		recordFn: func(ctx context.Context, ep brain.TaskEpisode) (*brain.TaskEpisode, error) {
+			return nil, errors.New("database connection pool exhausted")
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		SpecWriter:  &mockSpecGenerator{},
+		Builder:     &mockTaskBuilder{},
+		Approver:    &mockGateApprover{},
+		Brain:       recorder,
+		MaxRetries:  1,
+		MinCoverage: 0.90,
+	}
+
+	coordinator := NewFactoryCoordinator(cfg)
+	task := TaskContext{
+		TaskID: "task-db-err",
+		Title:  "Task with failing Brain DB",
+	}
+
+	outcome, err := coordinator.RunPipeline(context.Background(), task)
+	if err != nil {
+		t.Fatalf("expected pipeline to succeed despite brain error, got: %v", err)
+	}
+	if !outcome.Success {
+		t.Errorf("expected success")
+	}
+	if atomic.LoadInt32(&recorder.callCount) != 1 {
+		t.Fatalf("expected 1 call to Brain, got %d", recorder.callCount)
+	}
+}
+
+func TestFactoryCoordinator_LearningLoop_EdgeCases(t *testing.T) {
+	// 1. Compatibility check: *brain.Service implements EpisodeRecorder
+	var _ EpisodeRecorder = (*brain.Service)(nil)
+
+	// 2. recordPipelineEpisode with nil coordinator and nil outcome
+	var nilCoord *FactoryCoordinator
+	nilCoord.recordPipelineEpisode(context.Background(), TaskContext{}, nil, nil)
+
+	recorder := &mockEpisodeRecorder{}
+	coord := NewFactoryCoordinator(CoordinatorConfig{
+		SpecWriter: &mockSpecGenerator{},
+		Builder:    &mockTaskBuilder{},
+		Approver:   &mockGateApprover{},
+		Brain:      recorder,
+	})
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-1", Title: "T1"}, nil, nil)
+
+	// 3. DecisionRetry branch
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-retry-1", Title: "Retry Task"}, &PipelineOutcome{
+		TaskID:          "t-retry-1",
+		Decision:        DecisionRetry,
+		TotalIterations: 2,
+	}, []string{"Feedback 1", "Feedback 2"})
+
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-retry-2", Title: "Retry Task Empty"}, &PipelineOutcome{
+		TaskID:          "t-retry-2",
+		Decision:        DecisionRetry,
+		TotalIterations: 1,
+	}, nil)
+
+	// 4. DecisionHumanGate with empty findings
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-gate-empty", Title: "Gate Empty"}, &PipelineOutcome{
+		TaskID:   "t-gate-empty",
+		Decision: DecisionHumanGate,
+	}, nil)
+
+	// 5. DecisionFailed with Approval and Reviewer findings
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-fail-rich", Title: "Fail Rich"}, &PipelineOutcome{
+		TaskID:       "t-fail-rich",
+		Decision:     DecisionFailed,
+		ErrorMessage: "critical syntax error",
+		Approval: &ApprovalDecision{
+			FeedbackSummary: "Failed quality gate",
+			ReviewerResults: []ReviewResult{
+				{
+					Findings: []Finding{
+						{Severity: "ERROR", RuleCode: "ERR-999", Message: "Syntax defect"},
+					},
+				},
+			},
+		},
+	}, nil)
+
+	// 6. DecisionFailed with empty causes
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-fail-empty", Title: "Fail Empty"}, &PipelineOutcome{
+		TaskID:   "t-fail-empty",
+		Decision: DecisionFailed,
+	}, nil)
+
+	// 7. DecisionApproved with iterations > 1 but empty feedback
+	coord.recordPipelineEpisode(context.Background(), TaskContext{TaskID: "t-appr-iter", Title: "Appr Iter"}, &PipelineOutcome{
+		TaskID:          "t-appr-iter",
+		Decision:        DecisionApproved,
+		TotalIterations: 3,
+	}, nil)
+
+	// 8. Canceled context during recording
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	coord.recordPipelineEpisode(canceledCtx, TaskContext{TaskID: "t-cancel-ep", Title: "Cancel Ep"}, &PipelineOutcome{
+		TaskID:          "t-cancel-ep",
+		Decision:        DecisionApproved,
+		TotalIterations: 1,
+	}, nil)
 }
