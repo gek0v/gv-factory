@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gv-factory/gv-factory/internal/agent"
+	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/pkg/schema"
@@ -801,6 +803,217 @@ func TestServer_WorkerPoolEndpoints(t *testing.T) {
 		body := rec.Body.String()
 		if !strings.Contains(body, "worker-sse") {
 			t.Errorf("expected SSE body to contain worker-sse, got: %s", body)
+		}
+	})
+}
+
+func TestServer_InboundWebhookAutonomousIntegration(t *testing.T) {
+	t.Run("GitHub ready-for-agent webhook executes autonomous runner and posts PR & comment", func(t *testing.T) {
+		var prCreated, commentPosted bool
+		var postedCommentBody string
+
+		mockGH := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/pulls") {
+				prCreated = true
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{
+					"id": 101,
+					"number": 101,
+					"html_url": "https://github.com/gv-factory/gv-factory/pull/101",
+					"state": "open",
+					"title": "feat: autonomous PR"
+				}`))
+				return
+			}
+			if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/comments") {
+				commentPosted = true
+				var p map[string]string
+				_ = json.NewDecoder(r.Body).Decode(&p)
+				postedCommentBody = p["body"]
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id": 202, "body": "posted"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer mockGH.Close()
+
+		gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+		defer gw.Close()
+
+		runner := &mockFactoryRunner{
+			runFn: func(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
+				return &agent.PipelineOutcome{
+					TaskID:          task.TaskID,
+					Success:         true,
+					Decision:        agent.DecisionApproved,
+					TotalIterations: 1,
+					Duration:        200 * time.Millisecond,
+				}, nil
+			},
+		}
+
+		secret := "gh-secret-42"
+		inboundCfg := InboundConfig{
+			GitHubToken:  "gh_token_test",
+			GitHubAPIURL: mockGH.URL,
+			GitHubSecret: secret,
+		}
+
+		mux, triggerMgr := NewServerMuxWithInbound(nil, gw, inboundCfg, nil, nil, nil, nil, nil, runner)
+		defer triggerMgr.Close()
+
+		payload := map[string]any{
+			"action": "labeled",
+			"label": map[string]any{
+				"name": "ready-for-agent",
+			},
+			"issue": map[string]any{
+				"number": 42,
+				"title":  "Support OAuth2 callbacks",
+				"body":   "Implement handler",
+				"labels": []any{
+					map[string]any{"name": "ready-for-agent"},
+				},
+			},
+			"repository": map[string]any{
+				"full_name": "gv-factory/gv-factory",
+			},
+			"sender": map[string]any{
+				"login": "tester",
+			},
+		}
+		bodyBytes, _ := json.Marshal(payload)
+		sig := computeTestHMAC([]byte(secret), bodyBytes)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/github", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GitHub-Event", "issues")
+		req.Header.Set("X-GitHub-Delivery", "delivery-auto-42")
+		req.Header.Set("X-Hub-Signature-256", sig)
+
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK && rec.Code != http.StatusAccepted {
+			t.Fatalf("expected HTTP 200 or 202, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		if runner.callCount != 1 {
+			t.Errorf("expected 1 runner invocation, got %d", runner.callCount)
+		}
+		if !prCreated {
+			t.Error("expected GitHub PR to be created")
+		}
+		if !commentPosted {
+			t.Error("expected issue comment to be posted")
+		}
+		if !strings.Contains(postedCommentBody, "https://github.com/gv-factory/gv-factory/pull/101") {
+			t.Errorf("expected comment body to include PR link, got:\n%s", postedCommentBody)
+		}
+	})
+
+	t.Run("GitLab factory build comment executes autonomous runner", func(t *testing.T) {
+		var notePosted bool
+		mockGL := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/notes") {
+				notePosted = true
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id": 303, "body": "ok"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer mockGL.Close()
+
+		gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+		defer gw.Close()
+
+		runner := &mockFactoryRunner{
+			runFn: func(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
+				return &agent.PipelineOutcome{
+					TaskID:   task.TaskID,
+					Success:  true,
+					Decision: agent.DecisionApproved,
+				}, nil
+			},
+		}
+
+		secret := "gl-secret-88"
+		inboundCfg := InboundConfig{
+			GitLabToken:  "gl_token_test",
+			GitLabAPIURL: mockGL.URL,
+			GitLabSecret: secret,
+		}
+
+		mux, triggerMgr := NewServerMuxWithInbound(nil, gw, inboundCfg, nil, nil, nil, nil, nil, runner)
+		defer triggerMgr.Close()
+
+		payload := map[string]any{
+			"object_kind": "note",
+			"event_type":  "note",
+			"project": map[string]any{
+				"path_with_namespace": "gitlab-org/project",
+			},
+			"issue": map[string]any{
+				"iid":   88,
+				"title": "Build requested",
+			},
+			"object_attributes": map[string]any{
+				"note": "@factory build please deploy",
+			},
+		}
+		bodyBytes, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/gitlab", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Gitlab-Token", secret)
+		req.Header.Set("X-Gitlab-Event", "Note Hook")
+
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK && rec.Code != http.StatusAccepted {
+			t.Fatalf("expected HTTP 200 or 202, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		if runner.callCount != 1 {
+			t.Errorf("expected 1 runner call, got %d", runner.callCount)
+		}
+		if !notePosted {
+			t.Error("expected GitLab note to be posted")
+		}
+	})
+
+	t.Run("BuildInboundWebhookHandler with explicit reporter and custom configs", func(t *testing.T) {
+		gw := gateway.NewGatewayWithConfig(gateway.Config{DisableNATS: true})
+		defer gw.Close()
+
+		mockReporter := &inbound.GitHubIssueReporter{}
+		customTriggerCfg := inbound.DefaultTriggerManagerConfig()
+		customBridgeCfg := inbound.DefaultBridgeConfig()
+
+		inboundCfg := InboundConfig{
+			IssueReporter: mockReporter,
+			TriggerConfig: &customTriggerCfg,
+			BridgeConfig:  &customBridgeCfg,
+		}
+
+		runner := &mockFactoryRunner{}
+		orch := newMockOrchestrator()
+		ingestor, mgr := BuildInboundWebhookHandler(inboundCfg, gw, orch, runner)
+		defer mgr.Close()
+
+		if ingestor == nil {
+			t.Fatal("expected non-nil ingestor")
+		}
+		if mgr == nil {
+			t.Fatal("expected non-nil trigger manager")
+		}
+		if mgr.AutonomousBridge() == nil {
+			t.Fatal("expected non-nil autonomous bridge")
 		}
 	})
 }

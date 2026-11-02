@@ -19,6 +19,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/chat"
+	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/store"
@@ -98,6 +99,121 @@ func getClientIP(r *http.Request) string {
 		return host
 	}
 	return r.RemoteAddr
+}
+
+// InboundConfig configures inbound webhook reporters and autonomous factory integration for ov-server.
+type InboundConfig struct {
+	GitHubToken   string
+	GitHubAPIURL  string
+	GitLabToken   string
+	GitLabAPIURL  string
+	GitHubSecret  string
+	GitLabSecret  string
+	SentrySecret  string
+	TriggerConfig *inbound.TriggerManagerConfig
+	BridgeConfig  *inbound.BridgeConfig
+	IssueReporter inbound.IssueFeedbackReporter
+	PRCreator     inbound.PullRequestCreator
+}
+
+// BuildInboundWebhookHandler creates a fully wired inbound webhook handler with reporters and bridge.
+func BuildInboundWebhookHandler(
+	cfg InboundConfig,
+	gw *gateway.Gateway,
+	orchestrator PipelineOrchestrator,
+	runner FactoryPipelineRunner,
+) (http.Handler, *inbound.PipelineTriggerManager) {
+	reporter := cfg.IssueReporter
+	prCreator := cfg.PRCreator
+
+	if reporter == nil {
+		var ghReporter *inbound.GitHubIssueReporter
+		if cfg.GitHubToken != "" || cfg.GitHubAPIURL != "" {
+			ghReporter = inbound.NewGitHubIssueReporter(inbound.GitHubReporterConfig{
+				Token:   cfg.GitHubToken,
+				BaseURL: cfg.GitHubAPIURL,
+			})
+		}
+		var glReporter *inbound.GitLabIssueReporter
+		if cfg.GitLabToken != "" || cfg.GitLabAPIURL != "" {
+			glReporter = inbound.NewGitLabIssueReporter(inbound.GitLabReporterConfig{
+				Token:   cfg.GitLabToken,
+				BaseURL: cfg.GitLabAPIURL,
+			})
+		}
+		if ghReporter != nil || glReporter != nil {
+			comp := inbound.NewCompositeIssueReporter(ghReporter, glReporter)
+			reporter = comp
+			if prCreator == nil {
+				prCreator = comp
+			}
+		}
+	}
+
+	var bridge *inbound.AutonomousFactoryBridge
+	if runner != nil {
+		bridgeCfg := inbound.DefaultBridgeConfig()
+		if cfg.BridgeConfig != nil {
+			bridgeCfg = *cfg.BridgeConfig
+		}
+		if prCreator != nil {
+			bridgeCfg.PRCreator = prCreator
+		}
+		bridge = inbound.NewAutonomousFactoryBridge(bridgeCfg, runner, gw, reporter)
+	}
+
+	triggerCfg := inbound.DefaultTriggerManagerConfig()
+	if cfg.TriggerConfig != nil {
+		triggerCfg = *cfg.TriggerConfig
+	}
+	if bridge != nil {
+		triggerCfg.AutonomousBridge = bridge
+	} else if runner != nil {
+		triggerCfg.AutonomousRunner = runner
+		triggerCfg.IssueReporter = reporter
+	}
+
+	var submitter inbound.PipelineSubmitter
+	if orchestrator != nil {
+		submitter = orchestrator
+	}
+
+	triggerMgr := inbound.NewPipelineTriggerManager(
+		triggerCfg,
+		submitter,
+		gw,
+		nil,
+		nil,
+	)
+
+	webhookIngestor := inbound.NewIngestor(inbound.Config{
+		GitHubSecret: cfg.GitHubSecret,
+		GitLabSecret: cfg.GitLabSecret,
+		SentrySecret: cfg.SentrySecret,
+	}, inbound.NewMultiDispatcher(
+		inbound.NewGatewayDispatcher(gw),
+		triggerMgr,
+	))
+
+	return webhookIngestor, triggerMgr
+}
+
+// NewServerMuxWithInbound configures the HTTP request multiplexer for ov-server including autonomous inbound triggering.
+func NewServerMuxWithInbound(
+	brainSvc *brain.Service,
+	gw *gateway.Gateway,
+	inboundCfg InboundConfig,
+	chatHandler *chat.ChatHandler,
+	orchestrator PipelineOrchestrator,
+	authSvc *auth.Service,
+	st store.Store,
+	workerReg *WorkerRegistry,
+	runner FactoryPipelineRunner,
+	tel ...*telemetry.Telemetry,
+) (http.Handler, *inbound.PipelineTriggerManager) {
+	ingestor, triggerMgr := BuildInboundWebhookHandler(inboundCfg, gw, orchestrator, runner)
+	mux := NewServerMuxWithRunner(brainSvc, gw, ingestor, chatHandler, orchestrator, authSvc, st, workerReg, runner, tel...)
+	return mux, triggerMgr
 }
 
 // NewServerMux configures and returns the HTTP request multiplexer for ov-server.
