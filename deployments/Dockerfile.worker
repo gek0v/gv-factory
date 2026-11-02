@@ -6,8 +6,8 @@ FROM golang:1.24-alpine AS builder
 
 WORKDIR /workspace
 
-# Install CGO build dependencies and utilities
-RUN apk add --no-cache ca-certificates git tzdata gcc musl-dev
+# Install CGO build dependencies and utilities (CGO required for tree-sitter AST)
+RUN apk add --no-cache ca-certificates git tzdata gcc g++ musl-dev
 
 # Leverage module caching
 COPY go.mod go.sum ./
@@ -16,8 +16,8 @@ RUN go mod download
 # Copy source tree
 COPY . .
 
-# Compile optimized worker binary
-ENV CGO_ENABLED=0
+# Compile optimized worker binary with CGO
+ENV CGO_ENABLED=1
 RUN go build -ldflags="-s -w" -o /bin/ov-worker ./cmd/ov-worker
 
 # Stage 2: Hardened worker runtime with Git CLI for worktree operations
