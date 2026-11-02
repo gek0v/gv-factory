@@ -26,6 +26,7 @@ import { GateResolutionModal } from './components/gate/GateResolutionModal';
 import { FactoryRunModal } from './components/factory/FactoryRunModal';
 import { WorkerClusterHealthButton, WorkerDashboardModal } from './components/workers/WorkerDashboard';
 import { BrainExplorerButton, BrainExplorerModal } from './components/BrainExplorerModal';
+import { ExecutionTimelineDrawer, TimelineButton } from './components/timeline/ExecutionTimelineDrawer';
 import { defaultGatewayClient } from './api/gateway';
 
 export const App: React.FC = () => {
@@ -129,6 +130,7 @@ export const App: React.FC = () => {
         </div>
 
         <div className="header-actions">
+          <TimelineButton />
           <BrainExplorerButton />
           <WorkerClusterHealthButton />
           <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
@@ -211,6 +213,7 @@ export const App: React.FC = () => {
         {selectedNodeId && <NodeInspector />}
       </div>
 
+      <ExecutionTimelineDrawer />
       <GateResolutionModal />
       <WorkerDashboardModal />
       <BrainExplorerModal />

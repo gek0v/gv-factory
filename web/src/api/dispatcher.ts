@@ -12,6 +12,28 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
   const payload = event.payload || {};
   const stepId = (event.task_id || (payload.step_id as string) || (payload.id as string) || '').trim();
 
+  if (type === 'stage.event' || type === 'ov.stage.event' || type === 'execution.event') {
+    const stage = (payload.stage as string) || (event.task_id as string) || '';
+    if (stage) {
+      store.addExecutionEvent({
+        stage,
+        timestamp: (payload.timestamp as string) || (event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString()),
+        payload: payload.data || payload,
+      });
+    }
+  } else if (
+    type === 'spec_generated' ||
+    type === 'build_completed' ||
+    type === 'review_decided' ||
+    type === 'pipeline_completed'
+  ) {
+    store.addExecutionEvent({
+      stage: type,
+      timestamp: (payload.timestamp as string) || (event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString()),
+      payload,
+    });
+  }
+
   if (type === 'task.created' || type === 'ov.task.pending') {
     if (stepId) {
       store.updateNodeStatus(stepId, 'pending');

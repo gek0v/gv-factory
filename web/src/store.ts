@@ -84,6 +84,11 @@ export interface FactoryFlowState {
   updateWorkerHeartbeat: (heartbeat: import('./types/worker').WorkerHeartbeatEvent) => void;
   setNodes: (nodes: Node<FactoryNodeData>[]) => void;
   setEdges: (edges: Edge[]) => void;
+  showExecutionTimeline: boolean;
+  setShowExecutionTimeline: (show: boolean) => void;
+  executionEvents: Array<{ stage: string; timestamp: string; payload: any }>;
+  addExecutionEvent: (event: { stage: string; timestamp?: string; payload: any }) => void;
+  clearExecutionEvents: () => void;
 }
 
 export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
@@ -102,6 +107,20 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   showWorkerDashboard: false,
   showBrainExplorer: false,
   workerPool: null,
+  showExecutionTimeline: false,
+  executionEvents: [],
+  setShowExecutionTimeline: (show: boolean) => set({ showExecutionTimeline: show }),
+  addExecutionEvent: (event: { stage: string; timestamp?: string; payload: any }) => {
+    const newEvent = {
+      stage: event.stage,
+      timestamp: event.timestamp || new Date().toISOString(),
+      payload: event.payload,
+    };
+    set((state) => ({
+      executionEvents: [...state.executionEvents, newEvent],
+    }));
+  },
+  clearExecutionEvents: () => set({ executionEvents: [] }),
 
   onNodesChange: (changes) => {
     for (const change of changes) {
