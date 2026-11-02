@@ -14,6 +14,7 @@ import (
 
 	"github.com/gv-factory/gv-factory/internal/agent"
 	"github.com/gv-factory/gv-factory/internal/brain"
+	"github.com/gv-factory/gv-factory/internal/connectors/llm"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
@@ -109,9 +110,11 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		broadcastStageEvent(d.gw, task.TaskID, stage, payload)
 	}
 
+	llmClient, _ := llm.NewClientFromEnv()
+
 	cfg := agent.CoordinatorConfig{
-		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc}),
-		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: "."}),
+		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc, LLM: llmClient}),
+		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: ".", LLMClient: llmClient}),
 		Approver:    agent.NewApprover(nil, agent.ApproverConfig{}),
 		Brain:       d.brainSvc,
 		MergeQueue:  d.mergeQueue,
