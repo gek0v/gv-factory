@@ -26,15 +26,15 @@ const (
 )
 
 var (
-	ErrInvalidManifest    = errors.New("invalid plugin manifest")
-	ErrPluginNotFound     = errors.New("plugin not found")
-	ErrFunctionNotFound   = errors.New("function not found")
-	ErrExecutionTimeout   = errors.New("plugin execution timeout")
-	ErrMemoryFault        = errors.New("wasm memory fault")
-	ErrTrap               = errors.New("wasm execution trap")
-	ErrPluginClosed       = errors.New("plugin instance is closed")
-	ErrInvalidSource      = errors.New("invalid plugin source")
-	ErrPluginRuntime      = errors.New("plugin runtime error")
+	ErrInvalidManifest  = errors.New("invalid plugin manifest")
+	ErrPluginNotFound   = errors.New("plugin not found")
+	ErrFunctionNotFound = errors.New("function not found")
+	ErrExecutionTimeout = errors.New("plugin execution timeout")
+	ErrMemoryFault      = errors.New("wasm memory fault")
+	ErrTrap             = errors.New("wasm execution trap")
+	ErrPluginClosed     = errors.New("plugin instance is closed")
+	ErrInvalidSource    = errors.New("invalid plugin source")
+	ErrPluginRuntime    = errors.New("plugin runtime error")
 )
 
 // PluginError wraps runtime, memory, and lifecycle failures with structured metadata.

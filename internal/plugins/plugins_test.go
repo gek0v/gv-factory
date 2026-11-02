@@ -5,6 +5,7 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1080,4 +1081,198 @@ func TestWasmPluginConcurrentExecution(t *testing.T) {
 	}
 }
 
+func TestEnvMockFallbackParsing(t *testing.T) {
+	truthyCases := []string{"true", "True", "TRUE", "1", "t", "T", "yes", "YES", "y", "Y", "on", "ON"}
+	for _, tc := range truthyCases {
+		t.Setenv("OV_MOCK_PLUGINS", tc)
+		t.Setenv("OV_DRY_RUN_PLUGINS", "")
+		if !checkMockFallbackEnv() {
+			t.Errorf("expected OV_MOCK_PLUGINS=%q to be truthy", tc)
+		}
 
+		t.Setenv("OV_MOCK_PLUGINS", "")
+		t.Setenv("OV_DRY_RUN_PLUGINS", tc)
+		if !checkMockFallbackEnv() {
+			t.Errorf("expected OV_DRY_RUN_PLUGINS=%q to be truthy", tc)
+		}
+	}
+
+	falsyCases := []string{"false", "0", "no", "off", "", "random"}
+	for _, fc := range falsyCases {
+		t.Setenv("OV_MOCK_PLUGINS", fc)
+		t.Setenv("OV_DRY_RUN_PLUGINS", fc)
+		if checkMockFallbackEnv() {
+			t.Errorf("expected %q to be falsy", fc)
+		}
+	}
+}
+
+func TestHostConfigMockFallbackDefaults(t *testing.T) {
+	t.Setenv("OV_MOCK_PLUGINS", "")
+	t.Setenv("OV_DRY_RUN_PLUGINS", "")
+
+	cfg := DefaultHostConfig()
+	if cfg.EnableMockFallback {
+		t.Errorf("expected default EnableMockFallback to be false when env is unset")
+	}
+
+	h := NewHost()
+	defer h.Close()
+	if h.MockFallbackEnabled() {
+		t.Errorf("expected h.MockFallbackEnabled() to be false")
+	}
+
+	h.SetMockFallback(true)
+	if !h.MockFallbackEnabled() {
+		t.Errorf("expected h.MockFallbackEnabled() to be true after SetMockFallback(true)")
+	}
+
+	// Now with env var set
+	t.Setenv("OV_MOCK_PLUGINS", "true")
+	cfgEnv := DefaultHostConfig()
+	if !cfgEnv.EnableMockFallback {
+		t.Errorf("expected DefaultHostConfig().EnableMockFallback to be true when OV_MOCK_PLUGINS=true")
+	}
+
+	hEnv := NewHost()
+	defer hEnv.Close()
+	if !hEnv.MockFallbackEnabled() {
+		t.Errorf("expected NewHost() to inherit mock fallback from env var")
+	}
+}
+
+func TestHostCallMockFallback(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. When mock fallback is disabled: missing plugin returns ErrPluginNotFound
+	hDisabled := NewHost(HostConfig{EnableMockFallback: false})
+	defer hDisabled.Close()
+
+	_, err := hDisabled.Call(ctx, "extism://plugins/missing.wasm", "execute", []byte("{}"))
+	if err == nil || !errors.Is(err, ErrPluginNotFound) {
+		t.Fatalf("expected ErrPluginNotFound when mock is disabled, got %v", err)
+	}
+
+	// 2. When mock fallback is enabled: missing plugin returns synthetic pdk.Result
+	hEnabled := NewHost(HostConfig{EnableMockFallback: true})
+	defer hEnabled.Close()
+
+	pluginRef := "extism://plugins/missing-step.wasm"
+	fnName := "execute_step"
+	outBytes, err := hEnabled.Call(ctx, pluginRef, fnName, []byte(`{"run_id":"run-1"}`))
+	if err != nil {
+		t.Fatalf("expected Call to succeed in mock mode, got: %v", err)
+	}
+
+	var res pdk.Result
+	if err := json.Unmarshal(outBytes, &res); err != nil {
+		t.Fatalf("failed to unmarshal synthetic mock result: %v", err)
+	}
+
+	if !res.Success {
+		t.Errorf("expected res.Success to be true")
+	}
+	expectedOutput := "[dry-run] simulated execution for " + pluginRef
+	if res.Output != expectedOutput {
+		t.Errorf("expected Output %q, got %q", expectedOutput, res.Output)
+	}
+	if res.Data == nil {
+		t.Fatalf("expected res.Data to be populated")
+	}
+	if isDryRun, ok := res.Data["dry_run"].(bool); !ok || !isDryRun {
+		t.Errorf("expected Data.dry_run to be true, got %v", res.Data["dry_run"])
+	}
+	if p, _ := res.Data["plugin"].(string); p != pluginRef {
+		t.Errorf("expected Data.plugin %q, got %q", pluginRef, p)
+	}
+	if f, _ := res.Data["function"].(string); f != fnName {
+		t.Errorf("expected Data.function %q, got %q", fnName, f)
+	}
+	if s, _ := res.Data["status"].(string); s != "completed" {
+		t.Errorf("expected Data.status 'completed', got %q", s)
+	}
+
+	// 3. Empty plugin ref must still fail even with mock enabled
+	_, err = hEnabled.Call(ctx, "", "execute", []byte("{}"))
+	if err == nil || !errors.Is(err, ErrPluginNotFound) {
+		t.Errorf("expected ErrPluginNotFound for empty pluginRef even when mock is enabled, got %v", err)
+	}
+
+	// 4. Existing plugin executes real WASM, does NOT mock
+	wasmPath := filepath.Join("testdata", "hello.wasm")
+	realOut, err := hEnabled.Call(ctx, wasmPath, "run_test", []byte{})
+	if err != nil {
+		t.Fatalf("failed to call real plugin with mock enabled: %v", err)
+	}
+	if string(realOut) != "Hello, world!" {
+		t.Errorf("expected real plugin execution output 'Hello, world!', got: %s", string(realOut))
+	}
+}
+
+func TestHostCallPDKMockFallback(t *testing.T) {
+	ctx := context.Background()
+	h := NewHost(HostConfig{EnableMockFallback: true})
+	defer h.Close()
+
+	pluginRef := "plugins/builder-tdd.wasm"
+	fnName := "build"
+	pdkCtx := pdk.Context{
+		RunID:  "run-mock-123",
+		TaskID: "task-mock-abc",
+	}
+
+	res, err := h.CallPDK(ctx, pluginRef, fnName, pdkCtx)
+	if err != nil {
+		t.Fatalf("expected CallPDK to succeed in mock mode, got: %v", err)
+	}
+	if res == nil {
+		t.Fatalf("expected non-nil pdk.Result")
+	}
+	if !res.Success {
+		t.Errorf("expected res.Success to be true")
+	}
+	if !strings.Contains(res.Output, "[dry-run] simulated execution for plugins/builder-tdd.wasm") {
+		t.Errorf("unexpected res.Output: %s", res.Output)
+	}
+	if isDryRun, ok := res.Data["dry_run"].(bool); !ok || !isDryRun {
+		t.Errorf("expected Data.dry_run == true, got %v", res.Data["dry_run"])
+	}
+}
+
+func TestHostMockFallbackConcurrency(t *testing.T) {
+	ctx := context.Background()
+	h := NewHost(HostConfig{EnableMockFallback: true})
+	defer h.Close()
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 100)
+
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ref := fmt.Sprintf("extism://plugins/mock-%d.wasm", idx%5)
+			pdkCtx := pdk.Context{
+				RunID:  fmt.Sprintf("run-%d", idx),
+				TaskID: fmt.Sprintf("task-%d", idx),
+			}
+			res, err := h.CallPDK(ctx, ref, "execute", pdkCtx)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if !res.Success {
+				errCh <- fmt.Errorf("call %d returned Success=false", idx)
+				return
+			}
+			_ = h.MockFallbackEnabled()
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("concurrent mock execution failed: %v", err)
+	}
+}
