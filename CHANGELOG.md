@@ -8,6 +8,16 @@ Las actualizaciones de este fichero son gestionadas automáticamente por **Relea
 
 ---
 
+## [1.4.0](https://github.com/gek0v/gv-factory/compare/v1.3.0...v1.4.0) (2026-11-02)
+
+
+### Features
+
+* **sandbox,worker:** implement OCI container runner with cgroups v2 resource quotas and mount isolation ([#100](https://github.com/gek0v/gv-factory/issues/100)) ([#103](https://github.com/gek0v/gv-factory/issues/103)) ([9dc5281](https://github.com/gek0v/gv-factory/commit/9dc5281d4c3a484c7ceb2e0b05914259a1c8123a))
+* **web:** add sandbox isolation policy configuration and execution security telemetry in inspector ([#101](https://github.com/gek0v/gv-factory/issues/101)) ([#102](https://github.com/gek0v/gv-factory/issues/102)) ([fcf0b63](https://github.com/gek0v/gv-factory/commit/fcf0b6348209bb028f4dfc27edcb70b40c8947a8))
+* **web:** interactive real-time LogViewer with ANSI formatting, search, and auto-scroll ([#96](https://github.com/gek0v/gv-factory/issues/96)) ([#97](https://github.com/gek0v/gv-factory/issues/97)) ([59ae9fb](https://github.com/gek0v/gv-factory/commit/59ae9fb69e73b4351606fda8615e104f8224b196))
+* **worker,server:** stream chunked execution logs via NATS and SSE bridge ([#95](https://github.com/gek0v/gv-factory/issues/95)) ([#98](https://github.com/gek0v/gv-factory/issues/98)) ([91e9aef](https://github.com/gek0v/gv-factory/commit/91e9aefd073da2e36bdc49899d9a2d70967cddab))
+
 ## [1.3.0](https://github.com/gek0v/gv-factory/compare/v1.2.0...v1.3.0) (2026-11-01)
 
 
