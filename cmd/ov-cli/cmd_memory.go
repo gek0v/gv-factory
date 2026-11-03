@@ -378,10 +378,12 @@ func executeMemorySyncADRs(ctx context.Context, args []string, out io.Writer, co
 		dryRunFlag = fs.Bool("dry-run", false, "Simulate ADR sync without database writes")
 		serverFlag = fs.String("server", "", "Remote ov-server URL")
 		jsonFlag   = fs.Bool("json", false, "Output results in JSON format")
+		pathFlag   = fs.String("path", "", "Path to ADR directory")
 	)
 
 	syncValFlags := map[string]bool{
 		"server": true,
+		"path":   true,
 	}
 	reordered := reorderArgs(args, syncValFlags)
 
@@ -390,7 +392,9 @@ func executeMemorySyncADRs(ctx context.Context, args []string, out io.Writer, co
 	}
 
 	path := "docs/adr"
-	if len(fs.Args()) > 0 {
+	if *pathFlag != "" {
+		path = *pathFlag
+	} else if len(fs.Args()) > 0 {
 		path = fs.Args()[0]
 	}
 
@@ -675,7 +679,7 @@ func fallbackASTQuery(query, category string) []MemoryQueryResult {
 		},
 		{
 			Category:   "rules",
-			FilePath:   "docs/adr/0004-protocolo-aprobacion-humana.md",
+			FilePath:   "docs/adr/0004-hitl-hmac-governance.md",
 			SymbolName: "RULE-SEC-004",
 			SymbolType: "CRITICAL",
 			Summary:    "Human-in-the-Loop required when coverage < 90% or migrations touched",

@@ -1,5 +1,7 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: 2026 gv-factory contributors
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 gv-factory contributors
+-->
 
 # ADR 0009: Empaquetado Multi-Arquitectura con GoReleaser, Firma Criptográfica sin Claves con Cosign y Atestación SLSA Nivel 3
 

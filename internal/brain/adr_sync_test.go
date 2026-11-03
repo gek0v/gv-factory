@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -424,6 +425,50 @@ func TestSyncADRs_RealDocsADRDirectory(t *testing.T) {
 	}
 	if res.Created < 10 {
 		t.Errorf("expected >= 10 created rules, got %d", res.Created)
+	}
+}
+
+func TestSyncADRs_OfficialFiveADRs(t *testing.T) {
+	adrDir := filepath.Join("..", "..", "docs", "adr")
+
+	expectedRules := map[string]struct {
+		filename string
+		titleSub string
+	}{
+		"ADR-0001": {"0001-wasm-extism-plugins.md", "Microkernel Extism WASM"},
+		"ADR-0002": {"0002-pgvector-brain-memory.md", "pgvector"},
+		"ADR-0003": {"0003-sequential-merge-queue-merge-tree.md", "merge-tree"},
+		"ADR-0004": {"0004-hitl-hmac-governance.md", "Human-in-the-Loop"},
+		"ADR-0005": {"0005-multi-provider-dynamic-llm.md", "conectores LLM"},
+	}
+
+	for ruleCode, meta := range expectedRules {
+		path := filepath.Join(adrDir, meta.filename)
+		doc, err := ParseADRFile(path)
+		if err != nil {
+			t.Fatalf("failed parsing official ADR %s (%s): %v", meta.filename, ruleCode, err)
+		}
+		if doc.RuleCode != ruleCode {
+			t.Errorf("expected rule code %s for %s, got %s", ruleCode, meta.filename, doc.RuleCode)
+		}
+		if doc.Status != ADRStatusAccepted {
+			t.Errorf("expected status Accepted for %s, got %s", ruleCode, doc.Status)
+		}
+		if doc.Severity != "ERROR" {
+			t.Errorf("expected severity ERROR for accepted rule %s, got %s", ruleCode, doc.Severity)
+		}
+		if doc.Context == "" {
+			t.Errorf("missing Context in %s", meta.filename)
+		}
+		if doc.Decision == "" {
+			t.Errorf("missing Decision in %s", meta.filename)
+		}
+		if doc.Consequences == "" {
+			t.Errorf("missing Consequences in %s", meta.filename)
+		}
+		if !strings.Contains(doc.Title, meta.titleSub) {
+			t.Errorf("expected title to contain %q, got %q", meta.titleSub, doc.Title)
+		}
 	}
 }
 

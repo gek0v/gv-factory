@@ -102,7 +102,7 @@ func (s *Service) SyncADRs(ctx context.Context, dir string, opts ...ADRSyncOptio
 			return result, err
 		}
 
-		if entry.IsDir() || strings.ToLower(filepath.Ext(entry.Name())) != ".md" {
+		if entry.IsDir() || strings.ToLower(filepath.Ext(entry.Name())) != ".md" || strings.EqualFold(entry.Name(), "readme.md") {
 			continue
 		}
 

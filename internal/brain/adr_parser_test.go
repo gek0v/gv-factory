@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -267,7 +268,7 @@ func TestParseADRFile_RealADRs(t *testing.T) {
 
 	count := 0
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" || strings.EqualFold(entry.Name(), "readme.md") {
 			continue
 		}
 		path := filepath.Join(adrDir, entry.Name())
