@@ -1011,6 +1011,9 @@ func NewServerMuxWithRunner(
 	// Codebase Brain endpoints (search, sync ADRs, repository indexer, stats)
 	registerBrainEndpoints(mux, brainSvc)
 
+	// Global Pi Skills, Tools, Plugins and Agent Templates registry endpoints
+	registerRegistryEndpoints(mux, nil)
+
 	// Cost and Token Telemetry endpoints
 	var costTracker *telemetry.CostTracker
 	if t != nil && t.CostTracker != nil {
