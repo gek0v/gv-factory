@@ -101,6 +101,9 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
       # Pi / Pi-Bolt Harness Configuration
       PI_HARNESS_ENABLED: ${PI_HARNESS_ENABLED:-true}
+    volumes:
+      - sandboxes:/tmp/ov-sandboxes
+      - ../.agents:/home/nonroot/.agents:ro
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:

@@ -28,6 +28,11 @@ Files: *.wasm **/*.wasm
 Copyright: 2026 OV-Factory Contributors
 License: Apache-2.0
 
+# Skills de agentes y recursos de datos
+Files: .agents/**/* .agents/**/**/*
+Copyright: 2026 OV-Factory Contributors
+License: Apache-2.0
+
 # Licencias
 Files: LICENSES/*
 Copyright: 2026 OV-Factory Contributors

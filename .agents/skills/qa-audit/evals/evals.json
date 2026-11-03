@@ -1,0 +1,43 @@
+{
+  "skill_name": "qa-audit",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Can you review this flaky integration test? It passes locally on my laptop when run in isolation, but fails randomly in GitHub Actions when parallel runners are enabled:\n\n```typescript\ndescribe('Tenant Provisioning Integration Test', () => {\n  it('creates default tenant settings', async () => {\n    await db.insert(tenants).values({ id: 'tenant_1', name: 'Acme Corp' });\n    await provisioningService.initializeTenant('tenant_1');\n    await new Promise(r => setTimeout(r, 800));\n    const settings = await db.query.tenantSettings.findFirst({\n      where: eq(tenantSettings.tenantId, 'tenant_1')\n    });\n    expect(settings).toBeDefined();\n  });\n});\n```",
+      "expected_output": "Guidance mode activated. Identifies three major test engineering flaws: 1) Hardcoded static tenant ID 'tenant_1' causing unique constraint collisions under parallel test runners, 2) Arbitrary 800ms sleep delay creating timing race conditions on loaded CI runners, 3) Vacuous assertion `toBeDefined()` that passes even on empty or corrupted objects. Proposes minimal surgical refactoring with dynamic fixture factory, event/polling synchronization, and sound assertions.",
+      "files": [],
+      "expectations": [
+        "Identifies static hardcoded ID ('tenant_1') causing database state collisions across parallel test workers",
+        "Identifies arbitrary setTimeout/sleep(800) as a timing fragility mechanism on CI runners",
+        "Identifies vacuous assertion expect(settings).toBeDefined() failing to assert specific tenant settings properties",
+        "Proposes minimal surgical refactoring using dynamic IDs, deterministic wait condition, and strict property assertions",
+        "Operates in Guidance mode in chat without generating full audit directory trees"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Please run a full QA audit on our payment and billing test suite at ./tests/billing. We need a comprehensive review of test architecture, mock fidelity, assertion soundness, and boundary coverage, with full audit reports (REPORT.md, FINDINGS-DETAIL.md, QA-REMEDIATION-ROADMAP.md) and findings.json.",
+      "expected_output": "Full audit mode activated. Sets up output directory, conducts Phase 1 reconnaissance mapping test topology and seeding coverage-ledger.json, outlines clean-context subagents for hunting test invariant failures, conducts adversarial validation, validates findings against report-schema.json, and generates structured REPORT.md, FINDINGS-DETAIL.md, and QA-REMEDIATION-ROADMAP.md.",
+      "files": [],
+      "expectations": [
+        "Recognizes explicit audit request and activates Full Audit mode with 6-phase workflow",
+        "Seeds deterministic coverage-ledger.json covering surfaces, levels, and QA defect classes",
+        "Mandates execution in fresh subagents with clean context for zero conversational bias",
+        "Validates findings.json against report-schema.json with validate-findings.cjs",
+        "Generates REPORT.md, FINDINGS-DETAIL.md, and QA-REMEDIATION-ROADMAP.md with bounded diffs and source traces"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "A pull request reviewer left 15 comments demanding we change all `test('should ...')` blocks to BDD `describe('when ...') / it('then ...')` style and change `expect(res.status).toBe(200)` to `expect(res.statusCode).toEqual(200)`. However, the PR actually introduces an un-awaited promise in an auth test:\n\n```typescript\nit('rejects invalid tokens', () => {\n  expect(jwtService.verify('corrupted-token')).rejects.toThrow('Invalid signature');\n});\n```\nCan you audit this PR from a QA and test engineering perspective?",
+      "expected_output": "Applies the Anti-Nitpicking Rule and adversarial validation. Explicitly rejects the reviewer's comments on test naming style ('should' vs 'when/then') and assertion syntax ('toBe(200)' vs 'toEqual(200)') as cosmetic preferences with zero defect impact. Concurrently identifies the genuine critical QA defect: the un-awaited promise (`expect(...).rejects.toThrow()`) which completes before the rejection fires, causing the test runner to register a false-positive pass.",
+      "files": [],
+      "expectations": [
+        "Applies the Anti-Nitpicking Rule to reject cosmetic test naming and trivial syntax preferences",
+        "Identifies genuine critical QA defect: un-awaited promise in expect(jwtService.verify(...)).rejects.toThrow()",
+        "Explains the failure mode: runner exits before async assertion evaluates, yielding false-positive pass",
+        "Provides minimal surgical diff adding 'await' and making the test async"
+      ]
+    }
+  ]
+}

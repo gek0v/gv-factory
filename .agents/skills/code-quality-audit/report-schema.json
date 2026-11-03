@@ -1,0 +1,496 @@
+{
+  "$comment": "Top-level contract for findings.json in code-quality-audit. validate-findings.cjs interprets and checks this schema directly.",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "description": "A source-grounded code quality defect or architectural flaw that was independently demonstrated.",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "const": "confirmed"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+            "description": "A stable source-derived identifier that does not change between validation states."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "quality_class": {
+            "type": "string",
+            "enum": [
+              "architecture_and_coupling",
+              "concurrency_and_resources",
+              "performance_and_algorithmic",
+              "error_handling_and_resilience",
+              "maintainability_and_testability",
+              "type_safety_and_contracts",
+              "domain_specific"
+            ]
+          },
+          "subsystem": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "root_cause": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "intended_design": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "trace": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["entrypoint", "propagation", "defect_site", "impact_site"]
+                },
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "explanation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["kind", "file", "line", "explanation"],
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["file", "line", "description"],
+              "additionalProperties": false
+            }
+          },
+          "conditions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "high_concurrency",
+                    "large_dataset",
+                    "error_or_timeout_recovery",
+                    "resource_exhaustion",
+                    "boundary_crossing",
+                    "subsystem_evolution",
+                    "component_testing"
+                  ]
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["kind", "description"],
+              "additionalProperties": false
+            }
+          },
+          "degradation_demonstration": {
+            "type": "object",
+            "description": "Concrete demonstration or analysis proving non-cosmetic degradation.",
+            "properties": {
+              "failure_mode": {
+                "type": "string",
+                "enum": [
+                  "unbounded_memory_growth",
+                  "deadlock_or_starvation",
+                  "race_condition",
+                  "algorithmic_complexity_cliff",
+                  "silent_data_loss_or_corruption",
+                  "unhandled_crash_or_panic",
+                  "connection_or_handle_leak",
+                  "circular_or_spaghetti_coupling",
+                  "untestable_side_effect"
+                ]
+              },
+              "mechanism": {
+                "type": "string",
+                "minLength": 1,
+                "visibleContent": true
+              },
+              "impact_summary": {
+                "type": "string",
+                "minLength": 1,
+                "visibleContent": true
+              }
+            },
+            "required": ["failure_mode", "mechanism", "impact_summary"],
+            "additionalProperties": false
+          },
+          "remediation": {
+            "type": "object",
+            "description": "Smallest effective refactoring proposal enforcing the correct invariant.",
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "visibleContent": true
+              },
+              "recommended_diff": {
+                "type": "string",
+                "minLength": 1,
+                "visibleContent": true
+              },
+              "regression_test_plan": {
+                "type": "string",
+                "minLength": 1,
+                "visibleContent": true
+              }
+            },
+            "required": ["summary", "recommended_diff", "regression_test_plan"],
+            "additionalProperties": false
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "informational"]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["certain", "high"]
+          }
+        },
+        "required": [
+          "verdict",
+          "fingerprint",
+          "title",
+          "description",
+          "quality_class",
+          "subsystem",
+          "root_cause",
+          "intended_design",
+          "trace",
+          "evidence",
+          "conditions",
+          "degradation_demonstration",
+          "remediation",
+          "severity",
+          "confidence"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "description": "A source-grounded candidate whose decisive confirmation requires runtime profiling, production data, or external validation.",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "const": "needs_validation"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "quality_class": {
+            "type": "string",
+            "enum": [
+              "architecture_and_coupling",
+              "concurrency_and_resources",
+              "performance_and_algorithmic",
+              "error_handling_and_resilience",
+              "maintainability_and_testability",
+              "type_safety_and_contracts",
+              "domain_specific"
+            ]
+          },
+          "subsystem": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "claimed_root_cause": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "trace": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["entrypoint", "propagation", "defect_site", "impact_site"]
+                },
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "explanation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["kind", "file", "line", "explanation"],
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["file", "line", "description"],
+              "additionalProperties": false
+            }
+          },
+          "blockers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "visibleContent": true
+            }
+          },
+          "validation_plan": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          }
+        },
+        "required": [
+          "verdict",
+          "fingerprint",
+          "title",
+          "description",
+          "quality_class",
+          "subsystem",
+          "claimed_root_cause",
+          "trace",
+          "evidence",
+          "blockers",
+          "validation_plan"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "description": "A candidate quality defect refuted during adversarial validation (false positive, cosmetic preference, or existing mitigation).",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "const": "rejected"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "quality_class": {
+            "type": "string",
+            "enum": [
+              "architecture_and_coupling",
+              "concurrency_and_resources",
+              "performance_and_algorithmic",
+              "error_handling_and_resilience",
+              "maintainability_and_testability",
+              "type_safety_and_contracts",
+              "domain_specific"
+            ]
+          },
+          "subsystem": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "claimed_root_cause": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          },
+          "trace": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["entrypoint", "propagation", "defect_site", "impact_site"]
+                },
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "explanation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["kind", "file", "line", "explanation"],
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "visibleContent": true
+                }
+              },
+              "required": ["file", "line", "description"],
+              "additionalProperties": false
+            }
+          },
+          "rejection_reason": {
+            "type": "string",
+            "enum": [
+              "mitigated_by_framework_or_surrounding_code",
+              "purely_cosmetic_or_linter_style_preference",
+              "intentional_tradeoff_with_demonstrated_benefit",
+              "unreachable_or_dead_path_in_practice",
+              "invalid_assumptions_about_runtime_behavior"
+            ]
+          },
+          "refutation": {
+            "type": "string",
+            "minLength": 1,
+            "visibleContent": true
+          }
+        },
+        "required": [
+          "verdict",
+          "fingerprint",
+          "title",
+          "description",
+          "quality_class",
+          "subsystem",
+          "claimed_root_cause",
+          "trace",
+          "evidence",
+          "rejection_reason",
+          "refutation"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

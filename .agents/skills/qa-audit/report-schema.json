@@ -1,0 +1,445 @@
+{
+  "$comment": "Top-level contract for findings.json in qa-audit. validate-findings.cjs interprets and checks this schema directly.",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "description": "A source-grounded QA defect, test invariant failure, or mock infidelity that was independently demonstrated.",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "const": "confirmed"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+            "description": "A stable source-derived identifier that does not change between validation states."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "visibleContent": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "qa_class": {
+            "type": "string",
+            "enum": [
+              "assertion_and_soundness",
+              "mock_fidelity_and_isolation",
+              "flakiness_and_concurrency",
+              "boundary_and_coverage_gaps",
+              "test_architecture_and_performance",
+              "test_data_and_lifecycle",
+              "domain_specific"
+            ]
+          },
+          "subsystem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "visibleContent": true
+          },
+          "root_cause": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "intended_behavior": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "trace": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["test_case", "fixture_or_mock", "defect_site", "impact_site"]
+                },
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "explanation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 250,
+                  "visibleContent": true
+                }
+              },
+              "required": ["kind", "file", "line", "explanation"],
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 250,
+                  "visibleContent": true
+                }
+              },
+              "required": ["file", "line", "description"],
+              "additionalProperties": false
+            }
+          },
+          "test_failure_demonstration": {
+            "type": "object",
+            "properties": {
+              "flaw_mode": {
+                "type": "string",
+                "enum": [
+                  "tautological_assertion",
+                  "unhandled_async_rejection",
+                  "mock_drift",
+                  "over_mocking",
+                  "timing_flakiness",
+                  "shared_state_collision",
+                  "dirty_state_leakage",
+                  "unasserted_error_path",
+                  "test_pyramid_inversion",
+                  "unbounded_execution_timeout",
+                  "domain_specific"
+                ]
+              },
+              "mechanism": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 350,
+                "visibleContent": true
+              },
+              "impact_summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 350,
+                "visibleContent": true
+              }
+            },
+            "required": ["flaw_mode", "mechanism", "impact_summary"],
+            "additionalProperties": false
+          },
+          "remediation": {
+            "type": "object",
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 350,
+                "visibleContent": true
+              },
+              "recommended_diff": {
+                "type": "string",
+                "minLength": 1,
+                "visibleContent": true
+              },
+              "regression_test_plan": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 350,
+                "visibleContent": true
+              }
+            },
+            "required": ["summary", "recommended_diff", "regression_test_plan"],
+            "additionalProperties": false
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "informational"]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["certain", "firm", "tentative"]
+          }
+        },
+        "required": [
+          "verdict",
+          "fingerprint",
+          "title",
+          "description",
+          "qa_class",
+          "subsystem",
+          "root_cause",
+          "intended_behavior",
+          "trace",
+          "evidence",
+          "test_failure_demonstration",
+          "remediation",
+          "severity",
+          "confidence"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "description": "A suspected QA or test engineering defect requiring runtime execution, load test infrastructure, or environment access to confirm.",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "const": "needs_validation"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "visibleContent": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "qa_class": {
+            "type": "string",
+            "enum": [
+              "assertion_and_soundness",
+              "mock_fidelity_and_isolation",
+              "flakiness_and_concurrency",
+              "boundary_and_coverage_gaps",
+              "test_architecture_and_performance",
+              "test_data_and_lifecycle",
+              "domain_specific"
+            ]
+          },
+          "subsystem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "visibleContent": true
+          },
+          "claimed_root_cause": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "trace": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["test_case", "fixture_or_mock", "defect_site", "impact_site"]
+                },
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "symbol": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "explanation": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 250,
+                  "visibleContent": true
+                }
+              },
+              "required": ["kind", "file", "line", "explanation"],
+              "additionalProperties": false
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 250,
+                  "visibleContent": true
+                }
+              },
+              "required": ["file", "line", "description"],
+              "additionalProperties": false
+            }
+          },
+          "blockers": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 250,
+              "visibleContent": true
+            }
+          },
+          "validation_plan": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "provisional_severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "informational"]
+          }
+        },
+        "required": [
+          "verdict",
+          "fingerprint",
+          "title",
+          "description",
+          "qa_class",
+          "subsystem",
+          "claimed_root_cause",
+          "trace",
+          "evidence",
+          "blockers",
+          "validation_plan",
+          "provisional_severity"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "description": "A candidate QA finding disproved, determined to be cosmetic/naming-only, or mitigated by upstream suites.",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "const": "rejected"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "visibleContent": true
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "qa_class": {
+            "type": "string",
+            "enum": [
+              "assertion_and_soundness",
+              "mock_fidelity_and_isolation",
+              "flakiness_and_concurrency",
+              "boundary_and_coverage_gaps",
+              "test_architecture_and_performance",
+              "test_data_and_lifecycle",
+              "domain_specific"
+            ]
+          },
+          "subsystem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "visibleContent": true
+          },
+          "claimed_defect": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          },
+          "rejection_reason": {
+            "type": "string",
+            "enum": [
+              "cosmetic_naming_or_style",
+              "flakiness_not_reproducible",
+              "mock_behavior_intentional",
+              "mitigated_by_upstream_suite",
+              "tautology_disproved"
+            ]
+          },
+          "refutation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 350,
+            "visibleContent": true
+          }
+        },
+        "required": [
+          "verdict",
+          "fingerprint",
+          "title",
+          "description",
+          "qa_class",
+          "subsystem",
+          "claimed_defect",
+          "rejection_reason",
+          "refutation"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

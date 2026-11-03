@@ -1,0 +1,42 @@
+{
+  "skill_name": "code-quality-audit",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Can you review this OrderService code snippet? It feels slow when users have a large order history, and we suspect there is a race condition when customers double-click the checkout button.\n\n```typescript\nexport class OrderService {\n  async getCustomerSummary(customerId: string) {\n    const orders = await db.orders.findMany({ where: { customerId } });\n    for (const order of orders) {\n      order.items = await db.orderItems.findMany({ where: { orderId: order.id } });\n      order.payments = await db.payments.findMany({ where: { orderId: order.id } });\n    }\n    return orders;\n  }\n\n  async checkout(cartId: string) {\n    const cart = await db.carts.findUnique({ where: { id: cartId } });\n    if (cart.status === 'checked_out') return { error: 'already checked out' };\n    await paymentGateway.charge(cart.total);\n    await db.carts.update({ where: { id: cartId }, data: { status: 'checked_out' } });\n    return { success: true };\n  }\n}\n```",
+      "expected_output": "Guidance mode activated. Identifies N+1 query waterfall in getCustomerSummary and TOCTOU race condition in checkout causing double charging. Provides minimal surgical refactoring diffs.",
+      "files": [],
+      "expectations": [
+        "Identifies N+1 query waterfall in getCustomerSummary where database queries execute sequentially inside a loop",
+        "Identifies TOCTOU race condition in checkout between status check and external payment charge",
+        "Proposes minimal surgical refactoring diff using batching/JOIN and atomic conditional update",
+        "Operates in Guidance mode without creating heavy full-audit directory trees"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Please run a full code quality audit on our project at ./services/payment-gateway. We need a comprehensive review of architecture, concurrency, and performance, with full audit reports (REPORT.md, FINDINGS-DETAIL.md, and NEEDS-REFACTOR.md) and machine-readable findings.json.",
+      "expected_output": "Full audit mode activated. Sets up external output directory, conducts Phase 1 reconnaissance mapping architecture and seeding coverage-ledger.json, outlines clean-context subagents for hunting and verification, validates findings against report-schema.json, and generates structured REPORT.md, FINDINGS-DETAIL.md, and NEEDS-REFACTOR.md.",
+      "files": [],
+      "expectations": [
+        "Recognizes explicit audit request and activates Full Audit mode with 6-phase workflow",
+        "Establishes external output directory outside target repository with write isolation",
+        "Seeds deterministic coverage-ledger.json covering surfaces, boundaries, and quality classes",
+        "Mandates execution in fresh subagents with clean context for zero conversational bias",
+        "Validates findings.json against report-schema.json and generates REPORT.md, FINDINGS-DETAIL.md, and NEEDS-REFACTOR.md"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Our linter flagged several files because developers used `function doSomething()` instead of arrow functions `const doSomething = () => {}`, and some lines have 105 characters instead of 100. A teammate claims this is a major architectural maintainability defect that must block the release. Can you audit this from a code quality perspective?",
+      "expected_output": "Applies the Anti-Nitpicking Rule and adversarial validation. Classifies formatting, line length, and syntax preferences (function declaration vs arrow function) as cosmetic preferences with zero engineering defect or failure mode. Recommends rejecting this as a blocking defect.",
+      "files": [],
+      "expectations": [
+        "Classifies function syntax and line length variations as cosmetic preferences or stylistic linter rules",
+        "Enforces the Anti-Nitpicking Rule: no broken invariant, no failure mode, no performance or architectural degradation",
+        "Explicitly refutes and rejects the claim that this should block the release",
+        "Clearly separates genuine engineering defects from subjective cosmetic preferences"
+      ]
+    }
+  ]
+}
