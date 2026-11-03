@@ -117,8 +117,21 @@ func TestNewBuilder(t *testing.T) {
 	if b1.CommandExecutor == nil {
 		t.Error("expected non-nil default CommandExecutor")
 	}
-	if len(b1.TestCommand) == 0 {
-		t.Error("expected non-empty default TestCommand")
+	expectedDefaultCmd := []string{"go", "test", "-cover", "./..."}
+	if len(b1.TestCommand) != len(expectedDefaultCmd) {
+		t.Fatalf("expected default TestCommand %v, got %v", expectedDefaultCmd, b1.TestCommand)
+	}
+	var hasCover bool
+	for i, arg := range expectedDefaultCmd {
+		if b1.TestCommand[i] != arg {
+			t.Errorf("expected TestCommand[%d] = %q, got %q", i, arg, b1.TestCommand[i])
+		}
+		if arg == "-cover" {
+			hasCover = true
+		}
+	}
+	if !hasCover {
+		t.Errorf("expected default TestCommand to contain '-cover'")
 	}
 
 	// Custom configuration
@@ -897,25 +910,247 @@ func TestBuildSpec_ContextCanceledAndTaskError(t *testing.T) {
 	}
 }
 
-// TestExtractJSONContent verifies markdown code fence stripping and raw JSON preservation.
+// TestExtractJSONContent verifies markdown code fence stripping, conversational text handling, and raw JSON preservation.
 func TestExtractJSONContent(t *testing.T) {
-	// Raw JSON
-	raw := `{"path": "a.go", "content": "package a"}`
-	if got := extractJSONContent(raw); got != raw {
-		t.Errorf("expected %s, got %s", raw, got)
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "raw JSON object",
+			input:    `{"path": "a.go", "content": "package a"}`,
+			expected: `{"path": "a.go", "content": "package a"}`,
+		},
+		{
+			name:     "raw JSON with leading and trailing whitespaces and newlines",
+			input:    "  \n\t  {\"path\": \"a.go\", \"content\": \"package a\"}  \n  ",
+			expected: `{"path": "a.go", "content": "package a"}`,
+		},
+		{
+			name:     "standard markdown code fence with json identifier",
+			input:    "```json\n{\"path\": \"b.go\", \"content\": \"package b\"}\n```",
+			expected: `{"path": "b.go", "content": "package b"}`,
+		},
+		{
+			name:     "markdown code fence with uppercase JSON identifier",
+			input:    "```JSON\n{\"path\": \"b_upper.go\", \"content\": \"package b\"}\n```",
+			expected: `{"path": "b_upper.go", "content": "package b"}`,
+		},
+		{
+			name:     "markdown code fence without language specifier",
+			input:    "```\n{\"path\": \"c.go\", \"content\": \"package c\"}\n```",
+			expected: `{"path": "c.go", "content": "package c"}`,
+		},
+		{
+			name: "conversational text prior to markdown code fence",
+			input: "Here is the implementation file you requested:\n" +
+				"```json\n{\"path\": \"d.go\", \"content\": \"package d\"}\n```",
+			expected: `{"path": "d.go", "content": "package d"}`,
+		},
+		{
+			name: "conversational text after markdown code fence",
+			input: "```json\n{\"path\": \"e.go\", \"content\": \"package e\"}\n```\n" +
+				"Please review and run the test suite.",
+			expected: `{"path": "e.go", "content": "package e"}`,
+		},
+		{
+			name: "conversational text both before and after markdown code fence",
+			input: "Hello! Here is the completed Go source code for your task:\n\n" +
+				"```json\n{\n  \"path\": \"pkg/service.go\",\n  \"content\": \"package service\"\n}\n```\n\n" +
+				"Let me know if any adjustments are needed.",
+			expected: "{\n  \"path\": \"pkg/service.go\",\n  \"content\": \"package service\"\n}",
+		},
+		{
+			name: "conversational text before and after JSON WITHOUT markdown fence",
+			input: "Certainly! Below is the requested JSON file configuration:\n" +
+				"{\n  \"path\": \"pkg/math.go\",\n  \"content\": \"package math\"\n}\n" +
+				"This fulfills all required acceptance criteria.",
+			expected: "{\n  \"path\": \"pkg/math.go\",\n  \"content\": \"package math\"\n}",
+		},
+		{
+			name: "JSON containing inner curly braces inside Go content",
+			input: "Here is the Go code:\n```json\n" +
+				"{\"path\": \"foo.go\", \"content\": \"package foo\\n\\nfunc Foo() {\\n\\tif true {\\n\\t\\treturn\\n\\t}\\n}\\n\"}\n" +
+				"```\nHope it works!",
+			expected: "{\"path\": \"foo.go\", \"content\": \"package foo\\n\\nfunc Foo() {\\n\\tif true {\\n\\t\\treturn\\n\\t}\\n}\\n\"}",
+		},
+		{
+			name: "multiple code blocks where second block is JSON",
+			input: "Step 1: check command:\n```bash\ngo test ./...\n```\n" +
+				"Step 2: generated code:\n```json\n{\"path\": \"multi.go\", \"content\": \"package multi\"}\n```\n",
+			expected: `{"path": "multi.go", "content": "package multi"}`,
+		},
+		{
+			name: "conversational text inside markdown code block before JSON",
+			input: "```\nHere is the generated output:\n" +
+				"{\"path\": \"inner.go\", \"content\": \"package inner\"}\n```",
+			expected: `{"path": "inner.go", "content": "package inner"}`,
+		},
+		{
+			name:     "single markdown fence line without closing",
+			input:    "```",
+			expected: "```",
+		},
+		{
+			name:     "arbitrary plain text without JSON braces",
+			input:    "Sorry, I cannot fulfill this code generation request.",
+			expected: "Sorry, I cannot fulfill this code generation request.",
+		},
+		{
+			name:     "malformed braces where closing appears before opening",
+			input:    "invalid } brace { order",
+			expected: "invalid } brace { order",
+		},
+		{
+			name:     "empty string input",
+			input:    "",
+			expected: "",
+		},
 	}
 
-	// Markdown fence
-	markdown := "```json\n{\"path\": \"b.go\"}\n```"
-	expected := "{\"path\": \"b.go\"}"
-	if got := extractJSONContent(markdown); got != expected {
-		t.Errorf("expected %s, got %s", expected, got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractJSONContent(tc.input)
+			if got != tc.expected {
+				t.Errorf("extractJSONContent() mismatch\nexpected: %q\ngot:      %q", tc.expected, got)
+			}
+		})
+	}
+}
+
+// TestDefaultCodeSynthesizer_VariedLLMResponses verifies synthesis with conversational text,
+// markdown code fences, raw JSON, and ensures unambiguous prompt instructions.
+func TestDefaultCodeSynthesizer_VariedLLMResponses(t *testing.T) {
+	task := AtomicTask{
+		ID:          "TASK-SYNTH-VAR",
+		Title:       "Implement Calculator",
+		Description: "Build basic arithmetic functions",
+	}
+	tc := TestCase{
+		Name:            "TestCalculatorAdd",
+		ExpectedOutcome: "PASS",
 	}
 
-	// Single line
-	single := "```"
-	if got := extractJSONContent(single); got != single {
-		t.Errorf("expected %s, got %s", single, got)
+	// Case 1: Test generation with conversational text + markdown ```json
+	var capturedTestPrompt string
+	mockTestLLM := &builderMockLLMClient{
+		responseFunc: func(req *llm.ChatRequest) (*llm.ChatResponse, error) {
+			if len(req.Messages) > 1 {
+				capturedTestPrompt = req.Messages[1].Content
+			}
+			return &llm.ChatResponse{
+				Message: llm.ChatMessage{
+					Role: llm.RoleAssistant,
+					Content: "Hello! Here is the requested unit test:\n```json\n" +
+						"{\n  \"path\": \"calc_test.go\",\n  \"content\": \"package calc\\n\\nimport \\\"testing\\\"\\n\\nfunc TestCalculatorAdd(t *testing.T) {\\n\\tt.Fatalf(\\\"red phase\\\")\\n}\\n\"\n}\n" +
+						"```\nGood luck!",
+				},
+			}, nil
+		},
+	}
+	synthTest := &defaultCodeSynthesizer{llmClient: mockTestLLM}
+	gfTest, err := synthTest.GenerateTest(context.Background(), task, tc)
+	if err != nil {
+		t.Fatalf("unexpected error generating test: %v", err)
+	}
+	if gfTest.Path != "calc_test.go" {
+		t.Errorf("expected path 'calc_test.go', got: %s", gfTest.Path)
+	}
+	if !strings.Contains(gfTest.Content, "TestCalculatorAdd") {
+		t.Errorf("expected test content to include 'TestCalculatorAdd', got: %s", gfTest.Content)
+	}
+	// Verify unambiguous prompt instructions
+	if !strings.Contains(capturedTestPrompt, "REAL test assertions") {
+		t.Errorf("expected test prompt to demand real test assertions, got: %s", capturedTestPrompt)
+	}
+	if !strings.Contains(capturedTestPrompt, "package name") {
+		t.Errorf("expected test prompt to demand proper package name, got: %s", capturedTestPrompt)
+	}
+	if !strings.Contains(capturedTestPrompt, "SPDX license header") {
+		t.Errorf("expected test prompt to mandate SPDX header, got: %s", capturedTestPrompt)
+	}
+
+	// Case 2: Implementation generation with conversational text WITHOUT markdown fence
+	var capturedImplPrompt string
+	mockImplLLM := &builderMockLLMClient{
+		responseFunc: func(req *llm.ChatRequest) (*llm.ChatResponse, error) {
+			if len(req.Messages) > 1 {
+				capturedImplPrompt = req.Messages[1].Content
+			}
+			return &llm.ChatResponse{
+				Message: llm.ChatMessage{
+					Role: llm.RoleAssistant,
+					Content: "I have written the implementation for you:\n" +
+						"{\n  \"path\": \"calc.go\",\n  \"content\": \"package calc\\n\\nfunc Add(a, b int) int { return a + b }\\n\"\n}\n" +
+						"Let me know if any more changes are needed.",
+				},
+			}, nil
+		},
+	}
+	synthImpl := &defaultCodeSynthesizer{llmClient: mockImplLLM}
+	gfImpl, err := synthImpl.GenerateImplementation(context.Background(), task, tc, "undefined: Add", 1)
+	if err != nil {
+		t.Fatalf("unexpected error generating implementation: %v", err)
+	}
+	if gfImpl.Path != "calc.go" {
+		t.Errorf("expected path 'calc.go', got: %s", gfImpl.Path)
+	}
+	if !strings.Contains(gfImpl.Content, "Add(a, b int)") {
+		t.Errorf("expected impl content to include 'Add(a, b int)', got: %s", gfImpl.Content)
+	}
+	if !strings.Contains(capturedImplPrompt, "fully implement") {
+		t.Errorf("expected impl prompt to demand full implementation, got: %s", capturedImplPrompt)
+	}
+	if !strings.Contains(capturedImplPrompt, "Previous Failure Output") {
+		t.Errorf("expected impl prompt to include Previous Failure Output, got: %s", capturedImplPrompt)
+	}
+
+	// Case 3: Refactor generation with raw JSON and surrounding whitespace
+	var capturedRefactorPrompt string
+	mockRefactorLLM := &builderMockLLMClient{
+		responseFunc: func(req *llm.ChatRequest) (*llm.ChatResponse, error) {
+			if len(req.Messages) > 1 {
+				capturedRefactorPrompt = req.Messages[1].Content
+			}
+			return &llm.ChatResponse{
+				Message: llm.ChatMessage{
+					Role: llm.RoleAssistant,
+					Content: "   \n\t {\"path\": \"calc_clean.go\", \"content\": \"package calc\\n\"}  \n ",
+				},
+			}, nil
+		},
+	}
+	synthRefactor := &defaultCodeSynthesizer{llmClient: mockRefactorLLM}
+	refactored, err := synthRefactor.RefactorCode(context.Background(), task, tc)
+	if err != nil {
+		t.Fatalf("unexpected error during refactor: %v", err)
+	}
+	if len(refactored) != 1 || refactored[0].Path != "calc_clean.go" {
+		t.Errorf("expected 1 refactored file 'calc_clean.go', got: %+v", refactored)
+	}
+	if !strings.Contains(capturedRefactorPrompt, "Preserve all existing public contracts") {
+		t.Errorf("expected refactor prompt to demand contract preservation, got: %s", capturedRefactorPrompt)
+	}
+
+	// Case 4: Missing or empty path/content falls back safely
+	mockEmptyLLM := &builderMockLLMClient{
+		responseFunc: func(req *llm.ChatRequest) (*llm.ChatResponse, error) {
+			return &llm.ChatResponse{
+				Message: llm.ChatMessage{
+					Role:    llm.RoleAssistant,
+					Content: `{"path": "", "content": ""}`,
+				},
+			}, nil
+		},
+	}
+	synthEmpty := &defaultCodeSynthesizer{llmClient: mockEmptyLLM}
+	fallbackTest, err := synthEmpty.GenerateTest(context.Background(), task, tc)
+	if err != nil {
+		t.Fatalf("expected fallback on empty path/content, got error: %v", err)
+	}
+	if !strings.Contains(fallbackTest.Content, "TestCalculatorAdd") {
+		t.Errorf("expected fallback test to contain test name, got: %s", fallbackTest.Content)
 	}
 }
 

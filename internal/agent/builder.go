@@ -129,6 +129,8 @@ type BuilderConfig struct {
 	LLMClient       llm.LLMClient
 	CodeSynthesizer CodeSynthesizer
 	MaxIterations   int
+	// TestCommand specifies the test runner command and arguments.
+	// Defaults to []string{"go", "test", "-cover", "./..."}.
 	TestCommand     []string
 	FormatCommand   []string
 }
@@ -159,7 +161,7 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 
 	testCmd := cfg.TestCommand
 	if len(testCmd) == 0 {
-		testCmd = []string{"go", "test", "./..."}
+		testCmd = []string{"go", "test", "-cover", "./..."}
 	}
 
 	formatCmd := cfg.FormatCommand
@@ -508,16 +510,54 @@ func (s *defaultCodeSynthesizer) RefactorCode(ctx context.Context, task AtomicTa
 	return nil, nil
 }
 
-func (s *defaultCodeSynthesizer) synthesizeWithLLM(ctx context.Context, kind string, task AtomicTask, tc TestCase, failureOutput string, iteration int) (GeneratedFile, error) {
-	prompt := fmt.Sprintf(`You are an autonomous TDD expert. Generate a %s file for:
-Task: %s (%s)
-Test Case: %s
-Description: %s
-Previous Failure Output: %s
-Iteration: %d
+var markdownJSONRegex = regexp.MustCompile("(?is)```(?:json)?\\s*(.*?)\\s*```")
 
-Respond ONLY with a valid JSON object with keys "path" (relative file path) and "content" (file contents).`,
-		kind, task.ID, task.Title, tc.Name, tc.Description, failureOutput, iteration,
+func (s *defaultCodeSynthesizer) synthesizeWithLLM(ctx context.Context, kind string, task AtomicTask, tc TestCase, failureOutput string, iteration int) (GeneratedFile, error) {
+	var instructions string
+	switch kind {
+	case "test":
+		instructions = `Generate a complete, valid, and compilable Go test file (*_test.go).
+- Must declare the appropriate Go package name.
+- Must import "testing" and any required packages.
+- Must include REAL test assertions (e.g. using t.Errorf, t.Fatalf, t.Run) verifying the required behavior and expected outcome.
+- Do NOT generate empty test functions, dummy placeholders, or tests without assertions.
+- Include the SPDX license header:
+  // SPDX-License-Identifier: Apache-2.0
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors`
+	case "implementation":
+		instructions = `Generate a complete, valid, and compilable Go implementation file (*.go).
+- Must declare the appropriate Go package name matching the tests.
+- Must fully implement the functions, types, and methods required to satisfy the task and pass tests.
+- Address any previous failure output or compilation errors reported below.
+- Do NOT use placeholders, "TODO", or unimplemented stubs.
+- Include the SPDX license header:
+  // SPDX-License-Identifier: Apache-2.0
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors`
+	case "refactor":
+		instructions = `Generate a complete, valid, and compilable refactored Go file (*.go).
+- Preserve all existing public contracts and behavior so all tests continue to pass.
+- Improve code quality, idiomatic patterns, readability, and performance.
+- Include the SPDX license header:
+  // SPDX-License-Identifier: Apache-2.0
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors`
+	default:
+		instructions = `Generate complete, valid, and compilable Go code with proper package declarations and full implementation.`
+	}
+
+	prompt := fmt.Sprintf(`You are an autonomous TDD expert. Generate a %s file for:
+Task ID: %s
+Task Title: %s
+Task Description: %s
+Test Case: %s
+Expected Outcome: %s
+Iteration: %d
+Previous Failure Output: %s
+
+Instructions:
+%s
+
+Respond ONLY with a valid JSON object with keys "path" (relative file path) and "content" (complete file contents).`,
+		kind, task.ID, task.Title, task.Description, tc.Name, tc.ExpectedOutcome, iteration, failureOutput, instructions,
 	)
 
 	model := os.Getenv("MODEL")
@@ -534,7 +574,7 @@ Respond ONLY with a valid JSON object with keys "path" (relative file path) and 
 	req := &llm.ChatRequest{
 		Model: model,
 		Messages: []llm.ChatMessage{
-			llm.NewSystemMessage("You are an autonomous TDD code generation agent. Output only JSON."),
+			llm.NewSystemMessage("You are an autonomous TDD code generation agent in gv-factory. You produce complete, valid, compilable Go code with proper package declarations, real test assertions, and strict REUSE/SPDX licensing. Output only a valid JSON object."),
 			llm.NewUserMessage(prompt),
 		},
 	}
@@ -551,23 +591,41 @@ Respond ONLY with a valid JSON object with keys "path" (relative file path) and 
 	if err := json.Unmarshal([]byte(content), &gf); err != nil {
 		return GeneratedFile{}, err
 	}
+	if strings.TrimSpace(gf.Path) == "" || strings.TrimSpace(gf.Content) == "" {
+		return GeneratedFile{}, errors.New("agent: synthesized file missing path or content")
+	}
 
 	return gf, nil
 }
 
 func extractJSONContent(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if strings.HasPrefix(trimmed, "```") {
-		lines := strings.Split(trimmed, "\n")
-		if len(lines) >= 2 {
-			if strings.HasPrefix(lines[0], "```") {
-				lines = lines[1:]
+	target := strings.TrimSpace(raw)
+
+	// Search for markdown code block delimiters: ```(?:json)?\s*(.*?)\s*```
+	if matches := markdownJSONRegex.FindAllStringSubmatch(target, -1); len(matches) > 0 {
+		found := false
+		for _, m := range matches {
+			if len(m) > 1 {
+				candidate := strings.TrimSpace(m[1])
+				// Prefer code block containing JSON braces
+				if strings.Contains(candidate, "{") && strings.Contains(candidate, "}") {
+					target = candidate
+					found = true
+					break
+				}
 			}
-			if len(lines) > 0 && strings.HasPrefix(lines[len(lines)-1], "```") {
-				lines = lines[:len(lines)-1]
-			}
-			return strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+		if !found && len(matches[0]) > 1 {
+			target = strings.TrimSpace(matches[0][1])
 		}
 	}
-	return trimmed
+
+	// Search for '{' and '}' delimiters
+	start := strings.Index(target, "{")
+	end := strings.LastIndex(target, "}")
+	if start != -1 && end > start {
+		target = strings.TrimSpace(target[start : end+1])
+	}
+
+	return target
 }
