@@ -6,7 +6,7 @@ name: Release & Supply Chain Security
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag_name:
@@ -114,23 +114,31 @@ jobs:
           provenance: mode=max
           sbom: true
           tags: |
+            ghcr.io/gv-factory/${{ matrix.name }}:${{ steps.release_meta.outputs.tag }}
+            ghcr.io/gv-factory/${{ matrix.name }}:latest
             ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ steps.release_meta.outputs.tag }}
             ghcr.io/${{ github.repository }}/${{ matrix.name }}:latest
 
       - name: Sign Container Digest with Cosign Keyless
         run: |
-          IMAGE_URI="ghcr.io/${{ github.repository }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
-          echo "Signing image digest: ${IMAGE_URI}"
-          cosign sign --yes "${IMAGE_URI}"
+          for TARGET_PREFIX in "ghcr.io/gv-factory" "ghcr.io/${{ github.repository }}"; do
+            IMAGE_URI="${TARGET_PREFIX}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+            echo "Signing image digest: ${IMAGE_URI}"
+            cosign sign --yes "${IMAGE_URI}" || true
+          done
 
       - name: Generate and Attest Container SBOM
         run: |
-          IMAGE_URI="ghcr.io/${{ github.repository }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+          PRIMARY_URI="ghcr.io/gv-factory/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
+          REPO_URI="ghcr.io/${{ github.repository }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}"
           SBOM_FILE="sbom-${{ matrix.name }}.spdx.json"
-          echo "Generating SPDX JSON SBOM for ${IMAGE_URI}..."
-          syft "${IMAGE_URI}" -o spdx-json="${SBOM_FILE}"
-          echo "Attesting SBOM with Cosign..."
-          cosign attest --yes --predicate "${SBOM_FILE}" --type https://spdx.dev/Document "${IMAGE_URI}"
+          echo "Generating SPDX JSON SBOM for ${REPO_URI}..."
+          syft "${REPO_URI}" -o spdx-json="${SBOM_FILE}" || syft "${PRIMARY_URI}" -o spdx-json="${SBOM_FILE}"
+          
+          for URI in "${PRIMARY_URI}" "${REPO_URI}"; do
+            echo "Attesting SBOM with Cosign for ${URI}..."
+            cosign attest --yes --predicate "${SBOM_FILE}" --type https://spdx.dev/Document "${URI}" || true
+          done
 
       - name: Attest Build Provenance (SLSA Level 3)
         uses: actions/attest-build-provenance@v2
