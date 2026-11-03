@@ -70,13 +70,19 @@ export const NodePalette: React.FC = () => {
   return (
     <aside className="node-palette" aria-label="Component Palette">
       <div className="palette-header">
-        <h3>Node Palette</h3>
-        <span className="palette-badge">v0.2</span>
+        <div className="palette-header-title">
+          <span className="palette-header-icon" aria-hidden="true">❖</span>
+          <h3>Components</h3>
+        </div>
+        <span className="palette-badge">Catalog</span>
       </div>
       <div className="palette-scroll">
         {PALETTE_GROUPS.map((group) => (
           <div key={group.name} className="palette-section">
-            <div className="palette-section-title">{group.name}</div>
+            <div className="palette-section-title">
+              <span>{group.name}</span>
+              <span className="palette-section-count">{group.items.length}</span>
+            </div>
             <div className="palette-grid">
               {group.items.map((item) => (
                 <button
@@ -94,7 +100,7 @@ export const NodePalette: React.FC = () => {
                     <span className="palette-item-desc">{item.description}</span>
                   </div>
                   <span className="palette-item-add" aria-hidden="true">
-                    <PlusIcon size={14} />
+                    <PlusIcon size={13} />
                   </span>
                 </button>
               ))}

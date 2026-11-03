@@ -109,47 +109,84 @@ export const App: React.FC = () => {
           <span className="header-badge">v0.2.0 • DAG Engine</span>
         </div>
 
-        <div className="header-stats">
-          <span className="stat-pill">
-            Nodes: <strong>{stats.total}</strong>
+        {/* Unified Obsidian Status Capsule */}
+        <div className="header-stats header-status-capsule" role="status" aria-label="Pipeline overview">
+          <span className="capsule-metric">
+            <strong>{stats.total}</strong> <span className="capsule-subtext">nodes</span>
           </span>
-          <span className="stat-pill stat-running">
-            Running: <strong>{stats.running}</strong>
-          </span>
-          <span className="stat-pill stat-completed">
-            Completed: <strong>{stats.completed}</strong>
-          </span>
+          {stats.running > 0 && (
+            <>
+              <span className="capsule-separator" aria-hidden="true">·</span>
+              <span className="capsule-item stat-running">
+                <span className="capsule-dot dot-running" />
+                <span><strong>{stats.running}</strong> running</span>
+              </span>
+            </>
+          )}
+          {stats.completed > 0 && (
+            <>
+              <span className="capsule-separator" aria-hidden="true">·</span>
+              <span className="capsule-item stat-completed">
+                <span className="capsule-dot dot-completed" />
+                <span><strong>{stats.completed}</strong> completed</span>
+              </span>
+            </>
+          )}
           {stats.awaitingApproval > 0 && (
-            <span className="stat-pill stat-approval">
-              Approval Req: <strong>{stats.awaitingApproval}</strong>
-            </span>
+            <>
+              <span className="capsule-separator" aria-hidden="true">·</span>
+              <span className="capsule-item stat-approval">
+                <span className="capsule-dot dot-approval" />
+                <span><strong>{stats.awaitingApproval}</strong> gate</span>
+              </span>
+            </>
           )}
           {stats.failed > 0 && (
-            <span className="stat-pill stat-failed">
-              Failed: <strong>{stats.failed}</strong>
-            </span>
+            <>
+              <span className="capsule-separator" aria-hidden="true">·</span>
+              <span className="capsule-item stat-failed">
+                <span className="capsule-dot dot-failed" />
+                <span><strong>{stats.failed}</strong> failed</span>
+              </span>
+            </>
+          )}
+          {stats.running === 0 && stats.completed === 0 && stats.awaitingApproval === 0 && stats.failed === 0 && (
+            <>
+              <span className="capsule-separator" aria-hidden="true">·</span>
+              <span className="capsule-item stat-idle">
+                <span className="capsule-dot dot-idle" />
+                <span>ready</span>
+              </span>
+            </>
           )}
         </div>
 
         <div className="header-actions">
-          <TimelineButton />
-          <BrainExplorerButton />
-          <WorkerClusterHealthButton />
-          <CostBudgetButton />
-          <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
-            <span className={`status-dot dot-${gatewayStatus}`} />
-            <span className="gateway-status-text">
-              {gatewayStatus === 'connected'
-                ? 'SSE Live'
-                : gatewayStatus === 'connecting'
-                ? 'Connecting...'
-                : gatewayStatus === 'reconnecting'
-                ? 'Reconnecting...'
-                : 'SSE Offline'}
-            </span>
+          <div className="header-nav-tools">
+            <TimelineButton />
+            <BrainExplorerButton />
+            <WorkerClusterHealthButton />
+            <CostBudgetButton />
+            <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
+              <span className={`status-dot dot-${gatewayStatus}`} />
+              <span className="gateway-status-text">
+                {gatewayStatus === 'connected'
+                  ? 'SSE Live'
+                  : gatewayStatus === 'connecting'
+                  ? 'Connecting...'
+                  : gatewayStatus === 'reconnecting'
+                  ? 'Reconnecting...'
+                  : 'SSE Offline'}
+              </span>
+            </div>
           </div>
 
+          <div className="header-separator" aria-hidden="true" />
+
           <Toolbar />
+
+          <div className="header-separator" aria-hidden="true" />
+
           <div className="bg-toggle-group" title="Canvas Background Style">
             <button
               type="button"
@@ -197,15 +234,17 @@ export const App: React.FC = () => {
             fitView
           >
             <Background
-              color="#334155"
+              color="rgba(255, 255, 255, 0.07)"
               variant={backgroundVariant}
-              gap={16}
-              size={1}
+              gap={20}
+              size={1.2}
             />
-            <Controls className="factory-controls" />
+            <Controls className="factory-controls" showInteractive={false} />
             <MiniMap
               nodeColor={getNodeColor}
-              nodeStrokeWidth={2}
+              nodeStrokeWidth={1.5}
+              nodeBorderRadius={4}
+              maskColor="rgba(3, 7, 18, 0.75)"
               zoomable
               pannable
               className="factory-minimap"

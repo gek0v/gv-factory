@@ -221,7 +221,8 @@ export const Toolbar: React.FC = () => {
               disabled={isRunningServer || isSimulating}
               onClick={handleOpenRunModal}
             >
-              ▶ Run Pipeline
+              <span className="run-btn-icon" aria-hidden="true">▶</span>
+              <span className="run-btn-label">Run Pipeline</span>
             </button>
             <button
               type="button"
@@ -341,6 +342,7 @@ export const Toolbar: React.FC = () => {
           title="Export current canvas DAG as JSON/YAML template"
           onClick={() => setShowExportModal(true)}
         >
+          <span className="export-btn-icon" aria-hidden="true">↗</span>
           <span>Export DAG</span>
         </button>
 
