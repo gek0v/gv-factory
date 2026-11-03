@@ -75,6 +75,7 @@ services:
     container_name: ov-server
     restart: unless-stopped
     environment:
+      HOME: /home/nonroot
       PORT: "8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-ov_user}:${POSTGRES_PASSWORD:-ov_password}@postgres:5432/${POSTGRES_DB:-ov_factory}?sslmode=disable
       NATS_URL: nats://nats:4222
@@ -104,6 +105,8 @@ services:
     volumes:
       - sandboxes:/tmp/ov-sandboxes
       - ../.agents:/home/nonroot/.agents:ro
+      - ./models.json:/home/nonroot/.pi/agent/models.json:ro
+      - ./settings.json:/home/nonroot/.pi/agent/settings.json:ro
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:
@@ -126,6 +129,7 @@ services:
     container_name: ov-worker
     restart: unless-stopped
     environment:
+      HOME: /home/nonroot
       DATABASE_URL: postgres://${POSTGRES_USER:-ov_user}:${POSTGRES_PASSWORD:-ov_password}@postgres:5432/${POSTGRES_DB:-ov_factory}?sslmode=disable
       NATS_URL: nats://nats:4222
       OV_WORKTREE_DIR: /tmp/ov-sandboxes

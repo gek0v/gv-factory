@@ -1,0 +1,22 @@
+{
+  "providers": {
+    "custom": {
+      "name": "Custom OpenAI Endpoint",
+      "baseUrl": "http://192.168.1.100:8317/v1",
+      "api": "openai-completions",
+      "apiKey": "sk-638957144d158bc723a2d8a162207e8f4761ce27e25897a8",
+      "models": [
+        {
+          "id": "gemini-3.8-flash-high",
+          "name": "Gemini 3.8 Flash High",
+          "reasoning": false,
+          "input": ["text"]
+        }
+      ]
+    },
+    "openai": {
+      "baseUrl": "http://192.168.1.100:8317/v1",
+      "apiKey": "sk-638957144d158bc723a2d8a162207e8f4761ce27e25897a8"
+    }
+  }
+}
