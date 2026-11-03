@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -216,10 +217,21 @@ Repository Root: %s`,
 		ws = task.RepositoryRoot
 	}
 
+	model := w.template.Model
+	if model == "" {
+		model = os.Getenv("MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("OPENAI_MODEL")
+	}
+
 	cfg := PiRunConfig{
 		TaskID:       task.TaskID,
 		WorkspaceDir: ws,
-		Model:        w.template.Model,
+		Model:        model,
 		Thinking:     w.template.Thinking,
 		Skills:       w.template.Skills,
 		Tools:        w.template.Tools,
@@ -324,10 +336,21 @@ Architecture Overview: %s`,
 			spec.ArchitectureOverview,
 		)
 
+		model := b.template.Model
+		if model == "" {
+			model = os.Getenv("MODEL")
+		}
+		if model == "" {
+			model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
+		}
+		if model == "" {
+			model = os.Getenv("OPENAI_MODEL")
+		}
+
 		cfg := PiRunConfig{
 			TaskID:       task.ID,
 			WorkspaceDir: b.workspaceDir,
-			Model:        b.template.Model,
+			Model:        model,
 			Thinking:     b.template.Thinking,
 			Skills:       b.template.Skills,
 			Tools:        b.template.Tools,
@@ -423,10 +446,21 @@ Files Changed: %s
 		req.Diff,
 	)
 
+	model := r.template.Model
+	if model == "" {
+		model = os.Getenv("MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
+	}
+	if model == "" {
+		model = os.Getenv("OPENAI_MODEL")
+	}
+
 	cfg := PiRunConfig{
 		RunID:        req.RunID,
 		WorkspaceDir: r.workspaceDir,
-		Model:        r.template.Model,
+		Model:        model,
 		Thinking:     r.template.Thinking,
 		Skills:       r.template.Skills,
 		Tools:        r.template.Tools,
