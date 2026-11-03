@@ -1493,3 +1493,92 @@ func TestFactoryCLI_Reject_Lifecycle(t *testing.T) {
 		}
 	})
 }
+
+func TestFactoryCLI_Run_ModelFlag(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("passes --model flag in request payload", func(t *testing.T) {
+		var receivedReq FactoryRunRequest
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/factory/run" {
+				http.NotFound(w, r)
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"run_id": receivedReq.TaskID,
+				"status": "running",
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "run", "Implement DeepSeek Pipeline",
+			"--model", "deepseek-chat",
+			"--server", ts.URL,
+		})
+
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Err: %s", code, errBuf.String())
+		}
+
+		if receivedReq.Model != "deepseek-chat" {
+			t.Errorf("expected model 'deepseek-chat', got %q", receivedReq.Model)
+		}
+		if receivedReq.Title != "Implement DeepSeek Pipeline" {
+			t.Errorf("expected title 'Implement DeepSeek Pipeline', got %q", receivedReq.Title)
+		}
+	})
+
+	t.Run("passes --model flag with quick presets like ollama/llama3.3 in sync mode", func(t *testing.T) {
+		var receivedReq FactoryRunRequest
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/factory/run" {
+				http.NotFound(w, r)
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			outcome := agent.PipelineOutcome{
+				TaskID:   receivedReq.TaskID,
+				Success:  true,
+				Decision: agent.DecisionApproved,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(outcome)
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "run", "Local Ollama Run",
+			"--model", "ollama/llama3.3",
+			"--sync",
+			"--server", ts.URL,
+		})
+
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Err: %s", code, errBuf.String())
+		}
+
+		if receivedReq.Model != "ollama/llama3.3" {
+			t.Errorf("expected model 'ollama/llama3.3', got %q", receivedReq.Model)
+		}
+	})
+}
+

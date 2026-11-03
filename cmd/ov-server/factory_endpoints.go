@@ -34,6 +34,7 @@ type FactoryRunRequest struct {
 	TaskID      string         `json:"task_id"`
 	Title       string         `json:"title"`
 	Description string         `json:"description,omitempty"`
+	Model       string         `json:"model,omitempty"`
 	Labels      []string       `json:"labels,omitempty"`
 	Constraints []string       `json:"constraints,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -282,6 +283,9 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 	if model == "" {
 		model = os.Getenv("OPENAI_MODEL")
 	}
+	if m, ok := task.Metadata["model"].(string); ok && strings.TrimSpace(m) != "" {
+		model = strings.TrimSpace(m)
+	}
 
 	sandboxBaseDir := d.sandboxBaseDir
 	if sandboxBaseDir == "" {
@@ -312,7 +316,7 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 
 	rawBuilder := d.builder
 	if rawBuilder == nil {
-		rawBuilder = agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient})
+		rawBuilder = agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient, Model: model})
 	}
 	wrappedBuilder := &gitSandboxBuilder{
 		inner:      rawBuilder,
@@ -485,6 +489,9 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 		}
 		if taskCtx.Metadata == nil {
 			taskCtx.Metadata = make(map[string]any)
+		}
+		if strings.TrimSpace(req.Model) != "" {
+			taskCtx.Metadata["model"] = strings.TrimSpace(req.Model)
 		}
 
 		emittedStages := make(map[string]bool)

@@ -6,6 +6,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   FactoryRunModal,
+  QUICK_MODEL_OPTIONS,
   parseCommaOrNewlineSeparated,
 } from './FactoryRunModal';
 import { useFactoryFlowStore } from '../../store';
@@ -63,9 +64,36 @@ describe('FactoryRunModal Component & Helpers', () => {
       expect(html).toContain('Execute Factory Pipeline');
       expect(html).toContain('Task Title');
       expect(html).toContain('Description');
+      expect(html).toContain('Target LLM Model');
       expect(html).toContain('Labels');
       expect(html).toContain('Constraints');
       expect(html).toContain('Dispatch Autonomous Run');
+    });
+
+    it('renders all quick target LLM model options and pills', () => {
+      useFactoryFlowStore.setState({ showFactoryRunModal: true });
+      const html = renderToStaticMarkup(React.createElement(FactoryRunModal));
+
+      expect(html).toContain('gemini-3.8-flash-high');
+      expect(html).toContain('gpt-4o');
+      expect(html).toContain('gpt-4o-mini');
+      expect(html).toContain('claude-3-5-sonnet');
+      expect(html).toContain('deepseek-chat');
+      expect(html).toContain('ollama/llama3.3');
+      expect(html).toContain('Custom Model...');
+      expect(html).toContain('model-quick-pills');
+      expect(html).toContain('btn-model-chip');
+    });
+
+    it('verifies QUICK_MODEL_OPTIONS contains all required models', () => {
+      const modelValues = QUICK_MODEL_OPTIONS.map((opt) => opt.value);
+      expect(modelValues).toContain('gemini-3.8-flash-high');
+      expect(modelValues).toContain('gpt-4o');
+      expect(modelValues).toContain('gpt-4o-mini');
+      expect(modelValues).toContain('claude-3-5-sonnet');
+      expect(modelValues).toContain('deepseek-chat');
+      expect(modelValues).toContain('ollama/llama3.3');
+      expect(modelValues).toContain('custom');
     });
 
     it('contains close button and cancel button', () => {
@@ -133,6 +161,25 @@ describe('FactoryRunModal Component & Helpers', () => {
         (n) => n.id.includes('spec') || (n.data.label || '').includes('Spec')
       );
       expect(specNode?.data.highlighted).toBe(true);
+    });
+
+    it('dispatches factory run with specified target LLM model', async () => {
+      const dispatchSpy = vi.spyOn(factoryApi, 'dispatchFactoryRun').mockResolvedValue({
+        run_id: 'run-auton-501',
+        status: 'queued',
+        stage: 'spec_generated',
+      });
+
+      const res = await factoryApi.dispatchFactoryRun({
+        title: 'Run with DeepSeek',
+        model: 'deepseek-chat',
+      });
+
+      expect(dispatchSpy).toHaveBeenCalledWith({
+        title: 'Run with DeepSeek',
+        model: 'deepseek-chat',
+      });
+      expect(res.run_id).toBe('run-auton-501');
     });
 
     it('handles dispatch failure and displays error feedback in UI', async () => {

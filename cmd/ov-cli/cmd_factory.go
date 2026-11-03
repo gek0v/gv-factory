@@ -25,6 +25,7 @@ type FactoryRunRequest struct {
 	TaskID      string         `json:"task_id"`
 	Title       string         `json:"title"`
 	Description string         `json:"description,omitempty"`
+	Model       string         `json:"model,omitempty"`
 	Labels      []string       `json:"labels,omitempty"`
 	Constraints []string       `json:"constraints,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
@@ -126,6 +127,7 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 
 	var (
 		descFlag        = fs.String("description", "", "Description of the task to execute")
+		modelFlag       = fs.String("model", "", "Target LLM model for spec generation and code building (e.g. 'claude-3-5-sonnet', 'gpt-4o')")
 		labelsFlag      = fs.String("labels", "", "Comma-separated labels (e.g. 'security,auth')")
 		constraintsFlag = fs.String("constraints", "", "Comma-separated constraints (e.g. 'no external deps,coverage >= 90')")
 		syncFlag        = fs.Bool("sync", false, "Wait for completion and display outcome status table")
@@ -137,6 +139,7 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 
 	valFlags := map[string]bool{
 		"description": true,
+		"model":       true,
 		"labels":      true,
 		"constraints": true,
 		"server":      true,
@@ -163,6 +166,7 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 		TaskID:      taskID,
 		Title:       title,
 		Description: strings.TrimSpace(*descFlag),
+		Model:       strings.TrimSpace(*modelFlag),
 		Labels:      parseCommaSeparated(*labelsFlag),
 		Constraints: parseCommaSeparated(*constraintsFlag),
 	}

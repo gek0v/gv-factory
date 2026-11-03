@@ -5,6 +5,16 @@ import React, { useState } from 'react';
 import { useFactoryFlowStore } from '../../store';
 import { dispatchFactoryRun, type FactoryRunResponse } from '../../api/factory';
 
+export const QUICK_MODEL_OPTIONS = [
+  { value: 'gemini-3.8-flash-high', label: 'gemini-3.8-flash-high' },
+  { value: 'gpt-4o', label: 'gpt-4o' },
+  { value: 'gpt-4o-mini', label: 'gpt-4o-mini' },
+  { value: 'claude-3-5-sonnet', label: 'claude-3-5-sonnet' },
+  { value: 'deepseek-chat', label: 'deepseek-chat' },
+  { value: 'ollama/llama3.3', label: 'ollama/llama3.3' },
+  { value: 'custom', label: 'Custom Model...' },
+] as const;
+
 export function parseCommaOrNewlineSeparated(value: string): string[] {
   if (!value) return [];
   return value
@@ -32,6 +42,8 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [model, setModel] = useState<string>('gemini-3.8-flash-high');
+  const [customModel, setCustomModel] = useState('');
   const [labels, setLabels] = useState('');
   const [constraints, setConstraints] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -63,10 +75,12 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
     try {
       const parsedLabels = parseCommaOrNewlineSeparated(labels);
       const parsedConstraints = parseCommaOrNewlineSeparated(constraints);
+      const effectiveModel = model === 'custom' ? customModel.trim() : model.trim();
 
       const response = await dispatchFactoryRun({
         title: title.trim(),
         description: description.trim() || undefined,
+        model: effectiveModel || undefined,
         labels: parsedLabels.length > 0 ? parsedLabels : undefined,
         constraints: parsedConstraints.length > 0 ? parsedConstraints : undefined,
       });
@@ -89,6 +103,8 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
         closeModal();
         setTitle('');
         setDescription('');
+        setModel('gemini-3.8-flash-high');
+        setCustomModel('');
         setLabels('');
         setConstraints('');
         setSuccessResponse(null);
@@ -181,6 +197,64 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
               onChange={(e) => setDescription(e.target.value)}
               disabled={isSubmitting}
             />
+          </div>
+
+          <div className="form-field-group">
+            <label htmlFor="target-llm-model" className="form-label">
+              Target LLM Model
+            </label>
+            <select
+              id="target-llm-model"
+              className="form-input"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={isSubmitting}
+            >
+              {QUICK_MODEL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+
+            <div
+              className="model-quick-pills"
+              style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.35rem' }}
+            >
+              {QUICK_MODEL_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`btn-model-chip ${model === opt.value ? 'active' : ''}`}
+                  onClick={() => setModel(opt.value)}
+                  disabled={isSubmitting}
+                  style={{
+                    fontSize: '0.72rem',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: '4px',
+                    border: model === opt.value ? '1px solid #38bdf8' : '1px solid #334155',
+                    background: model === opt.value ? 'rgba(56, 189, 248, 0.15)' : '#0f172a',
+                    color: model === opt.value ? '#38bdf8' : '#94a3b8',
+                    cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {model === 'custom' && (
+              <input
+                id="custom-model-input"
+                type="text"
+                className="form-input"
+                style={{ marginTop: '0.4rem' }}
+                placeholder="Enter custom model identifier (e.g. qwen2.5-coder, mistral-large)"
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                disabled={isSubmitting}
+              />
+            )}
           </div>
 
           <div className="form-row">
