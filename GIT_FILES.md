@@ -49,10 +49,11 @@ Configuración del repositorio para cumplir con las directivas de seguridad de l
 Dado que el **Cerebro** de OV-Factory lee las decisiones arquitectónicas directamente del repositorio, estos archivos sirven tanto para los desarrolladores humanos como para inicializar la memoria a largo plazo del proyecto:
 
 * **`docs/adr/` (Architecture Decision Records):**
-* `0001-microkernel-extism-wasm.md`: Registra la decisión de aislar todos los nodos funcionales en módulos WebAssembly mediante Extism.
-* `0002-orquestacion-hibrida-hatchet.md`: Define la separación entre el intérprete de grafos mutables en PostgreSQL y la ejecución duradera en Hatchet.
-* `0003-aislamiento-git-worktrees-sandboxes.md`: Establece las reglas de concurrencia, prohibición de `git checkout` directo y fórmula de asignación de puertos.
-* `0004-protocolo-aprobacion-humana.md`: Documenta el esquema de tokens opacos y validación criptográfica para las compuertas *Human-in-the-Loop*.
+* `0001-wasm-extism-plugins.md`: Registra la decisión de aislar todos los nodos funcionales y extensiones en módulos WebAssembly mediante Extism.
+* `0002-pgvector-brain-memory.md`: Define el almacenamiento relacional y memoria vectorial episódica unificada en PostgreSQL 16 con pgvector.
+* `0003-sequential-merge-queue-merge-tree.md`: Establece la Merge Queue secuencial con validación previa 'git merge-tree' antes de rebase/fast-forward.
+* `0004-hitl-hmac-governance.md`: Documenta el esquema de gobernanza Human-in-the-Loop con tokens HMAC criptográficos para compuertas de decisión.
+* `0005-multi-provider-dynamic-llm.md`: Define la arquitectura de conectores LLM con detección dinámica, fallback transparente y soporte multi-proveedor.
 
 
 * **`migrations/brain/`:**
