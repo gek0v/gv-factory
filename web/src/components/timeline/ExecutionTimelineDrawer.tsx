@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import { useFactoryFlowStore } from '../../store';
 import { GitDiffViewer } from '../drawer/GitDiffViewer';
 import { CodeInspectionModal } from '../editor/CodeInspectionModal';
+import { SandboxTerminalButton } from '../terminal/SandboxTerminalModal';
 
 export interface TddPhase {
   phase: 'red' | 'green' | 'refactor' | string;
@@ -375,6 +376,7 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
         </div>
 
         <div className="timeline-drawer-controls">
+          <SandboxTerminalButton className="drawer-terminal-btn" />
           <button
             type="button"
             className="drawer-size-btn"

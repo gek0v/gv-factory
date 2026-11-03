@@ -5856,6 +5856,286 @@ body,
   font-weight: 600;
 }
 
+/* ==========================================================================
+   Sandbox Interactive Web Terminal & Modal Styling
+   Theme: #0f172a (dark slate), #e2e8f0 (slate text), green cursor
+   ========================================================================== */
+
+.sandbox-terminal-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(6px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  animation: fadeInTerminal 0.2s ease-out;
+}
+
+@keyframes fadeInTerminal {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.sandbox-terminal-modal-content {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  width: 92vw;
+  max-width: 1200px;
+  height: 80vh;
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+}
+
+.sandbox-terminal-toolbar {
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.sandbox-terminal-title-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sandbox-terminal-icon {
+  font-size: 1.4rem;
+}
+
+.sandbox-terminal-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f8fafc;
+  line-height: 1.2;
+}
+
+.sandbox-terminal-run-badge {
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.sandbox-terminal-run-badge strong {
+  color: #38bdf8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.sandbox-terminal-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.sandbox-terminal-status-badge.status-online {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #4ade80;
+}
+
+.sandbox-terminal-status-badge.status-connecting {
+  background: rgba(234, 179, 8, 0.15);
+  border-color: rgba(234, 179, 8, 0.35);
+  color: #fde047;
+}
+
+.sandbox-terminal-status-badge.status-offline,
+.sandbox-terminal-status-badge.status-error {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #f87171;
+}
+
+.terminal-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.terminal-status-dot.dot-online {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
+}
+
+.terminal-status-dot.dot-connecting {
+  background: #eab308;
+  box-shadow: 0 0 6px rgba(234, 179, 8, 0.8);
+}
+
+.terminal-status-dot.dot-offline,
+.terminal-status-dot.dot-error {
+  background: #ef4444;
+}
+
+.sandbox-terminal-run-form {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sandbox-terminal-run-input {
+  background: #0f172a;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.6rem;
+  outline: none;
+  min-width: 140px;
+}
+
+.sandbox-terminal-run-input:focus {
+  border-color: #38bdf8;
+}
+
+.sandbox-terminal-run-btn {
+  background: #334155;
+  color: #cbd5e1;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sandbox-terminal-run-btn:hover:not(:disabled) {
+  background: #475569;
+  color: #ffffff;
+}
+
+.sandbox-terminal-run-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sandbox-terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-btn {
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.terminal-btn-clear {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.terminal-btn-clear:hover {
+  background: #334155;
+  color: #f1f5f9;
+}
+
+.terminal-btn-fit {
+  background: #1e293b;
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.terminal-btn-fit:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: #38bdf8;
+}
+
+.terminal-btn-reconnect {
+  background: rgba(234, 179, 8, 0.15);
+  border-color: rgba(234, 179, 8, 0.4);
+  color: #fde047;
+}
+
+.terminal-btn-reconnect:hover {
+  background: rgba(234, 179, 8, 0.25);
+}
+
+.terminal-btn-close {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+
+.terminal-btn-close:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.sandbox-terminal-error-bar {
+  background: rgba(239, 68, 68, 0.15);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+  padding: 0.4rem 1.25rem;
+  font-size: 0.78rem;
+}
+
+.sandbox-terminal-container {
+  flex: 1;
+  background: #0f172a;
+  padding: 0.75rem 1rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.sandbox-terminal-container .xterm {
+  height: 100%;
+}
+
+.sandbox-terminal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sandbox-terminal-btn:hover {
+  background: #334155;
+  border-color: #4ade80;
+  color: #ffffff;
+}
+
+.sandbox-terminal-btn.active {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: #22c55e;
+  color: #4ade80;
+}
+
 /* =========================================================================
    Monaco Code Inspector & Hot Edit Modal Styles
    ========================================================================= */
@@ -6285,7 +6565,3 @@ body,
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
 }
-
-
-
-
