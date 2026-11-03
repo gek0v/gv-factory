@@ -33,9 +33,16 @@ RUN apk add --no-cache ca-certificates git tzdata wget go musl-dev gcc nodejs np
     && chown -R 10001:10001 /tmp/ov-sandboxes /tmp/ov-worktrees /home/nonroot
 
 WORKDIR /home/nonroot
+ENV HOME=/home/nonroot
 
 # Copy application binary
 COPY --from=builder /bin/ov-worker /usr/local/bin/ov-worker
+
+# Copy default Pi models and settings configurations
+RUN mkdir -p /home/nonroot/.pi/agent
+COPY deployments/models.json /home/nonroot/.pi/agent/models.json
+COPY deployments/settings.json /home/nonroot/.pi/agent/settings.json
+RUN chown -R 10001:10001 /home/nonroot
 
 # Default worktree path for ephemeral sandboxes
 ENV OV_WORKTREE_DIR=/tmp/ov-sandboxes
