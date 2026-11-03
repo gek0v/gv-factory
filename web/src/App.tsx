@@ -28,6 +28,7 @@ import { WorkerClusterHealthButton, WorkerDashboardModal } from './components/wo
 import { BrainExplorerButton, BrainExplorerModal } from './components/BrainExplorerModal';
 import { ExecutionTimelineDrawer, TimelineButton } from './components/timeline/ExecutionTimelineDrawer';
 import { CostBudgetButton, CostBudgetModal } from './components/telemetry/CostBudgetModal';
+import { SandboxTerminalModal } from './components/terminal/SandboxTerminalModal';
 import { defaultGatewayClient } from './api/gateway';
 
 export const App: React.FC = () => {
@@ -221,6 +222,7 @@ export const App: React.FC = () => {
       <BrainExplorerModal />
       <FactoryRunModal />
       <CostBudgetModal />
+      <SandboxTerminalModal />
     </div>
   );
 };

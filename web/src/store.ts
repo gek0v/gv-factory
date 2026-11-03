@@ -88,6 +88,8 @@ export interface FactoryFlowState {
   setEdges: (edges: Edge[]) => void;
   showExecutionTimeline: boolean;
   setShowExecutionTimeline: (show: boolean) => void;
+  showTerminalModal: boolean;
+  setShowTerminalModal: (show: boolean) => void;
   executionEvents: Array<{ stage: string; timestamp: string; payload: any }>;
   addExecutionEvent: (event: { stage: string; timestamp?: string; payload: any }) => void;
   clearExecutionEvents: () => void;
@@ -111,6 +113,8 @@ export const useFactoryFlowStore = create<FactoryFlowState>((set, get) => ({
   showCostBudgetModal: false,
   workerPool: null,
   showExecutionTimeline: false,
+  showTerminalModal: false,
+  setShowTerminalModal: (show: boolean) => set({ showTerminalModal: show }),
   executionEvents: [],
   setShowExecutionTimeline: (show: boolean) => set({ showExecutionTimeline: show }),
   addExecutionEvent: (event: { stage: string; timestamp?: string; payload: any }) => {

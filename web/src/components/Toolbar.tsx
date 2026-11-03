@@ -9,6 +9,7 @@ import { canvasToTemplate, exportTemplateToYaml, exportTemplateToJson } from '..
 import { validateFactoryTemplate } from '../templates/validator';
 import { submitPipelineRun, cancelPipelineRun } from '../api/runs';
 import { simulatePipelineRun } from '../api/simulator';
+import { SandboxTerminalButton } from './terminal/SandboxTerminalModal';
 
 export interface ToolbarNotification {
   type: 'success' | 'error' | 'info';
@@ -342,6 +343,9 @@ export const Toolbar: React.FC = () => {
         >
           <span>Export DAG</span>
         </button>
+
+        {/* Sandbox Terminal Button */}
+        <SandboxTerminalButton />
 
         {/* Export Modal */}
         {showExportModal && (
