@@ -39,7 +39,7 @@ ENV HOME=/home/nonroot
 COPY --from=builder /bin/ov-server /usr/local/bin/ov-server
 
 # Copy default Pi models and settings configurations
-RUN mkdir -p /home/nonroot/.pi/agent
+RUN mkdir -p /home/nonroot/.pi/agent/sessions
 COPY deployments/models.json /home/nonroot/.pi/agent/models.json
 COPY deployments/settings.json /home/nonroot/.pi/agent/settings.json
 RUN chown -R 10001:10001 /home/nonroot
