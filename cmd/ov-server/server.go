@@ -23,6 +23,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/dag"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/registry"
 	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
 	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
@@ -1012,7 +1013,11 @@ func NewServerMuxWithRunner(
 	registerBrainEndpoints(mux, brainSvc)
 
 	// Global Pi Skills, Tools, Plugins and Agent Templates registry endpoints
-	registerRegistryEndpoints(mux, nil)
+	regManager := registry.NewManager(registry.ManagerOptions{
+		WorkspaceRoot:   ".",
+		IncludeUserHome: true,
+	})
+	registerRegistryEndpoints(mux, regManager)
 
 	// Cost and Token Telemetry endpoints
 	var costTracker *telemetry.CostTracker

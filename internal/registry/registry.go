@@ -5,6 +5,7 @@ package registry
 
 import (
 	"context"
+	"os"
 )
 
 // ManagerOptions configures roots and storage for the unified registry manager.
@@ -24,14 +25,23 @@ type Manager struct {
 
 // NewManager initializes a new unified registry manager.
 func NewManager(opts ManagerOptions) *Manager {
+	wsRoot := opts.WorkspaceRoot
+	if wsRoot == "" {
+		if wd, err := os.Getwd(); err == nil {
+			wsRoot = wd
+		} else {
+			wsRoot = "."
+		}
+	}
+
 	return &Manager{
 		Skills: NewSkillsRegistryWithOptions(SkillsRegistryOptions{
-			WorkspaceRoot:   opts.WorkspaceRoot,
+			WorkspaceRoot:   wsRoot,
 			IncludeUserHome: opts.IncludeUserHome,
 		}),
 		Tools: NewToolsRegistry(),
 		Plugins: NewPluginsRegistryWithOptions(PluginsRegistryOptions{
-			WorkspaceRoot:   opts.WorkspaceRoot,
+			WorkspaceRoot:   wsRoot,
 			IncludeUserHome: opts.IncludeUserHome,
 		}),
 		Templates: NewTemplateRegistry(opts.TemplatesDir),
