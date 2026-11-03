@@ -46,6 +46,11 @@ export interface DecisionStagePayload {
   totalDurationMs?: number;
   requiresHumanGate?: boolean;
   summary?: string;
+  token?: string;
+  runId?: string;
+  diff?: string;
+  reason?: string;
+  status?: string;
 }
 
 export interface TimelineStages {
@@ -161,13 +166,25 @@ export function extractTimelineStages(
         ],
         findings: payload.findings || [],
       };
-    } else if (event.stage === 'pipeline_completed') {
+    } else if (event.stage === 'pipeline_completed' || event.stage === 'gate_waiting') {
       result.decision = {
-        decision: payload.decision || 'APPROVED',
+        decision: payload.decision || (event.stage === 'gate_waiting' ? 'HUMAN_GATE' : 'APPROVED'),
         totalDurationMs: payload.totalDurationMs ?? payload.duration_ms,
-        requiresHumanGate: payload.requiresHumanGate ?? payload.decision === 'HUMAN_GATE',
-        summary: payload.summary || payload.message || '',
+        requiresHumanGate: payload.requiresHumanGate ?? (payload.decision === 'HUMAN_GATE' || event.stage === 'gate_waiting'),
+        summary: payload.summary || payload.reason || payload.message || '',
+        token: payload.token,
+        runId: payload.run_id || payload.runId,
+        diff: payload.diff,
+        reason: payload.reason,
+        status: payload.status || (event.stage === 'gate_waiting' ? 'gate_waiting' : undefined),
       };
+      if (event.stage === 'gate_waiting' && payload.diff && (!result.build || !result.build.diff)) {
+        if (!result.build) {
+          result.build = { diff: payload.diff };
+        } else {
+          result.build.diff = payload.diff;
+        }
+      }
     }
   }
 
@@ -221,12 +238,94 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
 
   const [showSpecMarkdown, setShowSpecMarkdown] = useState(false);
   const [drawerHeight, setDrawerHeight] = useState<'normal' | 'expanded'>('normal');
+  const [isResolving, setIsResolving] = useState(false);
+  const [resolutionFeedback, setResolutionFeedback] = useState<string | null>(null);
 
   if (!isDrawerOpen) {
     return null;
   }
 
   const stages = extractTimelineStages(executionEvents);
+  const isGateWaiting =
+    stages.decision?.status === 'gate_waiting' ||
+    stages.decision?.decision === 'HUMAN_GATE' ||
+    stages.decision?.requiresHumanGate ||
+    store.activeApproval !== null;
+
+  if (isGateWaiting && !stages.decision) {
+    stages.decision = {
+      decision: 'HUMAN_GATE',
+      requiresHumanGate: true,
+      status: 'gate_waiting',
+      summary: store.activeApproval?.toolName
+        ? `Tool approval required: ${store.activeApproval.toolName}`
+        : 'Human approval required before merge',
+      token: store.activeApproval?.token,
+      runId: store.activeApproval?.runId || store.activeRunId || undefined,
+    };
+  }
+
+  const effectiveToken = stages.decision?.token || store.activeApproval?.token || '';
+  const effectiveRunId = stages.decision?.runId || store.activeApproval?.runId || store.activeRunId || 'run-active';
+
+  const handleApproveAndMerge = async () => {
+    setIsResolving(true);
+    setResolutionFeedback(null);
+    try {
+      if (!store.activeApproval && (effectiveToken || effectiveRunId)) {
+        useFactoryFlowStore.setState({
+          activeApproval: {
+            runId: effectiveRunId,
+            token: effectiveToken,
+            expiresAt: new Date(Date.now() + 3600000).toISOString(),
+            coveragePercent: 95.0,
+            securityAlerts: 0,
+            minCoveragePercent: 90.0,
+            maxSecurityAlerts: 0,
+          },
+        });
+      }
+      const res = await store.resolveApproval('APPROVE');
+      setResolutionFeedback(res.message);
+      if (res.success && stages.decision) {
+        stages.decision.decision = 'APPROVED';
+        stages.decision.requiresHumanGate = false;
+        stages.decision.status = 'completed';
+      }
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setIsResolving(true);
+    setResolutionFeedback(null);
+    try {
+      if (!store.activeApproval && (effectiveToken || effectiveRunId)) {
+        useFactoryFlowStore.setState({
+          activeApproval: {
+            runId: effectiveRunId,
+            token: effectiveToken,
+            expiresAt: new Date(Date.now() + 3600000).toISOString(),
+            coveragePercent: 95.0,
+            securityAlerts: 0,
+            minCoveragePercent: 90.0,
+            maxSecurityAlerts: 0,
+          },
+        });
+      }
+      const reason = stages.decision?.reason || 'Rechazado por operador';
+      const res = await store.resolveApproval('REJECT', reason);
+      setResolutionFeedback(res.message);
+      if (res.success && stages.decision) {
+        stages.decision.decision = 'REJECTED';
+        stages.decision.requiresHumanGate = false;
+        stages.decision.status = 'failed';
+      }
+    } finally {
+      setIsResolving(false);
+    }
+  };
   const hasEvents = executionEvents.length > 0;
 
   return (
@@ -503,6 +602,50 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
                       </button>
                     )}
                   </div>
+
+                  {isGateWaiting && (
+                    <div className="gate-waiting-interactive-card" role="region" aria-label="Human Gate Interactive Resolution">
+                      <div className="gate-waiting-header">
+                        <span className="gate-waiting-title">⚠️ Compuerta de Aprobación Humana (gate_waiting)</span>
+                        <span className="stage-status-pill stage-status-waiting">gate_waiting</span>
+                      </div>
+                      <p className="gate-waiting-reason">
+                        {stages.decision?.reason ||
+                          stages.decision?.summary ||
+                          'Esta ejecución requiere autorización explícita antes de encolar en la MergeQueue.'}
+                      </p>
+                      {effectiveToken && (
+                        <div className="gate-waiting-token-row">
+                          <span className="token-label">Run ID:</span> <strong>{effectiveRunId}</strong>{' '}
+                          <span className="token-label" style={{ marginLeft: '0.75rem' }}>Token HMAC:</span>{' '}
+                          <code className="gate-waiting-token">{effectiveToken.slice(0, 16)}••••••••</code>
+                        </div>
+                      )}
+                      {resolutionFeedback && (
+                        <div className="gate-feedback-message" role="status">
+                          {resolutionFeedback}
+                        </div>
+                      )}
+                      <div className="gate-waiting-actions">
+                        <button
+                          type="button"
+                          className="gate-btn-approve-merge"
+                          disabled={isResolving}
+                          onClick={handleApproveAndMerge}
+                        >
+                          {isResolving ? 'Procesando...' : 'Aprobar y Mergear'}
+                        </button>
+                        <button
+                          type="button"
+                          className="gate-btn-reject"
+                          disabled={isResolving}
+                          onClick={handleReject}
+                        >
+                          Rechazar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

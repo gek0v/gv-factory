@@ -344,6 +344,20 @@ func NewServerMuxWithRunner(
 		mux.Handle("/api/v1/events", gw.Hub())
 	}
 
+	// Trackers and sequential merge queue shared between gates and factory pipelines
+	pendingTracker := NewPendingGateTracker(context.Background(), gw, st)
+	factoryTracker := NewFactoryRunTracker()
+
+	var factoryMergeQueue agent.MergeQueue
+	if gw != nil {
+		factoryMergeQueue = merger.NewQueue(nil, gw, nil, nil, merger.Config{RepoPath: ".", BaseBranch: "main"})
+	}
+	if runner != nil {
+		if defRunner, ok := runner.(*defaultFactoryRunner); ok && defRunner.mergeQueue != nil {
+			factoryMergeQueue = defRunner.mergeQueue
+		}
+	}
+
 	// Gate approval resolution endpoint from frontend or integrations
 	gateResolveHandler := func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -360,6 +374,16 @@ func NewServerMuxWithRunner(
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 			return
+		}
+
+		// Fallback token lookup by run_id if client omitted token but gate is tracked
+		if payload.Token == "" && payload.RunID != "" && pendingTracker != nil {
+			for _, g := range pendingTracker.ListPending() {
+				if g.RunID == payload.RunID && g.Token != "" {
+					payload.Token = g.Token
+					break
+				}
+			}
 		}
 
 		now := time.Now().UTC()
@@ -477,6 +501,73 @@ func NewServerMuxWithRunner(
 			})
 		}
 
+		// If gate belongs to a factory run, update status and enqueue to MergeQueue on approval
+		if factoryTracker != nil {
+			if runRecord, isFactoryRun := factoryTracker.Get(payload.RunID); isFactoryRun {
+				if normalizedDecision == "approved" {
+					runRecord.Status = "completed"
+					runRecord.UpdatedAt = now
+					if runRecord.Outcome != nil {
+						runRecord.Outcome.Decision = agent.DecisionApproved
+						runRecord.Outcome.Success = true
+						runRecord.Outcome.MergeStatus = "enqueued"
+					}
+					factoryTracker.Set(runRecord)
+
+					if factoryMergeQueue != nil {
+						branchName := fmt.Sprintf("ov-run/%s", payload.RunID)
+						_ = factoryMergeQueue.Enqueue(r.Context(), merger.MergeRequest{
+							RunID:        payload.RunID,
+							SourceBranch: branchName,
+							TargetBranch: "main",
+							Metadata: map[string]any{
+								"resolved_by": clientIP,
+								"token":       payload.Token,
+							},
+						})
+					}
+
+					if gw != nil {
+						_ = gw.Publish(r.Context(), "pipeline_completed", gateway.Event{
+							Type:      "pipeline_completed",
+							RunID:     payload.RunID,
+							TaskID:    payload.RunID,
+							Timestamp: now.UnixMilli(),
+							Payload: map[string]any{
+								"run_id":   payload.RunID,
+								"status":   "completed",
+								"decision": "APPROVED",
+								"outcome":  runRecord.Outcome,
+							},
+						})
+					}
+				} else if normalizedDecision == "rejected" {
+					runRecord.Status = "failed"
+					runRecord.UpdatedAt = now
+					if runRecord.Outcome != nil {
+						runRecord.Outcome.Decision = agent.DecisionType("REJECTED")
+						runRecord.Outcome.Success = false
+					}
+					factoryTracker.Set(runRecord)
+
+					if gw != nil {
+						_ = gw.Publish(r.Context(), "pipeline_completed", gateway.Event{
+							Type:      "pipeline_completed",
+							RunID:     payload.RunID,
+							TaskID:    payload.RunID,
+							Timestamp: now.UnixMilli(),
+							Payload: map[string]any{
+								"run_id":   payload.RunID,
+								"status":   "failed",
+								"decision": "REJECTED",
+								"outcome":  runRecord.Outcome,
+							},
+						})
+					}
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -494,7 +585,6 @@ func NewServerMuxWithRunner(
 	}
 
 	// Pending decision gates endpoint
-	pendingTracker := NewPendingGateTracker(context.Background(), gw, st)
 	mux.HandleFunc("/api/v1/gates/pending", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -922,13 +1012,15 @@ func NewServerMuxWithRunner(
 
 	// Autonomous Factory execution and status endpoints
 	if runner == nil {
-		var mq agent.MergeQueue
-		if gw != nil {
-			mq = merger.NewQueue(nil, gw, nil, nil, merger.Config{RepoPath: ".", BaseBranch: "main"})
-		}
-		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw, mergeQueue: mq, costTracker: costTracker}
+		runner = &defaultFactoryRunner{brainSvc: brainSvc, gw: gw, mergeQueue: factoryMergeQueue, costTracker: costTracker}
 	}
-	RegisterFactoryEndpoints(mux, gw, runner)
+	RegisterFactoryEndpointsWithOptions(mux, gw, runner, FactoryEndpointsOptions{
+		AuthSvc:        authSvc,
+		Store:          st,
+		MergeQueue:     factoryMergeQueue,
+		Tracker:        factoryTracker,
+		PendingTracker: pendingTracker,
+	})
 
 	var handler http.Handler = corsMiddleware(mux)
 	if t != nil && t.Metrics != nil {

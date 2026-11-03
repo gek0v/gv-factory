@@ -488,5 +488,55 @@ describe('ExecutionTimelineDrawer and Helpers (TDD)', () => {
       expect(html).toContain('stage-card-review');
       expect(html).toContain('stage-card-decision');
     });
+
+    it('renders interactive gate banner with "Aprobar y Mergear" and "Rechazar" buttons when status is gate_waiting', () => {
+      useFactoryFlowStore.setState({
+        showExecutionTimeline: true,
+        executionEvents: [
+          {
+            stage: 'gate_waiting',
+            timestamp: '2026-11-02T10:05:00Z',
+            payload: {
+              status: 'gate_waiting',
+              run_id: 'task-interactive-101',
+              token: 'task-interactive-101:1700000000:abcdeffedcba1234',
+              diff: 'diff --git a/pkg.go b/pkg.go',
+              reason: 'Security sign-off required for privilege escalation',
+            },
+          },
+        ],
+      });
+
+      const html = renderToStaticMarkup(React.createElement(ExecutionTimelineDrawer));
+      expect(html).toContain('gate-waiting-interactive-card');
+      expect(html).toContain('gate_waiting');
+      expect(html).toContain('Security sign-off required for privilege escalation');
+      expect(html).toContain('Aprobar y Mergear');
+      expect(html).toContain('Rechazar');
+      expect(html).toContain('task-interactive-');
+    });
+
+    it('extractTimelineStages extracts gate_waiting event diff and reason correctly', () => {
+      const stages = extractTimelineStages([
+        {
+          stage: 'gate_waiting',
+          timestamp: '2026-11-02T10:05:00Z',
+          payload: {
+            status: 'gate_waiting',
+            run_id: 'run-stage-test',
+            token: 'test-token-value',
+            diff: '--- a/main.go\n+++ b/main.go\n@@ -1,1 +1,2 @@\n+func New() {}',
+            reason: 'Manual QA check required',
+          },
+        },
+      ]);
+
+      expect(stages.decision?.status).toBe('gate_waiting');
+      expect(stages.decision?.decision).toBe('HUMAN_GATE');
+      expect(stages.decision?.requiresHumanGate).toBe(true);
+      expect(stages.decision?.token).toBe('test-token-value');
+      expect(stages.decision?.reason).toBe('Manual QA check required');
+      expect(stages.build?.diff).toContain('func New() {}');
+    });
   });
 });

@@ -57,6 +57,12 @@ func ExecuteFactoryCommand(ctx context.Context, args []string, out io.Writer, co
 		return executeFactoryStatus(ctx, cmdArgs, out, color)
 	case "list":
 		return executeFactoryList(ctx, cmdArgs, out, color)
+	case "gates":
+		return executeFactoryGates(ctx, cmdArgs, out, color)
+	case "approve":
+		return executeFactoryApprove(ctx, cmdArgs, out, color)
+	case "reject":
+		return executeFactoryReject(ctx, cmdArgs, out, color)
 	default:
 		fmt.Fprintf(out, "%s unknown factory subcommand %q\n\n", color.Red("Error:"), subcommand)
 		printFactoryUsage(out)
@@ -71,6 +77,9 @@ func printFactoryUsage(out io.Writer) {
 	fmt.Fprintln(out, "  run <title>          Dispatch an autonomous software factory pipeline")
 	fmt.Fprintln(out, "  status <run-id>      Inspect the real-time execution status and outcome of a run")
 	fmt.Fprintln(out, "  list                 List active and recent factory executions")
+	fmt.Fprintln(out, "  gates                List active pending decision gates awaiting human approval")
+	fmt.Fprintln(out, "  approve <run-id>     Approve a pending human gate and enqueue to merge queue")
+	fmt.Fprintln(out, "  reject <run-id>      Reject a pending human gate with optional reason")
 	fmt.Fprintln(out, "\nGlobal Flags:")
 	fmt.Fprintln(out, "  --server <url>       Remote ov-server URL (default: $OV_SERVER_URL or http://localhost:8080)")
 	fmt.Fprintln(out, "  --json               Output raw JSON response")
@@ -611,5 +620,344 @@ func executeFactoryList(ctx context.Context, args []string, out io.Writer, color
 	fmt.Fprintln(out, "─────────────────────────────────────────────────────────────────────────────────")
 	fmt.Fprintf(out, "Total: %d run(s)\n", len(runs))
 
+	return 0
+}
+
+// PendingGateResponse represents a pending gate item returned by ov-server.
+type PendingGateResponse struct {
+	RunID           string         `json:"run_id"`
+	ToolName        string         `json:"tool_name,omitempty"`
+	Arguments       map[string]any `json:"arguments,omitempty"`
+	Token           string         `json:"token,omitempty"`
+	TokenHMACPrefix string         `json:"token_hmac_prefix,omitempty"`
+	Diff            string         `json:"diff,omitempty"`
+	Reason          string         `json:"reason,omitempty"`
+	CreatedAt       time.Time      `json:"created_at,omitempty"`
+	ExpiresAt       time.Time      `json:"expires_at,omitempty"`
+}
+
+// PendingGatesListResponse matches GET /api/v1/gates/pending.
+type PendingGatesListResponse struct {
+	Gates []PendingGateResponse `json:"gates"`
+	Total int                   `json:"total"`
+}
+
+func fetchPendingGates(ctx context.Context, client *http.Client, serverURL string) (*PendingGatesListResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/gates/pending", serverURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("server connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+
+	var res PendingGatesListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &res, nil
+}
+
+func findPendingGateToken(ctx context.Context, client *http.Client, serverURL, runID string) (string, error) {
+	list, err := fetchPendingGates(ctx, client, serverURL)
+	if err != nil {
+		return "", err
+	}
+	for _, g := range list.Gates {
+		if g.RunID == runID && g.Token != "" {
+			return g.Token, nil
+		}
+	}
+	return "", fmt.Errorf("no pending gate found for run %q", runID)
+}
+
+func executeFactoryGates(ctx context.Context, args []string, out io.Writer, color *Colorizer) int {
+	fs := flag.NewFlagSet("factory gates", flag.ContinueOnError)
+	fs.SetOutput(out)
+
+	var (
+		serverFlag = fs.String("server", "", "Remote ov-server URL")
+		jsonFlag   = fs.Bool("json", false, "Output in JSON format")
+	)
+
+	valFlags := map[string]bool{
+		"server": true,
+	}
+
+	reordered := reorderArgs(args, valFlags)
+	if err := fs.Parse(reordered); err != nil {
+		return 2
+	}
+
+	serverURL := resolveServerURL(*serverFlag)
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	resp, err := fetchPendingGates(ctx, client, serverURL)
+	if err != nil {
+		fmt.Fprintf(out, "%s failed to query pending gates: %v\n", color.Red("Error:"), err)
+		return 1
+	}
+
+	if *jsonFlag {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(resp)
+		return 0
+	}
+
+	if len(resp.Gates) == 0 {
+		fmt.Fprintln(out, "No pending gates awaiting human approval.")
+		return 0
+	}
+
+	fmt.Fprintln(out, color.Bold("PENDING HUMAN DECISION GATES"))
+	fmt.Fprintln(out, "─────────────────────────────────────────────────────────────────────────────────")
+	fmt.Fprintf(out, "%-22s %-16s %-26s %s\n", "RUN ID", "TOKEN PREFIX", "REASON", "EXPIRES")
+	fmt.Fprintln(out, "─────────────────────────────────────────────────────────────────────────────────")
+
+	for _, g := range resp.Gates {
+		tokenPrefix := g.TokenHMACPrefix
+		if tokenPrefix == "" && g.Token != "" {
+			if len(g.Token) > 12 {
+				tokenPrefix = g.Token[:8] + "..."
+			} else {
+				tokenPrefix = g.Token
+			}
+		}
+		if tokenPrefix == "" {
+			tokenPrefix = "—"
+		}
+
+		reason := g.Reason
+		if reason == "" && g.Arguments != nil {
+			if r, ok := g.Arguments["reason"].(string); ok {
+				reason = r
+			}
+		}
+		if reason == "" {
+			reason = "Awaiting human decision"
+		}
+		if len(reason) > 25 {
+			reason = reason[:22] + "..."
+		}
+
+		expiresStr := "—"
+		if !g.ExpiresAt.IsZero() {
+			expiresStr = g.ExpiresAt.Format("15:04:05")
+		}
+
+		fmt.Fprintf(out, "%-22s %-16s %-26s %s\n",
+			g.RunID,
+			color.Cyan(tokenPrefix),
+			reason,
+			expiresStr,
+		)
+	}
+	fmt.Fprintln(out, "─────────────────────────────────────────────────────────────────────────────────")
+	fmt.Fprintf(out, "Total: %d gate(s) awaiting approval\n", len(resp.Gates))
+	fmt.Fprintln(out, "Use 'ov-cli factory approve <run_id>' or 'ov-cli factory reject <run_id>'")
+
+	return 0
+}
+
+func executeFactoryApprove(ctx context.Context, args []string, out io.Writer, color *Colorizer) int {
+	fs := flag.NewFlagSet("factory approve", flag.ContinueOnError)
+	fs.SetOutput(out)
+
+	var (
+		serverFlag = fs.String("server", "", "Remote ov-server URL")
+		tokenFlag  = fs.String("token", "", "Cryptographic HMAC approval token (optional, auto-resolved if omitted)")
+		jsonFlag   = fs.Bool("json", false, "Output in JSON format")
+	)
+
+	valFlags := map[string]bool{
+		"server": true,
+		"token":  true,
+	}
+
+	reordered := reorderArgs(args, valFlags)
+	if err := fs.Parse(reordered); err != nil {
+		return 2
+	}
+
+	runID := strings.TrimSpace(fs.Arg(0))
+	if runID == "" {
+		fmt.Fprintf(out, "%s run-id argument is required (e.g. ov-cli factory approve <run-id>)\n", color.Red("Error:"))
+		return 2
+	}
+
+	serverURL := resolveServerURL(*serverFlag)
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	token := strings.TrimSpace(*tokenFlag)
+	if token == "" {
+		var err error
+		token, err = findPendingGateToken(ctx, client, serverURL, runID)
+		if err != nil {
+			fmt.Fprintf(out, "%s could not locate approval token for run %q: %v\n", color.Red("Error:"), runID, err)
+			return 1
+		}
+	}
+
+	payload := map[string]string{
+		"run_id":   runID,
+		"token":    token,
+		"decision": "approved",
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	resolveURL := fmt.Sprintf("%s/api/v1/gates/resolve", serverURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, resolveURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		fmt.Fprintf(out, "%s failed to create request: %v\n", color.Red("Error:"), err)
+		return 1
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Fprintf(out, "%s failed to communicate with server: %v\n", color.Red("Error:"), err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		var errMap map[string]any
+		errMsg := string(bodyBytes)
+		if json.Unmarshal(bodyBytes, &errMap) == nil {
+			if e, ok := errMap["error"].(string); ok && e != "" {
+				errMsg = e
+			}
+		}
+		fmt.Fprintf(out, "%s server rejected approval (HTTP %d): %s\n", color.Red("Error:"), resp.StatusCode, errMsg)
+		return 1
+	}
+
+	if *jsonFlag {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{
+			"success":  true,
+			"run_id":   runID,
+			"decision": "approved",
+			"message":  "Gate decision recorded and enqueued to sequential merge queue",
+		})
+		return 0
+	}
+
+	fmt.Fprintf(out, "%s Gate for run %s approved! Enqueued to sequential merge queue.\n", color.Green("✓"), color.Bold(runID))
+	return 0
+}
+
+func executeFactoryReject(ctx context.Context, args []string, out io.Writer, color *Colorizer) int {
+	fs := flag.NewFlagSet("factory reject", flag.ContinueOnError)
+	fs.SetOutput(out)
+
+	var (
+		serverFlag = fs.String("server", "", "Remote ov-server URL")
+		tokenFlag  = fs.String("token", "", "Cryptographic HMAC approval token (optional, auto-resolved if omitted)")
+		reasonFlag = fs.String("reason", "", "Optional rejection reason or feedback")
+		jsonFlag   = fs.Bool("json", false, "Output in JSON format")
+	)
+
+	valFlags := map[string]bool{
+		"server": true,
+		"token":  true,
+		"reason": true,
+	}
+
+	reordered := reorderArgs(args, valFlags)
+	if err := fs.Parse(reordered); err != nil {
+		return 2
+	}
+
+	runID := strings.TrimSpace(fs.Arg(0))
+	if runID == "" {
+		fmt.Fprintf(out, "%s run-id argument is required (e.g. ov-cli factory reject <run-id> [--reason \"...\"])\n", color.Red("Error:"))
+		return 2
+	}
+
+	serverURL := resolveServerURL(*serverFlag)
+	client := &http.Client{Timeout: 15 * time.Second}
+
+	token := strings.TrimSpace(*tokenFlag)
+	if token == "" {
+		var err error
+		token, err = findPendingGateToken(ctx, client, serverURL, runID)
+		if err != nil {
+			fmt.Fprintf(out, "%s could not locate approval token for run %q: %v\n", color.Red("Error:"), runID, err)
+			return 1
+		}
+	}
+
+	payload := map[string]string{
+		"run_id":   runID,
+		"token":    token,
+		"decision": "rejected",
+	}
+	if *reasonFlag != "" {
+		payload["reason"] = *reasonFlag
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	resolveURL := fmt.Sprintf("%s/api/v1/gates/resolve", serverURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, resolveURL, bytes.NewReader(payloadBytes))
+	if err != nil {
+		fmt.Fprintf(out, "%s failed to create request: %v\n", color.Red("Error:"), err)
+		return 1
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Fprintf(out, "%s failed to communicate with server: %v\n", color.Red("Error:"), err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		var errMap map[string]any
+		errMsg := string(bodyBytes)
+		if json.Unmarshal(bodyBytes, &errMap) == nil {
+			if e, ok := errMap["error"].(string); ok && e != "" {
+				errMsg = e
+			}
+		}
+		fmt.Fprintf(out, "%s server rejected gate resolution (HTTP %d): %s\n", color.Red("Error:"), resp.StatusCode, errMsg)
+		return 1
+	}
+
+	if *jsonFlag {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{
+			"success":  true,
+			"run_id":   runID,
+			"decision": "rejected",
+			"reason":   *reasonFlag,
+			"message":  "Gate decision recorded as rejected",
+		})
+		return 0
+	}
+
+	reasonSuffix := ""
+	if *reasonFlag != "" {
+		reasonSuffix = fmt.Sprintf(" (Reason: %s)", *reasonFlag)
+	}
+	fmt.Fprintf(out, "%s Gate for run %s rejected.%s\n", color.Red("✕"), color.Bold(runID), reasonSuffix)
 	return 0
 }

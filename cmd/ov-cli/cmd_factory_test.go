@@ -1156,3 +1156,340 @@ func TestFactoryCLI_List_AdditionalEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestFactoryCLI_Gates_Lifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("gates empty list", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/gates/pending" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"gates": []any{},
+				"total": 0,
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "gates", "--server", ts.URL})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d", code)
+		}
+		if !strings.Contains(out.String(), "No pending gates") {
+			t.Errorf("expected empty state message, got: %s", out.String())
+		}
+	})
+
+	t.Run("gates with pending items and formatted table", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/gates/pending" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"gates": []map[string]any{
+					{
+						"run_id":            "task-sec-1",
+						"token":             "task-sec-1:1800000000:abcdef123456",
+						"token_hmac_prefix": "abcdef12...",
+						"reason":            "High risk file delete requires sign-off",
+						"expires_at":        time.Now().Add(1 * time.Hour),
+					},
+				},
+				"total": 1,
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "gates", "--server", ts.URL})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d", code)
+		}
+		outStr := out.String()
+		if !strings.Contains(outStr, "task-sec-1") || !strings.Contains(outStr, "High risk file delete") {
+			t.Errorf("expected gate details in output table, got: %s", outStr)
+		}
+	})
+
+	t.Run("gates with --json flag", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"gates": []map[string]any{
+					{
+						"run_id": "task-json-2",
+						"token":  "task-json-2:1800000000:99887766",
+						"reason": "Test gate json",
+					},
+				},
+				"total": 1,
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "gates", "--server", ts.URL, "--json"})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d", code)
+		}
+
+		var parsed map[string]any
+		if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+			t.Fatalf("failed to parse json output: %v", err)
+		}
+		if parsed["total"] != float64(1) {
+			t.Errorf("expected total 1, got %v", parsed["total"])
+		}
+	})
+
+	t.Run("gates server error", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal database failure"))
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "gates", "--server", ts.URL})
+		if code != 1 {
+			t.Fatalf("expected 1, got %d", code)
+		}
+	})
+}
+
+func TestFactoryCLI_Approve_Lifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("approve missing run_id returns 2", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "approve"})
+		if code != 2 {
+			t.Fatalf("expected 2, got %d", code)
+		}
+		if !strings.Contains(out.String(), "run-id argument is required") {
+			t.Errorf("expected run-id argument is required error, got: %s", out.String())
+		}
+	})
+
+	t.Run("approve with auto-resolved token and success output", func(t *testing.T) {
+		var resolvedPayload map[string]any
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/gates/pending" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"gates": []map[string]any{
+						{
+							"run_id": "run-auto-1",
+							"token":  "run-auto-1:1800000000:validhmactoken",
+							"reason": "Approval test",
+						},
+					},
+					"total": 1,
+				})
+				return
+			}
+			if r.URL.Path == "/api/v1/gates/resolve" {
+				_ = json.NewDecoder(r.Body).Decode(&resolvedPayload)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "approve", "run-auto-1", "--server", ts.URL})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Output: %s", code, out.String())
+		}
+		if !strings.Contains(out.String(), "approved") || !strings.Contains(out.String(), "merge queue") {
+			t.Errorf("expected approved message in output, got: %s", out.String())
+		}
+		if resolvedPayload["run_id"] != "run-auto-1" || resolvedPayload["token"] != "run-auto-1:1800000000:validhmactoken" {
+			t.Errorf("unexpected payload sent to /api/v1/gates/resolve: %+v", resolvedPayload)
+		}
+	})
+
+	t.Run("approve with explicit --token and --json flag", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/gates/resolve" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "approve", "run-explicit-2",
+			"--token", "explicit-token-123",
+			"--server", ts.URL,
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Output: %s", code, out.String())
+		}
+
+		var parsed map[string]any
+		if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+			t.Fatalf("failed to parse json response: %v", err)
+		}
+		if parsed["decision"] != "approved" || parsed["run_id"] != "run-explicit-2" {
+			t.Errorf("unexpected json result: %+v", parsed)
+		}
+	})
+
+	t.Run("approve gate not found returns 1", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"gates": []any{},
+				"total": 0,
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "approve", "nonexistent-run", "--server", ts.URL})
+		if code != 1 {
+			t.Fatalf("expected 1, got %d", code)
+		}
+		if !strings.Contains(out.String(), "could not locate approval token") {
+			t.Errorf("expected error locating token, got: %s", out.String())
+		}
+	})
+
+	t.Run("approve server rejects with 401 returns 1", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "invalid or expired approval token",
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "approve", "run-rejected-auth",
+			"--token", "bad-token",
+			"--server", ts.URL,
+		})
+		if code != 1 {
+			t.Fatalf("expected 1, got %d", code)
+		}
+		if !strings.Contains(out.String(), "server rejected approval") {
+			t.Errorf("expected rejection error, got: %s", out.String())
+		}
+	})
+}
+
+func TestFactoryCLI_Reject_Lifecycle(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("reject missing run_id returns 2", func(t *testing.T) {
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{"factory", "reject"})
+		if code != 2 {
+			t.Fatalf("expected 2, got %d", code)
+		}
+		if !strings.Contains(out.String(), "run-id argument is required") {
+			t.Errorf("expected run-id argument is required, got: %s", out.String())
+		}
+	})
+
+	t.Run("reject with reason and auto-resolved token", func(t *testing.T) {
+		var resolvedPayload map[string]any
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/gates/pending" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"gates": []map[string]any{
+						{
+							"run_id": "run-reject-1",
+							"token":  "run-reject-1:1800000000:rejecttoken",
+						},
+					},
+					"total": 1,
+				})
+				return
+			}
+			if r.URL.Path == "/api/v1/gates/resolve" {
+				_ = json.NewDecoder(r.Body).Decode(&resolvedPayload)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "reject", "run-reject-1",
+			"--reason", "Security vulnerability in patch",
+			"--server", ts.URL,
+		})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Output: %s", code, out.String())
+		}
+		if !strings.Contains(out.String(), "rejected") || !strings.Contains(out.String(), "Security vulnerability in patch") {
+			t.Errorf("expected reject confirmation with reason, got: %s", out.String())
+		}
+		if resolvedPayload["decision"] != "rejected" || resolvedPayload["reason"] != "Security vulnerability in patch" {
+			t.Errorf("unexpected payload: %+v", resolvedPayload)
+		}
+	})
+
+	t.Run("reject with --json flag", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1/gates/resolve" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "reject", "run-rej-json",
+			"--token", "tok-123",
+			"--reason", "Architectural constraint violated",
+			"--server", ts.URL,
+			"--json",
+		})
+		if code != 0 {
+			t.Fatalf("expected 0, got %d", code)
+		}
+
+		var parsed map[string]any
+		if err := json.Unmarshal(out.Bytes(), &parsed); err != nil {
+			t.Fatalf("failed to parse json: %v", err)
+		}
+		if parsed["decision"] != "rejected" || parsed["reason"] != "Architectural constraint violated" {
+			t.Errorf("unexpected json result: %+v", parsed)
+		}
+	})
+}
