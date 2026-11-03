@@ -10,6 +10,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -579,3 +582,353 @@ func TestFactoryEndpoints_DefaultRunnerAndEdgeCases(t *testing.T) {
 		t.Errorf("expected status 'failed', got %q", rec.Status)
 	}
 }
+
+type testSpecGen struct {
+	spec *agent.SpecDocument
+	err  error
+}
+
+func (m *testSpecGen) GenerateSpec(ctx context.Context, task agent.TaskContext) (*agent.SpecDocument, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.spec != nil {
+		return m.spec, nil
+	}
+	return &agent.SpecDocument{
+		Title: task.Title,
+		AtomicTasks: []agent.AtomicTask{
+			{ID: "task-atomic-1", Title: "Create math engine"},
+		},
+	}, nil
+}
+
+type testFileWritingBuilder struct {
+	baseDir string
+	files   map[string]string
+}
+
+func (b *testFileWritingBuilder) BuildSpec(ctx context.Context, spec *agent.SpecDocument) ([]*agent.BuildResult, error) {
+	for name, content := range b.files {
+		target := filepath.Join(b.baseDir, name)
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(target, []byte(content), 0644); err != nil {
+			return nil, err
+		}
+	}
+	return []*agent.BuildResult{
+		{
+			TaskID:  "task-atomic-1",
+			Success: true,
+		},
+	}, nil
+}
+
+type testApprover struct {
+	decision *agent.ApprovalDecision
+	lastReq  agent.ApprovalRequest
+}
+
+func (m *testApprover) Decide(ctx context.Context, req agent.ApprovalRequest) (*agent.ApprovalDecision, error) {
+	m.lastReq = req
+	if m.decision != nil {
+		return m.decision, nil
+	}
+	return &agent.ApprovalDecision{
+		DecisionType: agent.DecisionApproved,
+	}, nil
+}
+
+func TestFactoryEndpoints_InitGitSandbox(t *testing.T) {
+	tempDir := t.TempDir()
+	taskID := "task-init-git-101"
+	sandboxDir := filepath.Join(tempDir, taskID)
+
+	ctx := context.Background()
+	err := initGitSandbox(ctx, sandboxDir, taskID, "main")
+	if err != nil {
+		t.Fatalf("unexpected error in initGitSandbox: %v", err)
+	}
+
+	// Verify .git exists
+	gitDir := filepath.Join(sandboxDir, ".git")
+	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+		t.Fatalf("expected .git directory to exist in %s", sandboxDir)
+	}
+
+	// Verify git author config
+	name, err := runGitCmd(ctx, sandboxDir, "config", "user.name")
+	if err != nil || name != "GV Factory Bot" {
+		t.Errorf("expected user.name 'GV Factory Bot', got %q (err: %v)", name, err)
+	}
+	email, err := runGitCmd(ctx, sandboxDir, "config", "user.email")
+	if err != nil || email != "bot@gv-factory.local" {
+		t.Errorf("expected user.email 'bot@gv-factory.local', got %q (err: %v)", email, err)
+	}
+
+	// Verify current branch is ov-run/<task_id>
+	branch, err := runGitCmd(ctx, sandboxDir, "branch", "--show-current")
+	if err != nil || branch != "ov-run/"+taskID {
+		t.Errorf("expected branch 'ov-run/%s', got %q (err: %v)", taskID, branch, err)
+	}
+
+	// Verify go.mod exists
+	goModBytes, err := os.ReadFile(filepath.Join(sandboxDir, "go.mod"))
+	if err != nil {
+		t.Fatalf("expected go.mod to exist: %v", err)
+	}
+	if !strings.Contains(string(goModBytes), "module task_init_git_101") && !strings.Contains(string(goModBytes), "module task-init-git-101") {
+		t.Errorf("expected go.mod to contain task identifier, got %s", string(goModBytes))
+	}
+
+	// Verify initial commit on main branch
+	logMsg, err := runGitCmd(ctx, sandboxDir, "log", "-1", "--format=%s", "main")
+	if err != nil || logMsg != "chore: initial commit with go.mod" {
+		t.Errorf("expected commit message 'chore: initial commit with go.mod', got %q (err: %v)", logMsg, err)
+	}
+
+	// Verify idempotency on second call
+	if err := initGitSandbox(ctx, sandboxDir, taskID, "main"); err != nil {
+		t.Fatalf("expected second call to initGitSandbox to succeed, got %v", err)
+	}
+	branch2, _ := runGitCmd(ctx, sandboxDir, "branch", "--show-current")
+	if branch2 != "ov-run/"+taskID {
+		t.Errorf("expected branch to remain 'ov-run/%s', got %q", taskID, branch2)
+	}
+}
+
+func TestFactoryEndpoints_CommitAndExtractDiff(t *testing.T) {
+	tempDir := t.TempDir()
+	taskID := "task-diff-202"
+	sandboxDir := filepath.Join(tempDir, taskID)
+
+	ctx := context.Background()
+	if err := initGitSandbox(ctx, sandboxDir, taskID, "main"); err != nil {
+		t.Fatalf("failed initGitSandbox: %v", err)
+	}
+
+	// Write a new file
+	// REUSE-IgnoreStart
+	serviceFile := filepath.Join(sandboxDir, "service.go")
+	serviceContent := "// SPDX-License-Identifier: Apache-2.0\npackage main\n\nfunc Run() string { return \"ok\" }\n"
+	if err := os.WriteFile(serviceFile, []byte(serviceContent), 0644); err != nil {
+		t.Fatalf("failed to write service file: %v", err)
+	}
+	// REUSE-IgnoreEnd
+
+	diff := commitAndExtractDiff(ctx, sandboxDir, taskID, "implement service runner", "main")
+	if diff == "" {
+		t.Fatal("expected non-empty diff after committing modified files")
+	}
+	if !strings.Contains(diff, "diff --git a/service.go b/service.go") {
+		t.Errorf("expected diff to reference service.go, got: %s", diff)
+	}
+	if !strings.Contains(diff, "+func Run() string") {
+		t.Errorf("expected diff to contain added function, got: %s", diff)
+	}
+
+	// Verify commit message
+	commitMsg, err := runGitCmd(ctx, sandboxDir, "log", "-1", "--format=%s")
+	if err != nil || !strings.Contains(commitMsg, "feat(task-diff-202): implement implement service runner") {
+		t.Errorf("unexpected commit message: %q (err: %v)", commitMsg, err)
+	}
+
+	// Calling commitAndExtractDiff when clean still extracts diff against HEAD~1 or baseBranch
+	cleanDiff := commitAndExtractDiff(ctx, sandboxDir, taskID, "implement service runner", "main")
+	if cleanDiff == "" {
+		t.Fatal("expected diff against HEAD~1 to remain accessible")
+	}
+}
+
+func TestFactoryEndpoints_DefaultRunner_RealGitSandbox(t *testing.T) {
+	tempBase := t.TempDir()
+	taskID := "task-runner-git-303"
+	sandboxDir := filepath.Join(tempBase, taskID)
+
+	gw := gateway.NewGateway()
+	specGen := &testSpecGen{}
+	// REUSE-IgnoreStart
+	builder := &testFileWritingBuilder{
+		baseDir: sandboxDir,
+		files: map[string]string{
+			"math_engine.go": "// SPDX-License-Identifier: Apache-2.0\npackage main\n\nfunc Multiply(a, b int) int {\n\treturn a * b\n}\n",
+		},
+	}
+	// REUSE-IgnoreEnd
+	approver := &testApprover{}
+
+	runner := &defaultFactoryRunner{
+		gw:             gw,
+		sandboxBaseDir: tempBase,
+		specWriter:     specGen,
+		builder:        builder,
+		approver:       approver,
+	}
+
+	ctx := context.Background()
+	task := agent.TaskContext{
+		TaskID: taskID,
+		Title:  "Implement high-performance math engine",
+		Metadata: map[string]any{
+			"target_branch": "main",
+		},
+	}
+
+	outcome, err := runner.RunPipeline(ctx, task)
+	if err != nil {
+		t.Fatalf("unexpected error in RunPipeline: %v", err)
+	}
+	if outcome == nil {
+		t.Fatal("expected non-nil outcome")
+	}
+	if !outcome.Success {
+		t.Errorf("expected outcome.Success to be true")
+	}
+	if outcome.BuildResult == nil {
+		t.Fatal("expected outcome.BuildResult to be non-nil")
+	}
+
+	// Assert real GitDiff is populated in BuildResult
+	if outcome.BuildResult.GitDiff == "" {
+		t.Fatal("expected outcome.BuildResult.GitDiff to be non-empty real diff")
+	}
+	if !strings.Contains(outcome.BuildResult.GitDiff, "diff --git a/math_engine.go b/math_engine.go") {
+		t.Errorf("expected GitDiff to contain math_engine.go diff, got:\n%s", outcome.BuildResult.GitDiff)
+	}
+
+	// Assert Approver received the real diff
+	if approver.lastReq.Diff == "" {
+		t.Fatal("expected Approver to receive real diff in ApprovalRequest")
+	}
+	if !strings.Contains(approver.lastReq.Diff, "math_engine.go") {
+		t.Errorf("expected Approver diff to contain math_engine.go, got:\n%s", approver.lastReq.Diff)
+	}
+
+	// Verify sandbox git branch and commit author
+	branch, err := runGitCmd(ctx, sandboxDir, "branch", "--show-current")
+	if err != nil || branch != "ov-run/"+taskID {
+		t.Errorf("expected active branch 'ov-run/%s', got %q (err: %v)", taskID, branch, err)
+	}
+
+	authorName, _ := runGitCmd(ctx, sandboxDir, "log", "-1", "--format=%an")
+	if authorName != "GV Factory Bot" {
+		t.Errorf("expected author name 'GV Factory Bot', got %q", authorName)
+	}
+	authorEmail, _ := runGitCmd(ctx, sandboxDir, "log", "-1", "--format=%ae")
+	if authorEmail != "bot@gv-factory.local" {
+		t.Errorf("expected author email 'bot@gv-factory.local', got %q", authorEmail)
+	}
+}
+
+func TestFactoryEndpoints_DefaultRunner_NoFilesModified(t *testing.T) {
+	tempBase := t.TempDir()
+	taskID := "task-no-files-404"
+	sandboxDir := filepath.Join(tempBase, taskID)
+
+	gw := gateway.NewGateway()
+	specGen := &testSpecGen{}
+	builder := &testFileWritingBuilder{
+		baseDir: sandboxDir,
+		files:   map[string]string{}, // no files written
+	}
+	approver := &testApprover{}
+
+	runner := &defaultFactoryRunner{
+		gw:             gw,
+		sandboxBaseDir: tempBase,
+		specWriter:     specGen,
+		builder:        builder,
+		approver:       approver,
+	}
+
+	ctx := context.Background()
+	task := agent.TaskContext{
+		TaskID: taskID,
+		Title:  "Task with no file modifications",
+	}
+
+	outcome, err := runner.RunPipeline(ctx, task)
+	if err != nil {
+		t.Fatalf("unexpected error in RunPipeline: %v", err)
+	}
+	if outcome == nil {
+		t.Fatal("expected non-nil outcome")
+	}
+	if outcome.BuildResult == nil {
+		t.Fatal("expected non-nil outcome.BuildResult")
+	}
+}
+
+func TestFactoryEndpoints_EdgeCases_GitCoverage(t *testing.T) {
+	// 1. Sanitize identifier edge cases
+	if res := sanitizeIdentifier(""); res != "task" {
+		t.Errorf("expected 'task' for empty string, got %q", res)
+	}
+	if res := sanitizeIdentifier("a!b@c#d$"); res != "a_b_c_d_" {
+		t.Errorf("expected 'a_b_c_d_', got %q", res)
+	}
+
+	// 2. commitAndExtractDiff with empty taskTitle
+	tempDir := t.TempDir()
+	taskID := "task-notitle-99"
+	_ = initGitSandbox(context.Background(), tempDir, taskID, "main")
+	_ = os.WriteFile(filepath.Join(tempDir, "sample.txt"), []byte("hello"), 0644)
+	diff := commitAndExtractDiff(context.Background(), tempDir, taskID, "", "main")
+	if !strings.Contains(diff, "sample.txt") {
+		t.Errorf("expected diff to contain sample.txt, got %s", diff)
+	}
+	commitMsg, _ := runGitCmd(context.Background(), tempDir, "log", "-1", "--format=%s")
+	if !strings.Contains(commitMsg, "implement atomic tasks") {
+		t.Errorf("expected 'implement atomic tasks' in commit message, got %q", commitMsg)
+	}
+
+	// 3. gitSandboxBuilder with error from inner builder
+	failingInner := &mockTaskBuilder{
+		err: errors.New("builder failure"),
+	}
+	wrapped := &gitSandboxBuilder{
+		inner:      failingInner,
+		dir:        tempDir,
+		taskID:     taskID,
+		taskTitle:  "failing task",
+		baseBranch: "main",
+	}
+	_, err := wrapped.BuildSpec(context.Background(), &agent.SpecDocument{})
+	if err == nil || !strings.Contains(err.Error(), "builder failure") {
+		t.Errorf("expected builder failure, got %v", err)
+	}
+
+	// 4. defaultFactoryRunner with base_branch metadata and env MODEL
+	t.Setenv("MODEL", "gpt-4o-custom")
+	tempBase := t.TempDir()
+	runner := &defaultFactoryRunner{
+		sandboxBaseDir: tempBase,
+		builder: &testFileWritingBuilder{
+			baseDir: filepath.Join(tempBase, "task-base-branch"),
+			files:   map[string]string{"dummy.txt": "dummy"},
+		},
+		approver: &testApprover{},
+	}
+	out, err := runner.RunPipeline(context.Background(), agent.TaskContext{
+		TaskID: "task-base-branch",
+		Title:  "Task with base branch metadata",
+		Metadata: map[string]any{
+			"base_branch": "main",
+		},
+	})
+	if err != nil || out == nil {
+		t.Fatalf("unexpected failure with base_branch metadata: %v", err)
+	}
+}
+
+type mockTaskBuilder struct {
+	err error
+}
+
+func (m *mockTaskBuilder) BuildSpec(ctx context.Context, spec *agent.SpecDocument) ([]*agent.BuildResult, error) {
+	return nil, m.err
+}
+
+
