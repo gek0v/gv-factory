@@ -20,6 +20,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/llm"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/runtime"
 	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
@@ -129,6 +130,7 @@ type defaultFactoryRunner struct {
 	specWriter     agent.SpecGenerator
 	builder        agent.TaskBuilder
 	approver       agent.GateApprover
+	usePiRunner    bool
 }
 
 // SandboxDir returns the absolute path to the sandbox directory for task/run ID.
@@ -324,14 +326,46 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		brainSource = d.brainSvc
 	}
 
+	usePi := os.Getenv("PI_HARNESS_ENABLED") == "true" || os.Getenv("PI_HARNESS_ENABLED") == "1" || d.usePiRunner
+
 	specWriter := d.specWriter
 	if specWriter == nil {
-		specWriter = agent.NewSpecWriter(agent.SpecWriterConfig{Brain: brainSource, LLM: llmClient, Model: model})
+		if usePi {
+			if piBin, err := runtime.DetectPiBinary(); err == nil && piBin != "" {
+				if piRunner, rErr := runtime.NewPiRunner(runtime.PiRunnerConfig{BinaryPath: piBin, Gateway: d.gw}); rErr == nil {
+					specTemplate := runtime.DefaultSpecWriterTemplate()
+					if model != "" {
+						specTemplate.Model = model
+					}
+					if ps, sErr := runtime.NewPiSpecWriter(piRunner, specTemplate, sandboxDir); sErr == nil {
+						specWriter = ps
+					}
+				}
+			}
+		}
+		if specWriter == nil {
+			specWriter = agent.NewSpecWriter(agent.SpecWriterConfig{Brain: brainSource, LLM: llmClient, Model: model})
+		}
 	}
 
 	rawBuilder := d.builder
 	if rawBuilder == nil {
-		rawBuilder = agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient, Model: model})
+		if usePi {
+			if piBin, err := runtime.DetectPiBinary(); err == nil && piBin != "" {
+				if piRunner, rErr := runtime.NewPiRunner(runtime.PiRunnerConfig{BinaryPath: piBin, Gateway: d.gw}); rErr == nil {
+					builderTemplate := runtime.DefaultBuilderTemplate()
+					if model != "" {
+						builderTemplate.Model = model
+					}
+					if pb, bErr := runtime.NewPiBuilder(piRunner, builderTemplate, sandboxDir); bErr == nil {
+						rawBuilder = pb
+					}
+				}
+			}
+		}
+		if rawBuilder == nil {
+			rawBuilder = agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient, Model: model})
+		}
 	}
 	wrappedBuilder := &gitSandboxBuilder{
 		inner:      rawBuilder,

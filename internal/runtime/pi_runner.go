@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,17 @@ var (
 
 // Known binary candidates to search for in PATH in priority order.
 var defaultBinaryCandidates = []string{"pb", "pi-bolt", "pi"}
+
+func isNilGateway(g GatewayEventPublisher) bool {
+	if g == nil {
+		return true
+	}
+	val := reflect.ValueOf(g)
+	if val.Kind() == reflect.Ptr && val.IsNil() {
+		return true
+	}
+	return false
+}
 
 // GatewayEventPublisher abstracts publishing task events to gv-factory communications gateway.
 type GatewayEventPublisher interface {
@@ -297,6 +309,9 @@ func (r *PiRunner) Run(ctx context.Context, cfg PiRunConfig) (*PiRunResult, erro
 	cmdRunner := r.cmdRunner
 	gw := r.gateway
 	r.mu.RUnlock()
+	if isNilGateway(gw) {
+		gw = nil
+	}
 
 	cmd := exec.CommandContext(runCtx, binPath, args...)
 	if cfg.WorkspaceDir != "" {

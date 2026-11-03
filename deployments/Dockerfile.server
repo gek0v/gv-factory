@@ -20,14 +20,16 @@ COPY . .
 ENV CGO_ENABLED=1
 RUN go build -ldflags="-s -w" -o /bin/ov-server ./cmd/ov-server
 
-# Stage 2: Hardened Go runtime with Git and C compilers for sandbox TDD execution
+# Stage 2: Hardened Go runtime with Git, C compilers and Pi/Pi-Bolt agent harness
 FROM alpine:3.21
 
-# Install runtime tools: go for testing code, git for worktree operations, gcc/musl-dev for CGO, ca-certificates, and wget
-RUN apk add --no-cache ca-certificates tzdata wget git go musl-dev gcc \
+# Install runtime tools: go for testing code, git for worktree operations, gcc/musl-dev for CGO, nodejs/npm for Pi agent harness
+RUN apk add --no-cache ca-certificates tzdata wget git go musl-dev gcc nodejs npm \
+    && npm install -g @earendil-works/pi-coding-agent \
+    && ln -sf $(which pi) /usr/local/bin/pb 2>/dev/null || true \
     && addgroup -g 10001 -S nonroot \
     && adduser -u 10001 -S -G nonroot -h /home/nonroot nonroot \
-    && mkdir -p /tmp/ov-sandboxes \
+    && mkdir -p /tmp/ov-sandboxes /home/nonroot/.pi /home/nonroot/.agents \
     && chown -R 10001:10001 /tmp/ov-sandboxes /home/nonroot
 
 WORKDIR /home/nonroot

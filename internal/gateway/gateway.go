@@ -104,6 +104,9 @@ func (g *Gateway) Hub() *Hub {
 
 // Publish broadcasts an event across active subscribers and JetStream stream.
 func (g *Gateway) Publish(ctx context.Context, topic string, ev Event) error {
+	if g == nil {
+		return nil
+	}
 	if ev.Type == "" {
 		ev.Type = topic
 	}
@@ -113,6 +116,9 @@ func (g *Gateway) Publish(ctx context.Context, topic string, ev Event) error {
 // PublishTaskEvent serializes the task event, stamps timestamp, and broadcasts
 // across in-memory subscribers, the WebSocket hub, and NATS JetStream (if active).
 func (g *Gateway) PublishTaskEvent(ctx context.Context, ev Event) error {
+	if g == nil {
+		return nil
+	}
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()

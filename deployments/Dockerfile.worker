@@ -20,14 +20,16 @@ COPY . .
 ENV CGO_ENABLED=1
 RUN go build -ldflags="-s -w" -o /bin/ov-worker ./cmd/ov-worker
 
-# Stage 2: Hardened worker runtime with Git CLI for worktree operations
+# Stage 2: Hardened worker runtime with Git CLI, Go and Pi agent harness
 FROM alpine:3.21
 
-# Install runtime dependencies: git for worktree operations, ca-certificates, tzdata, and wget for health checks
-RUN apk add --no-cache ca-certificates git tzdata wget \
+# Install runtime dependencies: git, go, gcc, musl-dev, nodejs, npm and Pi harness
+RUN apk add --no-cache ca-certificates git tzdata wget go musl-dev gcc nodejs npm \
+    && npm install -g @earendil-works/pi-coding-agent \
+    && ln -sf $(which pi) /usr/local/bin/pb 2>/dev/null || true \
     && addgroup -g 10001 -S nonroot \
     && adduser -u 10001 -S -G nonroot -h /home/nonroot nonroot \
-    && mkdir -p /tmp/ov-sandboxes /tmp/ov-worktrees \
+    && mkdir -p /tmp/ov-sandboxes /tmp/ov-worktrees /home/nonroot/.pi /home/nonroot/.agents \
     && chown -R 10001:10001 /tmp/ov-sandboxes /tmp/ov-worktrees /home/nonroot
 
 WORKDIR /home/nonroot
