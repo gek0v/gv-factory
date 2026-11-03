@@ -839,6 +839,10 @@ func NewServerMuxWithRunner(
 		}
 	})
 
+	// Sandbox Interactive Terminal WebSocket handler
+	terminalHandler := NewTerminalHandler(DefaultTerminalOptions())
+	RegisterTerminalRoutes(mux, terminalHandler)
+
 	mux.HandleFunc("/api/v1/runs/", func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/runs/")
 		parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -963,6 +967,12 @@ func NewServerMuxWithRunner(
 			}
 
 			gw.Hub().ServeHTTPRun(w, r, runID)
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "terminal" {
+			// GET /api/v1/runs/{id}/terminal (WebSocket)
+			terminalHandler.ServeTerminalHTTP(w, r, runID)
 			return
 		}
 
