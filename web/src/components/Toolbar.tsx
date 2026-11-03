@@ -9,7 +9,6 @@ import { canvasToTemplate, exportTemplateToYaml, exportTemplateToJson } from '..
 import { validateFactoryTemplate } from '../templates/validator';
 import { submitPipelineRun, cancelPipelineRun } from '../api/runs';
 import { simulatePipelineRun } from '../api/simulator';
-import { SandboxTerminalButton } from './terminal/SandboxTerminalModal';
 
 export interface ToolbarNotification {
   type: 'success' | 'error' | 'info';
@@ -211,6 +210,83 @@ export const Toolbar: React.FC = () => {
       )}
 
       <div className="template-toolbar">
+        {/* Template Selector */}
+        <div className="template-select-group">
+          <select
+            id="template-select"
+            className="template-dropdown"
+            value={selectedTemplateKey}
+            onChange={(e) => handleLoadTemplate(e.target.value)}
+            title="Load Factory Template"
+          >
+            {Object.entries(CANONICAL_TEMPLATES).map(([key, item]) => (
+              <option key={key} value={key}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Active Run Lifecycle Pill & Controls */}
+        {activeRunId && (
+          <div className="active-run-pill-group" role="status" aria-label="Active Run Lifecycle Tracker">
+            <div className={`active-run-pill run-state-${activeRunState?.toLowerCase() || 'unknown'}`}>
+              <span className={`run-state-dot dot-${activeRunState?.toLowerCase() || 'unknown'}`} />
+              <span className="run-id-label" title={activeRunId}>
+                Run: {activeRunId.length > 14 ? `${activeRunId.slice(0, 12)}…` : activeRunId}
+              </span>
+              <span className="run-state-badge">[{activeRunState || 'UNKNOWN'}]</span>
+            </div>
+
+            {(activeRunState === 'QUEUED' || activeRunState === 'RUNNING') && (
+              <button
+                type="button"
+                className="cancel-run-btn"
+                title="Cancel running pipeline on server"
+                disabled={isCancelling}
+                onClick={handleCancelRun}
+                aria-label="Cancel Active Run"
+              >
+                {isCancelling ? 'Cancelling…' : '■ Cancel'}
+              </button>
+            )}
+
+            {(activeRunState === 'COMPLETED' || activeRunState === 'FAILED' || activeRunState === 'CANCELLED') && (
+              <button
+                type="button"
+                className="clear-run-btn"
+                title="Clear run tracker"
+                onClick={() => setActiveRun(null)}
+                aria-label="Dismiss Run"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Validation Status Pill */}
+        <div className="template-validation-pill-container" title={validation.errors.join('\n')}>
+          {validation.isValid ? (
+            <span className="template-valid-pill" title="Valid Template Topology">✓ Valid</span>
+          ) : (
+            <span className="template-invalid-pill" title={validation.errors.join('; ')}>
+              ⚠ {validation.errors.length} {validation.errors.length === 1 ? 'Error' : 'Errors'}
+            </span>
+          )}
+        </div>
+
+        {/* Export DAG Button */}
+        <button
+          type="button"
+          className="template-export-btn"
+          title="Export current canvas DAG as JSON/YAML template"
+          onClick={() => setShowExportModal(true)}
+        >
+          <span className="export-btn-icon" aria-hidden="true">↗</span>
+          <span>Export</span>
+        </button>
+
         {/* Run Controls Menu */}
         <div className="run-controls-dropdown-wrapper" ref={dropdownRef}>
           <div className="run-split-button">
@@ -222,7 +298,7 @@ export const Toolbar: React.FC = () => {
               onClick={handleOpenRunModal}
             >
               <span className="run-btn-icon" aria-hidden="true">▶</span>
-              <span className="run-btn-label">Run Pipeline</span>
+              <span className="run-btn-label">Run</span>
             </button>
             <button
               type="button"
@@ -266,88 +342,6 @@ export const Toolbar: React.FC = () => {
             </div>
           )}
         </div>
-
-        {/* Template Selector */}
-        <div className="template-select-group">
-          <label htmlFor="template-select" className="template-label">
-            Template:
-          </label>
-          <select
-            id="template-select"
-            className="template-dropdown"
-            value={selectedTemplateKey}
-            onChange={(e) => handleLoadTemplate(e.target.value)}
-          >
-            {Object.entries(CANONICAL_TEMPLATES).map(([key, item]) => (
-              <option key={key} value={key}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Active Run Lifecycle Pill & Controls */}
-        {activeRunId && (
-          <div className="active-run-pill-group" role="status" aria-label="Active Run Lifecycle Tracker">
-            <div className={`active-run-pill run-state-${activeRunState?.toLowerCase() || 'unknown'}`}>
-              <span className={`run-state-dot dot-${activeRunState?.toLowerCase() || 'unknown'}`} />
-              <span className="run-id-label" title={activeRunId}>
-                Run: {activeRunId.length > 14 ? `${activeRunId.slice(0, 12)}…` : activeRunId}
-              </span>
-              <span className="run-state-badge">[{activeRunState || 'UNKNOWN'}]</span>
-            </div>
-
-            {(activeRunState === 'QUEUED' || activeRunState === 'RUNNING') && (
-              <button
-                type="button"
-                className="cancel-run-btn"
-                title="Cancel running pipeline on server"
-                disabled={isCancelling}
-                onClick={handleCancelRun}
-                aria-label="Cancel Active Run"
-              >
-                {isCancelling ? 'Cancelling…' : '■ Cancel Run'}
-              </button>
-            )}
-
-            {(activeRunState === 'COMPLETED' || activeRunState === 'FAILED' || activeRunState === 'CANCELLED') && (
-              <button
-                type="button"
-                className="clear-run-btn"
-                title="Clear run tracker"
-                onClick={() => setActiveRun(null)}
-                aria-label="Dismiss Run"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Validation Status Pill */}
-        <div className="template-validation-pill-container" title={validation.errors.join('\n')}>
-          {validation.isValid ? (
-            <span className="template-valid-pill">✓ Valid Template</span>
-          ) : (
-            <span className="template-invalid-pill" title={validation.errors.join('; ')}>
-              ⚠ {validation.errors.length} {validation.errors.length === 1 ? 'Error' : 'Errors'}
-            </span>
-          )}
-        </div>
-
-        {/* Export DAG Button */}
-        <button
-          type="button"
-          className="template-export-btn"
-          title="Export current canvas DAG as JSON/YAML template"
-          onClick={() => setShowExportModal(true)}
-        >
-          <span className="export-btn-icon" aria-hidden="true">↗</span>
-          <span>Export DAG</span>
-        </button>
-
-        {/* Sandbox Terminal Button */}
-        <SandboxTerminalButton />
 
         {/* Export Modal */}
         {showExportModal && (

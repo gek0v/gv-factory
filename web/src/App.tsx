@@ -28,7 +28,7 @@ import { WorkerClusterHealthButton, WorkerDashboardModal } from './components/wo
 import { BrainExplorerButton, BrainExplorerModal } from './components/BrainExplorerModal';
 import { ExecutionTimelineDrawer, TimelineButton } from './components/timeline/ExecutionTimelineDrawer';
 import { CostBudgetButton, CostBudgetModal } from './components/telemetry/CostBudgetModal';
-import { SandboxTerminalModal } from './components/terminal/SandboxTerminalModal';
+import { SandboxTerminalModal, SandboxTerminalButton } from './components/terminal/SandboxTerminalModal';
 import { defaultGatewayClient } from './api/gateway';
 
 export const App: React.FC = () => {
@@ -104,117 +104,49 @@ export const App: React.FC = () => {
         <div className="header-left">
           <div className="header-logo">
             <span className="logo-icon">⚡</span>
-            <h1>OV-Factory Orchestrator Canvas</h1>
+            <span className="brand-title">gv-factory</span>
           </div>
-          <span className="header-badge">v0.2.0 • DAG Engine</span>
+          <span className="header-divider" aria-hidden="true">/</span>
+          <Toolbar />
         </div>
 
-        {/* Unified Obsidian Status Capsule */}
-        <div className="header-stats header-status-capsule" role="status" aria-label="Pipeline overview">
-          <span className="capsule-metric">
-            <strong>{stats.total}</strong> <span className="capsule-subtext">nodes</span>
-          </span>
-          {stats.running > 0 && (
-            <>
-              <span className="capsule-separator" aria-hidden="true">·</span>
-              <span className="capsule-item stat-running">
-                <span className="capsule-dot dot-running" />
-                <span><strong>{stats.running}</strong> running</span>
-              </span>
-            </>
-          )}
-          {stats.completed > 0 && (
-            <>
-              <span className="capsule-separator" aria-hidden="true">·</span>
-              <span className="capsule-item stat-completed">
-                <span className="capsule-dot dot-completed" />
-                <span><strong>{stats.completed}</strong> completed</span>
-              </span>
-            </>
-          )}
-          {stats.awaitingApproval > 0 && (
-            <>
-              <span className="capsule-separator" aria-hidden="true">·</span>
-              <span className="capsule-item stat-approval">
-                <span className="capsule-dot dot-approval" />
-                <span><strong>{stats.awaitingApproval}</strong> gate</span>
-              </span>
-            </>
-          )}
-          {stats.failed > 0 && (
-            <>
-              <span className="capsule-separator" aria-hidden="true">·</span>
-              <span className="capsule-item stat-failed">
-                <span className="capsule-dot dot-failed" />
-                <span><strong>{stats.failed}</strong> failed</span>
-              </span>
-            </>
-          )}
-          {stats.running === 0 && stats.completed === 0 && stats.awaitingApproval === 0 && stats.failed === 0 && (
-            <>
-              <span className="capsule-separator" aria-hidden="true">·</span>
-              <span className="capsule-item stat-idle">
-                <span className="capsule-dot dot-idle" />
-                <span>ready</span>
-              </span>
-            </>
-          )}
+        {/* Minimal Center Run Status */}
+        <div className="header-center">
+          {stats.running > 0 || stats.awaitingApproval > 0 ? (
+            <div className="header-status-capsule" role="status" aria-label="Pipeline overview">
+              {stats.running > 0 && (
+                <span className="capsule-item stat-running">
+                  <span className="capsule-dot dot-running" />
+                  <span><strong>{stats.running}</strong> running</span>
+                </span>
+              )}
+              {stats.awaitingApproval > 0 && (
+                <>
+                  {stats.running > 0 && <span className="capsule-separator" aria-hidden="true">·</span>}
+                  <span className="capsule-item stat-approval">
+                    <span className="capsule-dot dot-approval" />
+                    <span><strong>{stats.awaitingApproval}</strong> gate</span>
+                  </span>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
 
-        <div className="header-actions">
-          <div className="header-nav-tools">
+        <div className="header-right">
+          <div className="header-tools-group">
             <TimelineButton />
             <BrainExplorerButton />
+            <SandboxTerminalButton />
             <WorkerClusterHealthButton />
             <CostBudgetButton />
-            <div className="gateway-status-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
-              <span className={`status-dot dot-${gatewayStatus}`} />
-              <span className="gateway-status-text">
-                {gatewayStatus === 'connected'
-                  ? 'SSE Live'
-                  : gatewayStatus === 'connecting'
-                  ? 'Connecting...'
-                  : gatewayStatus === 'reconnecting'
-                  ? 'Reconnecting...'
-                  : 'SSE Offline'}
-              </span>
-            </div>
           </div>
 
-          <div className="header-separator" aria-hidden="true" />
+          <div className="header-divider" aria-hidden="true" />
 
-          <Toolbar />
-
-          <div className="header-separator" aria-hidden="true" />
-
-          <div className="bg-toggle-group" title="Canvas Background Style">
-            <button
-              type="button"
-              className={`bg-btn ${
-                backgroundVariant === BackgroundVariant.Dots ? 'active' : ''
-              }`}
-              onClick={() => setBackgroundVariant(BackgroundVariant.Dots)}
-            >
-              Dots
-            </button>
-            <button
-              type="button"
-              className={`bg-btn ${
-                backgroundVariant === BackgroundVariant.Lines ? 'active' : ''
-              }`}
-              onClick={() => setBackgroundVariant(BackgroundVariant.Lines)}
-            >
-              Lines
-            </button>
-            <button
-              type="button"
-              className={`bg-btn ${
-                backgroundVariant === BackgroundVariant.Cross ? 'active' : ''
-              }`}
-              onClick={() => setBackgroundVariant(BackgroundVariant.Cross)}
-            >
-              Cross
-            </button>
+          {/* Micro SSE Status Dot */}
+          <div className="gateway-dot-pill" title={`Gateway SSE Status: ${gatewayStatus}`}>
+            <span className={`status-dot dot-${gatewayStatus}`} />
           </div>
         </div>
       </header>
@@ -239,7 +171,38 @@ export const App: React.FC = () => {
               gap={20}
               size={1.2}
             />
-            <Controls className="factory-controls" showInteractive={false} />
+            <div className="canvas-bottom-left-controls">
+              <div className="bg-toggle-group" title="Canvas Background Grid Style">
+                <button
+                  type="button"
+                  className={`bg-btn ${
+                    backgroundVariant === BackgroundVariant.Dots ? 'active' : ''
+                  }`}
+                  onClick={() => setBackgroundVariant(BackgroundVariant.Dots)}
+                >
+                  Dots
+                </button>
+                <button
+                  type="button"
+                  className={`bg-btn ${
+                    backgroundVariant === BackgroundVariant.Lines ? 'active' : ''
+                  }`}
+                  onClick={() => setBackgroundVariant(BackgroundVariant.Lines)}
+                >
+                  Lines
+                </button>
+                <button
+                  type="button"
+                  className={`bg-btn ${
+                    backgroundVariant === BackgroundVariant.Cross ? 'active' : ''
+                  }`}
+                  onClick={() => setBackgroundVariant(BackgroundVariant.Cross)}
+                >
+                  Cross
+                </button>
+              </div>
+              <Controls className="factory-controls" showInteractive={false} />
+            </div>
             <MiniMap
               nodeColor={getNodeColor}
               nodeStrokeWidth={1.5}

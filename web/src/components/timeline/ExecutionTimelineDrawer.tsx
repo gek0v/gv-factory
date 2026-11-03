@@ -219,7 +219,7 @@ export const TimelineButton: React.FC<{
       aria-label="Toggle Execution Timeline"
     >
       <span className="timeline-btn-icon">⏱️</span>
-      <span className="timeline-btn-label">Execution Timeline</span>
+      <span className="timeline-btn-label">Timeline</span>
       {count > 0 && (
         <span className="timeline-event-count">{count}</span>
       )}

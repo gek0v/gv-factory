@@ -124,7 +124,7 @@ export const BrainExplorerButton: React.FC = () => {
       aria-label="Brain Explorer"
     >
       <BrainIcon size={14} className="brain-btn-icon" />
-      <span className="brain-btn-text">Brain Explorer</span>
+      <span className="brain-btn-text">Brain</span>
     </button>
   );
 };

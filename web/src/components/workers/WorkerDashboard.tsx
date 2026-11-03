@@ -53,7 +53,7 @@ export const WorkerClusterHealthButton: React.FC = () => {
     >
       <ServerIcon size={14} className="cluster-health-icon" />
       <span className="cluster-health-text">
-        Workers: {totalWorkers > 0 ? `${activeWorkers}/${totalWorkers} Active` : 'Cluster Standby'}
+        {totalWorkers > 0 ? `${activeWorkers}/${totalWorkers}` : 'Workers'}
       </span>
       <span
         className={`cluster-health-dot ${

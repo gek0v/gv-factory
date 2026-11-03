@@ -362,7 +362,7 @@ export const SandboxTerminalModal: React.FC<SandboxTerminalModalProps> = ({
 export const SandboxTerminalButton: React.FC<{
   className?: string;
   label?: string;
-}> = ({ className = '', label = 'Sandbox Terminal' }) => {
+}> = ({ className = '', label = 'Terminal' }) => {
   const store = useFactoryFlowStore();
   const isOpen = typeof window === 'undefined' ? useFactoryFlowStore.getState().showTerminalModal : store.showTerminalModal;
 
