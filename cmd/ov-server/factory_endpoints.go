@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -101,13 +102,161 @@ func (t *FactoryRunTracker) List() []*FactoryRunResponse {
 
 // defaultFactoryRunner wires default agent components with Brain, Gateway telemetry, and sequential Merge Queue.
 type defaultFactoryRunner struct {
-	brainSvc    *brain.Service
-	gw          *gateway.Gateway
-	mergeQueue  agent.MergeQueue
-	costTracker *telemetry.CostTracker
+	brainSvc       *brain.Service
+	gw             *gateway.Gateway
+	mergeQueue     agent.MergeQueue
+	costTracker    *telemetry.CostTracker
+	sandboxBaseDir string
+	specWriter     agent.SpecGenerator
+	builder        agent.TaskBuilder
+	approver       agent.GateApprover
+}
+
+func runGitCmd(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err
+}
+
+func initGitSandbox(ctx context.Context, dir string, taskID string, baseBranch string) error {
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create sandbox directory: %w", err)
+	}
+
+	gitDir := filepath.Join(dir, ".git")
+	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+		if _, err := runGitCmd(ctx, dir, "init"); err != nil {
+			return fmt.Errorf("failed to git init sandbox: %w", err)
+		}
+	}
+
+	if _, err := runGitCmd(ctx, dir, "config", "user.name", "GV Factory Bot"); err != nil {
+		return fmt.Errorf("failed to set git user.name: %w", err)
+	}
+	if _, err := runGitCmd(ctx, dir, "config", "user.email", "bot@gv-factory.local"); err != nil {
+		return fmt.Errorf("failed to set git user.email: %w", err)
+	}
+
+	goModPath := filepath.Join(dir, "go.mod")
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		modContent := fmt.Sprintf("module %s\n\ngo 1.22\n", strings.ToLower(sanitizeIdentifier(taskID)))
+		if err := os.WriteFile(goModPath, []byte(modContent), 0644); err != nil {
+			return fmt.Errorf("failed to write go.mod: %w", err)
+		}
+	}
+
+	_, err := runGitCmd(ctx, dir, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		_, _ = runGitCmd(ctx, dir, "branch", "-M", baseBranch)
+		if _, err := runGitCmd(ctx, dir, "add", "go.mod"); err != nil {
+			return fmt.Errorf("failed to git add go.mod: %w", err)
+		}
+		if _, err := runGitCmd(ctx, dir, "commit", "-m", "chore: initial commit with go.mod"); err != nil {
+			return fmt.Errorf("failed to create initial git commit: %w", err)
+		}
+		_, _ = runGitCmd(ctx, dir, "branch", "-M", baseBranch)
+	}
+
+	branchName := fmt.Sprintf("ov-run/%s", taskID)
+	if _, err := runGitCmd(ctx, dir, "checkout", "-B", branchName); err != nil {
+		return fmt.Errorf("failed to checkout branch %s: %w", branchName, err)
+	}
+
+	return nil
+}
+
+func extractGitDiff(ctx context.Context, dir string, baseBranch string) string {
+	diff, err := runGitCmd(ctx, dir, "diff", "HEAD~1")
+	if err == nil && strings.TrimSpace(diff) != "" {
+		return diff
+	}
+	if baseBranch != "" {
+		diff, err = runGitCmd(ctx, dir, "diff", baseBranch)
+		if err == nil && strings.TrimSpace(diff) != "" {
+			return diff
+		}
+	}
+	diff, _ = runGitCmd(ctx, dir, "diff")
+	return diff
+}
+
+func commitAndExtractDiff(ctx context.Context, dir, taskID, taskTitle, baseBranch string) string {
+	status, err := runGitCmd(ctx, dir, "status", "--porcelain")
+	if err == nil && strings.TrimSpace(status) != "" {
+		_, _ = runGitCmd(ctx, dir, "add", "-A")
+		msg := fmt.Sprintf("feat(%s): implement %s", sanitizeIdentifier(taskID), taskTitle)
+		if strings.TrimSpace(taskTitle) == "" {
+			msg = fmt.Sprintf("feat(%s): implement atomic tasks", sanitizeIdentifier(taskID))
+		}
+		_, _ = runGitCmd(ctx, dir, "commit", "-m", msg)
+	}
+
+	return extractGitDiff(ctx, dir, baseBranch)
+}
+
+type gitSandboxBuilder struct {
+	inner      agent.TaskBuilder
+	dir        string
+	taskID     string
+	taskTitle  string
+	baseBranch string
+}
+
+func (g *gitSandboxBuilder) BuildSpec(ctx context.Context, spec *agent.SpecDocument) ([]*agent.BuildResult, error) {
+	results, err := g.inner.BuildSpec(ctx, spec)
+	if err != nil {
+		return results, err
+	}
+
+	diff := commitAndExtractDiff(ctx, g.dir, g.taskID, g.taskTitle, g.baseBranch)
+	if diff != "" {
+		namesOut, _ := runGitCmd(ctx, g.dir, "diff", "--name-only", "HEAD~1")
+		if strings.TrimSpace(namesOut) == "" && g.baseBranch != "" {
+			namesOut, _ = runGitCmd(ctx, g.dir, "diff", "--name-only", g.baseBranch)
+		}
+		var fileNames []string
+		if strings.TrimSpace(namesOut) != "" {
+			for _, line := range strings.Split(strings.TrimSpace(namesOut), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					fileNames = append(fileNames, line)
+				}
+			}
+		}
+
+		if len(results) == 0 {
+			results = append(results, &agent.BuildResult{
+				TaskID:        g.taskID,
+				Success:       true,
+				GitDiff:       diff,
+				FilesModified: fileNames,
+			})
+		} else {
+			for _, r := range results {
+				if r != nil {
+					r.GitDiff = diff
+					if len(r.FilesModified) == 0 && len(fileNames) > 0 {
+						r.FilesModified = fileNames
+					}
+				}
+			}
+		}
+	}
+
+	return results, nil
 }
 
 func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
+	if err := task.Validate(); err != nil {
+		return nil, err
+	}
+
 	hook := func(stage string, payload any) {
 		broadcastStageEvent(d.gw, task.TaskID, stage, payload)
 	}
@@ -122,27 +271,73 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		model = os.Getenv("OPENAI_MODEL")
 	}
 
-	sandboxDir := filepath.Join(os.TempDir(), "ov-sandboxes", sanitizeIdentifier(task.TaskID))
-	_ = os.MkdirAll(sandboxDir, 0755)
+	sandboxBaseDir := d.sandboxBaseDir
+	if sandboxBaseDir == "" {
+		sandboxBaseDir = filepath.Join(os.TempDir(), "ov-sandboxes")
+	}
+	sandboxDir := filepath.Join(sandboxBaseDir, sanitizeIdentifier(task.TaskID))
 
-	goModPath := filepath.Join(sandboxDir, "go.mod")
-	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		modContent := fmt.Sprintf("module %s\n\ngo 1.22\n", strings.ToLower(sanitizeIdentifier(task.TaskID)))
-		_ = os.WriteFile(goModPath, []byte(modContent), 0644)
+	baseBranch := "main"
+	if tb, ok := task.Metadata["target_branch"].(string); ok && strings.TrimSpace(tb) != "" {
+		baseBranch = strings.TrimSpace(tb)
+	} else if bb, ok := task.Metadata["base_branch"].(string); ok && strings.TrimSpace(bb) != "" {
+		baseBranch = strings.TrimSpace(bb)
+	}
+
+	if err := initGitSandbox(ctx, sandboxDir, task.TaskID, baseBranch); err != nil {
+		return nil, fmt.Errorf("failed to initialize git sandbox: %w", err)
+	}
+
+	var brainSource agent.BrainKnowledgeSource
+	if d.brainSvc != nil {
+		brainSource = d.brainSvc
+	}
+
+	specWriter := d.specWriter
+	if specWriter == nil {
+		specWriter = agent.NewSpecWriter(agent.SpecWriterConfig{Brain: brainSource, LLM: llmClient, Model: model})
+	}
+
+	rawBuilder := d.builder
+	if rawBuilder == nil {
+		rawBuilder = agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient})
+	}
+	wrappedBuilder := &gitSandboxBuilder{
+		inner:      rawBuilder,
+		dir:        sandboxDir,
+		taskID:     task.TaskID,
+		taskTitle:  task.Title,
+		baseBranch: baseBranch,
+	}
+
+	approver := d.approver
+	if approver == nil {
+		approver = agent.NewApprover(nil, agent.ApproverConfig{})
+	}
+
+	var brainRecorder agent.EpisodeRecorder
+	if d.brainSvc != nil {
+		brainRecorder = d.brainSvc
 	}
 
 	cfg := agent.CoordinatorConfig{
-		SpecWriter:  agent.NewSpecWriter(agent.SpecWriterConfig{Brain: d.brainSvc, LLM: llmClient, Model: model}),
-		Builder:     agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient}),
-		Approver:    agent.NewApprover(nil, agent.ApproverConfig{}),
-		Brain:       d.brainSvc,
+		SpecWriter:  specWriter,
+		Builder:     wrappedBuilder,
+		Approver:    approver,
+		Brain:       brainRecorder,
 		MergeQueue:  d.mergeQueue,
 		CostTracker: d.costTracker,
 		EventHook:   hook,
 	}
 
 	coord := agent.NewFactoryCoordinator(cfg)
-	return coord.RunPipeline(ctx, task)
+	outcome, err := coord.RunPipeline(ctx, task)
+	if outcome != nil && outcome.BuildResult != nil && outcome.BuildResult.GitDiff == "" {
+		if diff := extractGitDiff(ctx, sandboxDir, baseBranch); diff != "" {
+			outcome.BuildResult.GitDiff = diff
+		}
+	}
+	return outcome, err
 }
 
 func sanitizeIdentifier(s string) string {
