@@ -2,9 +2,14 @@
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { useFactoryFlowStore } from '../../store';
 import * as stepsApi from '../../api/steps';
 import type { RunStep } from '../../types/worker';
+import type { AgentNodeData } from '../../types/flow';
+import { NodeInspector } from './NodeInspector';
+import { DEFAULT_AGENT_TEMPLATES, createAgentTemplate } from '../../api/registry';
 
 describe('NodeInspector Steps Integration', () => {
   beforeEach(() => {
@@ -154,5 +159,188 @@ describe('NodeInspector Steps Integration', () => {
       expect((updatedGate?.data as any).maxSecurityAlerts).toBe(1);
       expect((updatedGate?.data as any).diagnostics).toHaveLength(1);
     }
+  });
+
+  describe('Agent Template, Skills, Tools, Plugins & Thinking Designer', () => {
+    it('auto-fills agent node skills, tools, model, prompt, and thinking when template is applied', () => {
+      const store = useFactoryFlowStore.getState();
+      const agentNode = store.nodes.find((n) => n.data.nodeType === 'agent');
+      expect(agentNode).toBeDefined();
+      if (!agentNode) return;
+
+      const tpl = DEFAULT_AGENT_TEMPLATES.find((t) => t.id === 'tpl-builder-tdd')!;
+      expect(tpl).toBeDefined();
+
+      store.updateNodeData(agentNode.id, {
+        templateId: tpl.id,
+        model: tpl.model,
+        skills: [...(tpl.skills || [])],
+        tools: [...(tpl.tools || [])],
+        plugins: [...(tpl.plugins || [])],
+        thinking: tpl.thinking || 'off',
+        prompt: tpl.prompt || '',
+        llmConfig: {
+          provider: 'anthropic',
+          model: tpl.model,
+          temperature: tpl.temperature ?? 0.2,
+          maxIterations: tpl.maxIterations ?? 10,
+          authorizedTools: [...(tpl.tools || [])],
+        },
+      });
+
+      const updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      const data = updated?.data as AgentNodeData;
+
+      expect(data.templateId).toBe('tpl-builder-tdd');
+      expect(data.model).toBe('claude-3-5-sonnet');
+      expect(data.skills).toContain('tdd-workflow');
+      expect(data.skills).toContain('git-guardrails');
+      expect(data.tools).toContain('bash_exec');
+      expect(data.tools).toContain('test_runner');
+      expect(data.plugins).toContain('extism://plugins/tdd-runner.wasm');
+      expect(data.thinking).toBe('max');
+      expect(data.prompt).toContain('autonomous TDD Builder');
+      expect(data.llmConfig?.authorizedTools).toEqual(tpl.tools);
+    });
+
+    it('allows dynamic addition and removal of skills from pool', () => {
+      const store = useFactoryFlowStore.getState();
+      const agentNode = store.nodes.find((n) => n.data.nodeType === 'agent')!;
+
+      // Add skills
+      store.updateNodeData(agentNode.id, {
+        skills: ['ast-analysis', 'security-audit'],
+      });
+
+      let updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).skills).toEqual(['ast-analysis', 'security-audit']);
+
+      // Append another skill
+      const current = (updated?.data as AgentNodeData).skills || [];
+      store.updateNodeData(agentNode.id, {
+        skills: [...current, 'code-review-standards'],
+      });
+
+      updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).skills).toHaveLength(3);
+
+      // Remove one skill
+      store.updateNodeData(agentNode.id, {
+        skills: (updated?.data as AgentNodeData).skills?.filter((s) => s !== 'security-audit'),
+      });
+
+      updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).skills).toEqual(['ast-analysis', 'code-review-standards']);
+    });
+
+    it('allows dynamic addition and removal of tools and authorized MCPs', () => {
+      const store = useFactoryFlowStore.getState();
+      const agentNode = store.nodes.find((n) => n.data.nodeType === 'agent')!;
+
+      // Attach MCP postgres and bash
+      store.updateNodeData(agentNode.id, {
+        tools: ['bash_exec', 'mcp_postgres'],
+        llmConfig: {
+          provider: 'anthropic',
+          model: 'claude-3-5-sonnet',
+          authorizedTools: ['bash_exec', 'mcp_postgres'],
+        },
+      });
+
+      let updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).tools).toContain('mcp_postgres');
+      expect((updated?.data as AgentNodeData).llmConfig?.authorizedTools).toContain('mcp_postgres');
+
+      // Add mcp_github
+      const newTools = [...((updated?.data as AgentNodeData).tools || []), 'mcp_github'];
+      store.updateNodeData(agentNode.id, {
+        tools: newTools,
+        llmConfig: {
+          ...((updated?.data as AgentNodeData).llmConfig || {}),
+          model: 'claude-3-5-sonnet',
+          provider: 'anthropic',
+          authorizedTools: newTools,
+        },
+      });
+
+      updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).tools).toEqual(['bash_exec', 'mcp_postgres', 'mcp_github']);
+
+      // Remove bash_exec
+      const filtered = ((updated?.data as AgentNodeData).tools || []).filter((t) => t !== 'bash_exec');
+      store.updateNodeData(agentNode.id, {
+        tools: filtered,
+        llmConfig: {
+          ...((updated?.data as AgentNodeData).llmConfig || {}),
+          model: 'claude-3-5-sonnet',
+          provider: 'anthropic',
+          authorizedTools: filtered,
+        },
+      });
+
+      updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).tools).toEqual(['mcp_postgres', 'mcp_github']);
+    });
+
+    it('allows switching thinking levels among off, minimal, low, medium, high, max', () => {
+      const store = useFactoryFlowStore.getState();
+      const agentNode = store.nodes.find((n) => n.data.nodeType === 'agent')!;
+
+      const levels = ['off', 'minimal', 'low', 'medium', 'high', 'max'] as const;
+      for (const level of levels) {
+        store.updateNodeData(agentNode.id, { thinking: level });
+        const updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+        expect((updated?.data as AgentNodeData).thinking).toBe(level);
+      }
+    });
+
+    it('renders Agent Template selector, skills, tools, plugins, and thinking controls in markup', () => {
+      const currentNodes = useFactoryFlowStore.getState().nodes;
+      const agentNode = currentNodes.find((n) => n.data.nodeType === 'agent')!;
+      expect(agentNode).toBeDefined();
+
+      useFactoryFlowStore.getState().setSelectedNodeId(agentNode.id);
+      useFactoryFlowStore.getState().updateNodeData(agentNode.id, {
+        templateId: 'tpl-spec-writer',
+        skills: ['sdd-architecture'],
+        tools: ['repo_search', 'git_read'],
+        plugins: ['extism://plugins/sdd-gen.wasm'],
+        thinking: 'high',
+        prompt: 'You are an SDD Architect',
+      });
+
+      const html = renderToStaticMarkup(React.createElement(NodeInspector));
+
+      expect(html).toContain('Agent Template');
+      expect(html).toContain('agent-template-select');
+      expect(html).toContain('Skills Pool');
+      expect(html).toContain('Authorized Tools &amp; MCPs');
+      expect(html).toContain('Plugins &amp; WASM Extensions');
+      expect(html).toContain('Thinking Level (CoT Budget)');
+      expect(html).toContain('Save Agent as New Template');
+      expect(html).toContain('You are an SDD Architect');
+    });
+
+    it('creates and saves new agent template via createAgentTemplate', async () => {
+      const created = await createAgentTemplate({
+        name: 'Autonomous Refactoring Specialist',
+        description: 'AST-driven code modernization',
+        role: 'builder_tdd',
+        model: 'deepseek-r1',
+        skills: ['ast-analysis'],
+        tools: ['bash_exec', 'file_writer'],
+        thinking: 'high',
+      });
+
+      expect(created.id).toBeDefined();
+      expect(created.name).toBe('Autonomous Refactoring Specialist');
+
+      const store = useFactoryFlowStore.getState();
+      const agentNode = store.nodes.find((n) => n.data.nodeType === 'agent')!;
+      store.updateNodeData(agentNode.id, { templateId: created.id });
+
+      const updated = useFactoryFlowStore.getState().nodes.find((n) => n.id === agentNode.id);
+      expect((updated?.data as AgentNodeData).templateId).toBe(created.id);
+    });
   });
 });
