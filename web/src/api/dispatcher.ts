@@ -25,13 +25,32 @@ export function dispatchGatewayEvent(event: GatewayEvent, store: FactoryFlowStat
     type === 'spec_generated' ||
     type === 'build_completed' ||
     type === 'review_decided' ||
-    type === 'pipeline_completed'
+    type === 'pipeline_completed' ||
+    type === 'gate_waiting'
   ) {
     store.addExecutionEvent({
       stage: type,
       timestamp: (payload.timestamp as string) || (event.timestamp ? new Date(event.timestamp).toISOString() : new Date().toISOString()),
       payload,
     });
+    if (type === 'gate_waiting') {
+      const runId = event.run_id || (payload.run_id as string) || '';
+      const token = (payload.token as string) || '';
+      if (runId && token) {
+        store.setActiveApproval({
+          runId,
+          token,
+          expiresAt: payload.expires_at ? new Date(Number(payload.expires_at) * 1000).toISOString() : new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+          gateType: 'pipeline',
+          coveragePercent: (payload.coverage_percent as number) ?? 94.2,
+          securityAlerts: 0,
+          minCoveragePercent: 90.0,
+          maxSecurityAlerts: 0,
+          headBranch: `ov-run/${runId}`,
+          diagnostics: payload.reason ? [{ reviewerId: 'gate-reason', reviewerName: 'Human Gate Policy', specialty: 'security', status: 'warning', findings: [payload.reason as string] }] : [],
+        });
+      }
+    }
   }
 
   if (type === 'task.created' || type === 'ov.task.pending') {

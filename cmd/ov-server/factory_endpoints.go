@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/agent"
+	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
 	"github.com/gv-factory/gv-factory/internal/connectors/llm"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
 
@@ -40,11 +42,21 @@ type FactoryRunRequest struct {
 // FactoryRunResponse represents the status and outcome returned by factory endpoints.
 type FactoryRunResponse struct {
 	RunID     string                 `json:"run_id"`
-	Status    string                 `json:"status"` // "running", "completed", "failed"
+	Status    string                 `json:"status"` // "running", "completed", "failed", "gate_waiting"
+	Token     string                 `json:"token,omitempty"`
 	Outcome   *agent.PipelineOutcome `json:"outcome,omitempty"`
 	Error     string                 `json:"error,omitempty"`
 	CreatedAt time.Time              `json:"created_at,omitempty"`
 	UpdatedAt time.Time              `json:"updated_at,omitempty"`
+}
+
+// FactoryEndpointsOptions configures optional dependencies for factory endpoints.
+type FactoryEndpointsOptions struct {
+	AuthSvc        *auth.Service
+	Store          store.Store
+	MergeQueue     agent.MergeQueue
+	Tracker        *FactoryRunTracker
+	PendingTracker *PendingGateTracker
 }
 
 // FactoryRunTracker provides thread-safe in-memory tracking of factory pipeline runs.
@@ -393,17 +405,40 @@ func toPayloadMap(payload any) map[string]any {
 
 // RegisterFactoryEndpoints mounts factory execution and status endpoints onto mux.
 func RegisterFactoryEndpoints(mux *http.ServeMux, gw *gateway.Gateway, runner FactoryPipelineRunner) *FactoryRunTracker {
-	tracker := NewFactoryRunTracker()
-	registerFactoryEndpointsWithTracker(mux, gw, runner, tracker)
+	return RegisterFactoryEndpointsWithOptions(mux, gw, runner, FactoryEndpointsOptions{})
+}
+
+// RegisterFactoryEndpointsWithOptions mounts factory endpoints with optional auth, store, mergeQueue and trackers.
+func RegisterFactoryEndpointsWithOptions(
+	mux *http.ServeMux,
+	gw *gateway.Gateway,
+	runner FactoryPipelineRunner,
+	opts FactoryEndpointsOptions,
+) *FactoryRunTracker {
+	tracker := opts.Tracker
+	if tracker == nil {
+		tracker = NewFactoryRunTracker()
+	}
+	registerFactoryEndpointsWithTrackerAndOptions(mux, gw, runner, tracker, opts)
 	return tracker
 }
 
 func registerFactoryEndpointsWithTracker(mux *http.ServeMux, gw *gateway.Gateway, runner FactoryPipelineRunner, tracker *FactoryRunTracker) {
+	registerFactoryEndpointsWithTrackerAndOptions(mux, gw, runner, tracker, FactoryEndpointsOptions{Tracker: tracker})
+}
+
+func registerFactoryEndpointsWithTrackerAndOptions(
+	mux *http.ServeMux,
+	gw *gateway.Gateway,
+	runner FactoryPipelineRunner,
+	tracker *FactoryRunTracker,
+	opts FactoryEndpointsOptions,
+) {
 	if mux == nil {
 		return
 	}
 	if runner == nil {
-		runner = &defaultFactoryRunner{gw: gw}
+		runner = &defaultFactoryRunner{gw: gw, mergeQueue: opts.MergeQueue}
 	}
 	if tracker == nil {
 		tracker = NewFactoryRunTracker()
@@ -480,9 +515,88 @@ func registerFactoryEndpointsWithTracker(mux *http.ServeMux, gw *gateway.Gateway
 					status = "failed"
 				}
 			}
+			token := ""
+			diff := ""
+			reason := ""
 			if outcome != nil {
 				if outcome.IsHumanGate() {
 					status = "gate_waiting"
+
+					if outcome.BuildResult != nil && outcome.BuildResult.GitDiff != "" {
+						diff = outcome.BuildResult.GitDiff
+					}
+
+					if outcome.Approval != nil {
+						if outcome.Approval.GateReason != "" {
+							reason = outcome.Approval.GateReason
+						} else if outcome.Approval.FeedbackSummary != "" {
+							reason = outcome.Approval.FeedbackSummary
+						}
+					}
+					if reason == "" {
+						reason = "Human approval required before merge"
+					}
+
+					expiration := now.Add(24 * time.Hour)
+					authSvc := opts.AuthSvc
+					if authSvc == nil {
+						authSvc = auth.NewService("ov-factory-default-auth-secret-key-32b")
+					}
+					token = authSvc.GenerateApprovalToken(req.TaskID, expiration)
+
+					if opts.Store != nil {
+						_ = opts.Store.RecordPendingGate(context.Background(), &store.PendingGate{
+							ID:        token,
+							RunID:     req.TaskID,
+							Token:     token,
+							GateType:  "HUMAN_GATE",
+							ToolName:  "factory_pipeline",
+							Arguments: map[string]any{
+								"diff":       diff,
+								"reason":     reason,
+								"run_id":     req.TaskID,
+								"token":      token,
+								"expires_at": expiration.Unix(),
+							},
+							Status:    store.GateStatusPending,
+							CreatedAt: now,
+							ExpiresAt: expiration,
+						})
+					}
+
+					if opts.PendingTracker != nil {
+						opts.PendingTracker.RecordGate(PendingGateInfo{
+							RunID:           req.TaskID,
+							Token:           token,
+							TokenHMACPrefix: auth.ExtractTokenPrefix(token),
+							Diff:            diff,
+							Reason:          reason,
+							CreatedAt:       now,
+							ExpiresAt:       expiration,
+							TimeoutMS:       int64(24 * time.Hour / time.Millisecond),
+							ToolName:        "factory_pipeline",
+						})
+					}
+
+					gateWaitingPayload := map[string]any{
+						"token":      token,
+						"run_id":     req.TaskID,
+						"diff":       diff,
+						"reason":     reason,
+						"expires_at": expiration.Unix(),
+						"status":     "gate_waiting",
+					}
+					broadcastStageEvent(gw, req.TaskID, "gate_waiting", gateWaitingPayload)
+
+					if gw != nil {
+						_ = gw.Publish(context.Background(), gateway.TopicGateApprovalRequired, gateway.Event{
+							Type:      gateway.TopicGateApprovalRequired,
+							RunID:     req.TaskID,
+							TaskID:    req.TaskID,
+							Payload:   gateWaitingPayload,
+							Timestamp: now.UnixMilli(),
+						})
+					}
 				} else if !outcome.Success {
 					status = "failed"
 				}
@@ -491,6 +605,7 @@ func registerFactoryEndpointsWithTracker(mux *http.ServeMux, gw *gateway.Gateway
 			tracker.Set(&FactoryRunResponse{
 				RunID:     req.TaskID,
 				Status:    status,
+				Token:     token,
 				Outcome:   outcome,
 				Error:     errMsg,
 				UpdatedAt: now,

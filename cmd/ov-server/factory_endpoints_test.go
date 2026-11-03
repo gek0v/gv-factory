@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,10 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/agent"
+	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
+	"github.com/gv-factory/gv-factory/internal/store"
 )
 
 // mockFactoryRunner implements FactoryPipelineRunner for unit tests.
@@ -930,5 +934,264 @@ type mockTaskBuilder struct {
 func (m *mockTaskBuilder) BuildSpec(ctx context.Context, spec *agent.SpecDocument) ([]*agent.BuildResult, error) {
 	return nil, m.err
 }
+
+type mockMergeQueue struct {
+	mu       sync.Mutex
+	enqueued []merger.MergeRequest
+}
+
+func (m *mockMergeQueue) Enqueue(ctx context.Context, req merger.MergeRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.enqueued = append(m.enqueued, req)
+	return nil
+}
+
+func TestFactoryEndpoints_HumanGate_LifecycleAndSSE(t *testing.T) {
+	gw := gateway.NewGateway()
+	defer gw.Close()
+
+	authSvc := auth.NewService("test-secret-key-32-bytes-long!")
+	st := store.NewMemoryStore()
+	pendingTracker := NewPendingGateTracker(context.Background(), gw, st)
+
+	gateWaitingEvents := make(chan gateway.Event, 10)
+	_, _ = gw.SubscribeTaskEvents(context.Background(), "gate_waiting", gateWaitingEvents)
+
+	taskID := "task-gate-100"
+	expectedDiff := "diff --git a/auth.go b/auth.go\n+ func NewAuth() {}\n"
+	expectedReason := "High risk security operation requires human approval"
+
+	gateRunner := &mockFactoryRunner{
+		runFn: func(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
+			return &agent.PipelineOutcome{
+				TaskID:   task.TaskID,
+				Success:  false,
+				Decision: agent.DecisionHumanGate,
+				BuildResult: &agent.BuildResult{
+					TaskID:  task.TaskID,
+					Success: true,
+					GitDiff: expectedDiff,
+				},
+				Approval: &agent.ApprovalDecision{
+					DecisionType:      agent.DecisionHumanGate,
+					GateReason:        expectedReason,
+					RequiresHumanSign: true,
+				},
+				Duration: 100 * time.Millisecond,
+			}, nil
+		},
+	}
+
+	mux := http.NewServeMux()
+	tracker := RegisterFactoryEndpointsWithOptions(mux, gw, gateRunner, FactoryEndpointsOptions{
+		AuthSvc:        authSvc,
+		Store:          st,
+		PendingTracker: pendingTracker,
+	})
+
+	reqBody := `{"task_id":"task-gate-100","title":"Implement OAuth","description":"Sensitive OAuth implementation"}`
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/factory/run?async=false", strings.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, httpReq)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// 1. Verify response record in tracker
+	rec, found := tracker.Get(taskID)
+	if !found {
+		t.Fatalf("expected run %s to be tracked", taskID)
+	}
+	if rec.Status != "gate_waiting" {
+		t.Errorf("expected status 'gate_waiting', got %q", rec.Status)
+	}
+	if rec.Token == "" {
+		t.Errorf("expected non-empty HMAC token in response record")
+	}
+
+	// 2. Verify token is cryptographically valid
+	validatedRunID, valid := authSvc.ValidateApprovalToken(rec.Token)
+	if !valid {
+		t.Errorf("token generated was not valid HMAC token")
+	}
+	if validatedRunID != taskID {
+		t.Errorf("expected token runID %s, got %s", taskID, validatedRunID)
+	}
+
+	// 3. Verify event emitted over SSE / Gateway
+	select {
+	case ev := <-gateWaitingEvents:
+		if ev.RunID != taskID {
+			t.Errorf("expected event runID %s, got %s", taskID, ev.RunID)
+		}
+		if ev.Payload["token"] != rec.Token {
+			t.Errorf("expected event token %s, got %v", rec.Token, ev.Payload["token"])
+		}
+		if ev.Payload["diff"] != expectedDiff {
+			t.Errorf("expected event diff %s, got %v", expectedDiff, ev.Payload["diff"])
+		}
+		if ev.Payload["reason"] != expectedReason {
+			t.Errorf("expected event reason %s, got %v", expectedReason, ev.Payload["reason"])
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("timed out waiting for gate_waiting SSE event")
+	}
+
+	// 4. Verify pending gate stored in store.PendingGate
+	storedGates, err := st.ListPendingGates(context.Background())
+	if err != nil {
+		t.Fatalf("failed to list pending gates from store: %v", err)
+	}
+	if len(storedGates) != 1 {
+		t.Fatalf("expected 1 stored pending gate, got %d", len(storedGates))
+	}
+	if storedGates[0].RunID != taskID {
+		t.Errorf("expected stored gate runID %s, got %s", taskID, storedGates[0].RunID)
+	}
+	if storedGates[0].Arguments["diff"] != expectedDiff {
+		t.Errorf("expected diff in arguments, got %v", storedGates[0].Arguments["diff"])
+	}
+	if storedGates[0].Arguments["reason"] != expectedReason {
+		t.Errorf("expected reason in arguments, got %v", storedGates[0].Arguments["reason"])
+	}
+}
+
+func TestServer_GateResolve_FactoryRun_EndToEnd(t *testing.T) {
+	gw := gateway.NewGateway()
+	defer gw.Close()
+
+	authSvc := auth.NewService("test-secret-key-32-bytes-long!")
+	st := store.NewMemoryStore()
+	mq := &mockMergeQueue{}
+
+	runID := "task-resolve-200"
+	gateRunner := &mockFactoryRunner{
+		runFn: func(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
+			return &agent.PipelineOutcome{
+				TaskID:   task.TaskID,
+				Success:  false,
+				Decision: agent.DecisionHumanGate,
+				BuildResult: &agent.BuildResult{
+					TaskID:  task.TaskID,
+					Success: true,
+					GitDiff: "diff --git a/main.go b/main.go",
+				},
+				Approval: &agent.ApprovalDecision{
+					DecisionType: agent.DecisionHumanGate,
+					GateReason:   "Needs human review",
+				},
+			}, nil
+		},
+	}
+
+	handler := NewServerMuxWithRunner(nil, gw, nil, nil, nil, authSvc, st, nil, gateRunner)
+
+	// Step 1: Trigger run to produce gate_waiting
+	runBody := `{"task_id":"task-resolve-200","title":"Task to Resolve"}`
+	postReq := httptest.NewRequest(http.MethodPost, "/api/v1/factory/run?async=false", strings.NewReader(runBody))
+	postReq.Header.Set("Content-Type", "application/json")
+	postW := httptest.NewRecorder()
+	handler.ServeHTTP(postW, postReq)
+
+	if postW.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", postW.Code, postW.Body.String())
+	}
+
+	// Step 2: Check pending gates
+	pendingReq := httptest.NewRequest(http.MethodGet, "/api/v1/gates/pending", nil)
+	pendingW := httptest.NewRecorder()
+	handler.ServeHTTP(pendingW, pendingReq)
+
+	var pendingResp struct {
+		Gates []PendingGateInfo `json:"gates"`
+		Total int               `json:"total"`
+	}
+	_ = json.NewDecoder(pendingW.Body).Decode(&pendingResp)
+	if pendingResp.Total != 1 || len(pendingResp.Gates) != 1 {
+		t.Fatalf("expected 1 pending gate, got %d", pendingResp.Total)
+	}
+
+	token := pendingResp.Gates[0].Token
+	if token == "" {
+		t.Fatalf("pending gate token is empty")
+	}
+
+	// Step 3: Resolve gate with 'approved'
+	resolveBody := fmt.Sprintf(`{"run_id":"%s","token":"%s","decision":"approved"}`, runID, token)
+	resolveReq := httptest.NewRequest(http.MethodPost, "/api/v1/gates/resolve", strings.NewReader(resolveBody))
+	resolveReq.Header.Set("Content-Type", "application/json")
+	resolveW := httptest.NewRecorder()
+	handler.ServeHTTP(resolveW, resolveReq)
+
+	if resolveW.Code != http.StatusOK {
+		t.Fatalf("resolve failed with code %d: %s", resolveW.Code, resolveW.Body.String())
+	}
+
+	// Step 4: Verify factory run status transitioned to 'completed'
+	statusReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/factory/runs/%s", runID), nil)
+	statusW := httptest.NewRecorder()
+	handler.ServeHTTP(statusW, statusReq)
+
+	var runResp FactoryRunResponse
+	_ = json.NewDecoder(statusW.Body).Decode(&runResp)
+	if runResp.Status != "completed" {
+		t.Errorf("expected factory run status 'completed', got %q", runResp.Status)
+	}
+	if runResp.Outcome == nil || runResp.Outcome.Decision != agent.DecisionApproved {
+		t.Errorf("expected outcome decision APPROVED, got %+v", runResp.Outcome)
+	}
+	if runResp.Outcome.MergeStatus != "enqueued" {
+		t.Errorf("expected merge_status 'enqueued', got %q", runResp.Outcome.MergeStatus)
+	}
+
+	// Step 5: Test rejection resolution transitions to 'failed'
+	rejectRunID := "task-reject-300"
+	rejectBody := fmt.Sprintf(`{"task_id":"%s","title":"Task to Reject"}`, rejectRunID)
+	rReq := httptest.NewRequest(http.MethodPost, "/api/v1/factory/run?async=false", strings.NewReader(rejectBody))
+	rReq.Header.Set("Content-Type", "application/json")
+	rW := httptest.NewRecorder()
+	handler.ServeHTTP(rW, rReq)
+
+	rPendingReq := httptest.NewRequest(http.MethodGet, "/api/v1/gates/pending", nil)
+	rPendingW := httptest.NewRecorder()
+	handler.ServeHTTP(rPendingW, rPendingReq)
+	_ = json.NewDecoder(rPendingW.Body).Decode(&pendingResp)
+
+	var rejectToken string
+	for _, g := range pendingResp.Gates {
+		if g.RunID == rejectRunID {
+			rejectToken = g.Token
+			break
+		}
+	}
+	if rejectToken == "" {
+		t.Fatalf("could not find pending gate token for %s", rejectRunID)
+	}
+
+	resolveRejectBody := fmt.Sprintf(`{"run_id":"%s","token":"%s","decision":"rejected"}`, rejectRunID, rejectToken)
+	resRejReq := httptest.NewRequest(http.MethodPost, "/api/v1/gates/resolve", strings.NewReader(resolveRejectBody))
+	resRejReq.Header.Set("Content-Type", "application/json")
+	resRejW := httptest.NewRecorder()
+	handler.ServeHTTP(resRejW, resRejReq)
+
+	if resRejW.Code != http.StatusOK {
+		t.Fatalf("resolve reject failed with code %d: %s", resRejW.Code, resRejW.Body.String())
+	}
+
+	rStatusReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/factory/runs/%s", rejectRunID), nil)
+	rStatusW := httptest.NewRecorder()
+	handler.ServeHTTP(rStatusW, rStatusReq)
+
+	var rejectRunResp FactoryRunResponse
+	_ = json.NewDecoder(rStatusW.Body).Decode(&rejectRunResp)
+	if rejectRunResp.Status != "failed" {
+		t.Errorf("expected factory run status 'failed', got %q", rejectRunResp.Status)
+	}
+	_ = mq
+}
+
 
 

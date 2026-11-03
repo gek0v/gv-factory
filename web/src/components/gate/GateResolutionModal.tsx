@@ -255,7 +255,7 @@ export const GateResolutionModal: React.FC = () => {
               ? showRejectionInput
                 ? 'Confirm Rejection'
                 : '✕ Reject Tool Execution'
-              : 'Reject & Divert to PR'}
+              : 'Rechazar'}
           </button>
           <button
             type="button"
@@ -267,7 +267,7 @@ export const GateResolutionModal: React.FC = () => {
               ? 'Authorizing...'
               : isToolGate
               ? '✓ Authorize & Execute Tool'
-              : '✓ Approve & Advance to Merge Queue'}
+              : 'Aprobar y Mergear'}
           </button>
         </div>
       </div>

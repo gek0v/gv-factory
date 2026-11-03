@@ -20,6 +20,8 @@ type PendingGateInfo struct {
 	Arguments       map[string]any `json:"arguments,omitempty"`
 	Token           string         `json:"token,omitempty"`
 	TokenHMACPrefix string         `json:"token_hmac_prefix"`
+	Diff            string         `json:"diff,omitempty"`
+	Reason          string         `json:"reason,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 	ExpiresAt       time.Time      `json:"expires_at"`
 	TimeoutMS       int64          `json:"timeout_ms"`
@@ -121,9 +123,28 @@ func (t *PendingGateTracker) handleApprovalRequired(ev gateway.Event) {
 		expiresAt = now.Add(5 * time.Minute)
 	}
 
+	diff, _ := p["diff"].(string)
+	reason, _ := p["reason"].(string)
+	if diff == "" && args != nil {
+		diff, _ = args["diff"].(string)
+	}
+	if reason == "" && args != nil {
+		reason, _ = args["reason"].(string)
+	}
+
 	key := token
 	if key == "" {
 		key = runID
+	}
+
+	if args == nil {
+		args = make(map[string]any)
+	}
+	if diff != "" {
+		args["diff"] = diff
+	}
+	if reason != "" {
+		args["reason"] = reason
 	}
 
 	t.gates[key] = PendingGateInfo{
@@ -132,6 +153,8 @@ func (t *PendingGateTracker) handleApprovalRequired(ev gateway.Event) {
 		Arguments:       args,
 		Token:           token,
 		TokenHMACPrefix: auth.ExtractTokenPrefix(token),
+		Diff:            diff,
+		Reason:          reason,
 		CreatedAt:       now,
 		ExpiresAt:       expiresAt,
 		TimeoutMS:       timeoutMS,
@@ -178,6 +201,48 @@ func (t *PendingGateTracker) handleResolved(ev gateway.Event) {
 	}
 }
 
+// RecordGate stores or updates a pending gate record directly.
+func (t *PendingGateTracker) RecordGate(info PendingGateInfo) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	key := info.Token
+	if key == "" {
+		key = info.RunID
+	}
+	if info.TokenHMACPrefix == "" && info.Token != "" {
+		info.TokenHMACPrefix = auth.ExtractTokenPrefix(info.Token)
+	}
+	if info.Arguments == nil {
+		info.Arguments = make(map[string]any)
+	}
+	if info.Diff != "" {
+		info.Arguments["diff"] = info.Diff
+	}
+	if info.Reason != "" {
+		info.Arguments["reason"] = info.Reason
+	}
+
+	t.gates[key] = info
+
+	if t.store != nil {
+		_ = t.store.RecordPendingGate(context.Background(), &store.PendingGate{
+			ID:        key,
+			RunID:     info.RunID,
+			Token:     info.Token,
+			GateType:  "HUMAN_GATE",
+			ToolName:  info.ToolName,
+			Arguments: info.Arguments,
+			Status:    store.GateStatusPending,
+			CreatedAt: info.CreatedAt,
+			ExpiresAt: info.ExpiresAt,
+		})
+	}
+}
+
 // ListPending returns active, unexpired pending gates.
 func (t *PendingGateTracker) ListPending() []PendingGateInfo {
 	if t.store != nil {
@@ -185,12 +250,20 @@ func (t *PendingGateTracker) ListPending() []PendingGateInfo {
 		if err == nil && len(storedGates) > 0 {
 			result := make([]PendingGateInfo, 0, len(storedGates))
 			for _, g := range storedGates {
+				diff := ""
+				reason := ""
+				if g.Arguments != nil {
+					diff, _ = g.Arguments["diff"].(string)
+					reason, _ = g.Arguments["reason"].(string)
+				}
 				result = append(result, PendingGateInfo{
 					RunID:           g.RunID,
 					ToolName:        g.ToolName,
 					Arguments:       g.Arguments,
 					Token:           g.Token,
 					TokenHMACPrefix: auth.ExtractTokenPrefix(g.Token),
+					Diff:            diff,
+					Reason:          reason,
 					CreatedAt:       g.CreatedAt,
 					ExpiresAt:       g.ExpiresAt,
 				})
