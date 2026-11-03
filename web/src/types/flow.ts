@@ -143,6 +143,8 @@ export interface TriggerNodeData extends BaseNodeData {
   cronSchedule?: string;
 }
 
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
+
 export interface AgentNodeData extends BaseNodeData {
   nodeType: 'agent';
   role: AgentRole;
@@ -151,6 +153,12 @@ export interface AgentNodeData extends BaseNodeData {
   pluginTag?: string;
   sandboxEnabled?: boolean;
   llmConfig?: AgentLLMConfig;
+  templateId?: string;
+  skills?: string[];
+  tools?: string[];
+  plugins?: string[];
+  thinking?: string;
+  prompt?: string;
 }
 
 export interface LogicNodeData extends BaseNodeData {

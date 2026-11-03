@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useState, useCallback } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -9,11 +9,13 @@ import {
   BackgroundVariant,
   MiniMap,
   type Node,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { useFactoryFlowStore } from './store';
-import type { FactoryNodeData } from './types/flow';
+import type { FactoryNodeData, AgentNodeData, FactoryFlowNode, FactoryFlowEdge } from './types/flow';
+import type { AgentTemplate } from './api/registry';
 import { TriggerNode } from './components/nodes/TriggerNode';
 import { AgentNode } from './components/nodes/AgentNode';
 import { LogicNode } from './components/nodes/LogicNode';
@@ -43,7 +45,68 @@ export const App: React.FC = () => {
     setBackgroundVariant,
     selectedNodeId,
     gatewayStatus,
+    addNode,
   } = useFactoryFlowStore();
+
+  const [rfInstance, setRfInstance] = useState<ReactFlowInstance<FactoryFlowNode, FactoryFlowEdge> | null>(null);
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+
+      const templateRaw = event.dataTransfer.getData('application/reactflow-template');
+      const itemRaw = event.dataTransfer.getData('application/reactflow-item');
+
+      const position = rfInstance
+        ? rfInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        : undefined;
+
+      if (templateRaw) {
+        try {
+          const tpl = JSON.parse(templateRaw) as AgentTemplate;
+          const agentNodeData: Partial<AgentNodeData> = {
+            nodeType: 'agent',
+            role: (tpl.role as AgentNodeData['role']) || 'builder_tdd',
+            label: tpl.name,
+            description: tpl.description,
+            model: tpl.model,
+            templateId: tpl.id,
+            skills: tpl.skills ? [...tpl.skills] : [],
+            tools: tpl.tools ? [...tpl.tools] : [],
+            plugins: tpl.plugins ? [...tpl.plugins] : [],
+            thinking: tpl.thinking || 'off',
+            prompt: tpl.prompt || '',
+            pluginTag: tpl.plugins?.[0] || 'extism://plugins/tdd-runner.wasm',
+            status: 'pending',
+            llmConfig: {
+              provider: 'anthropic',
+              model: tpl.model,
+              temperature: tpl.temperature ?? 0.2,
+              maxIterations: tpl.maxIterations ?? 10,
+              authorizedTools: tpl.tools ? [...tpl.tools] : ['bash_exec', 'git_read', 'file_writer'],
+            },
+            sandboxEnabled: true,
+          };
+          addNode(agentNodeData, position);
+        } catch {
+          // ignore parsing error
+        }
+      } else if (itemRaw) {
+        try {
+          const itemData = JSON.parse(itemRaw);
+          addNode(itemData, position);
+        } catch {
+          // ignore parsing error
+        }
+      }
+    },
+    [rfInstance, addNode]
+  );
 
   useEffect(() => {
     defaultGatewayClient.connect();
@@ -155,7 +218,7 @@ export const App: React.FC = () => {
         <NodePalette />
 
         <main className="flow-wrapper">
-          <ReactFlow
+          <ReactFlow<FactoryFlowNode, FactoryFlowEdge>
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
@@ -163,6 +226,9 @@ export const App: React.FC = () => {
             onConnect={onConnect}
             isValidConnection={isValidConnection}
             nodeTypes={nodeTypes}
+            onInit={setRfInstance}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
             fitView
           >
             <Background

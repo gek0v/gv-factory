@@ -1,9 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useFactoryFlowStore } from '../../store';
-import type { ExecutionStatus, FactoryNodeData, SandboxRuntime, SandboxNetworkPolicy, LLMProvider } from '../../types/flow';
+import type {
+  ExecutionStatus,
+  FactoryNodeData,
+  SandboxRuntime,
+  SandboxNetworkPolicy,
+  LLMProvider,
+  AgentNodeData,
+  ThinkingLevel,
+} from '../../types/flow';
+import {
+  fetchSkills,
+  fetchTools,
+  fetchPlugins,
+  fetchAgentTemplates,
+  createAgentTemplate,
+  DEFAULT_SKILLS,
+  DEFAULT_TOOLS,
+  DEFAULT_PLUGINS,
+  DEFAULT_AGENT_TEMPLATES,
+  type Skill,
+  type Tool,
+  type Plugin,
+  type AgentTemplate,
+} from '../../api/registry';
 import { StatusBadge } from '../badges/StatusBadge';
 import { TrashIcon, XIcon, SlidersIcon, ShieldIcon, CpuIcon } from '../icons/Icons';
 import { LogStreamViewer } from './LogStreamViewer';
@@ -70,7 +93,17 @@ const NETWORK_POLICY_OPTIONS: { value: SandboxNetworkPolicy; label: string }[] =
   { value: 'host', label: 'Host Network (Unrestricted)' },
 ];
 
+const THINKING_LEVELS: { value: ThinkingLevel; label: string; desc: string }[] = [
+  { value: 'off', label: 'Off', desc: 'Direct response, CoT disabled' },
+  { value: 'minimal', label: 'Minimal', desc: '~1k tokens reasoning scratchpad' },
+  { value: 'low', label: 'Low', desc: '~2k tokens reasoning budget' },
+  { value: 'medium', label: 'Medium', desc: '~4k tokens reasoning budget' },
+  { value: 'high', label: 'High', desc: '~8k deep reasoning' },
+  { value: 'max', label: 'Max', desc: '~16k-32k max reasoning depth' },
+];
+
 export const NodeInspector: React.FC = () => {
+  const store = typeof window === 'undefined' ? useFactoryFlowStore.getState() : useFactoryFlowStore();
   const {
     nodes,
     selectedNodeId,
@@ -80,9 +113,41 @@ export const NodeInspector: React.FC = () => {
     clearNodeLogs,
     deleteNode,
     setShowGateModal,
-  } = useFactoryFlowStore();
+  } = store;
 
   const [activeTab, setActiveTab] = useState<'config' | 'steps' | 'logs' | 'diff'>('config');
+
+  // Registry state for agent templates, skills, tools, and plugins
+  const [availableSkills, setAvailableSkills] = useState<Skill[]>(DEFAULT_SKILLS);
+  const [availableTools, setAvailableTools] = useState<Tool[]>(DEFAULT_TOOLS);
+  const [availablePlugins, setAvailablePlugins] = useState<Plugin[]>(DEFAULT_PLUGINS);
+  const [availableTemplates, setAvailableTemplates] = useState<AgentTemplate[]>(DEFAULT_AGENT_TEMPLATES);
+
+  // State for "Save as Template" inline form
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [templateNameInput, setTemplateNameInput] = useState('');
+  const [templateDescInput, setTemplateDescInput] = useState('');
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    Promise.all([
+      fetchSkills().catch(() => DEFAULT_SKILLS),
+      fetchTools().catch(() => DEFAULT_TOOLS),
+      fetchPlugins().catch(() => DEFAULT_PLUGINS),
+      fetchAgentTemplates().catch(() => DEFAULT_AGENT_TEMPLATES),
+    ]).then(([s, t, p, tpls]) => {
+      if (isMounted) {
+        if (s && s.length > 0) setAvailableSkills(s);
+        if (t && t.length > 0) setAvailableTools(t);
+        if (p && p.length > 0) setAvailablePlugins(p);
+        if (tpls && tpls.length > 0) setAvailableTemplates(tpls);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
 
@@ -331,114 +396,165 @@ export const NodeInspector: React.FC = () => {
               </div>
             )}
 
-            {nodeData.nodeType === 'agent' && (
-              <div className="inspector-field-group llm-field-group">
-                <div className="group-title llm-title-row">
-                  <div className="llm-title-left">
-                    <CpuIcon size={14} className="llm-title-icon" />
-                    <span>LLM &amp; Cognitive Configuration</span>
+            {nodeData.nodeType === 'agent' && (() => {
+              const agentData = nodeData as AgentNodeData;
+              const currentSkills = agentData.skills || [];
+              const currentTools = agentData.tools || agentData.llmConfig?.authorizedTools || ['bash_exec', 'git_read', 'file_writer', 'repo_search'];
+              const currentPlugins = agentData.plugins || (agentData.pluginTag ? [agentData.pluginTag] : []);
+              const currentThinking = agentData.thinking || 'off';
+
+              return (
+                <div className="inspector-field-group llm-field-group">
+                  <div className="group-title llm-title-row">
+                    <div className="llm-title-left">
+                      <CpuIcon size={14} className="llm-title-icon" />
+                      <span>LLM &amp; Cognitive Configuration</span>
+                    </div>
+                    <span className="llm-tech-badge">Autonomous CoT</span>
                   </div>
-                  <span className="llm-tech-badge">Autonomous CoT</span>
-                </div>
 
-                <div className="inspector-field">
-                  <label className="inspector-label">Role</label>
-                  <div className="inspector-readonly-val">
-                    {nodeData.role?.toUpperCase()}
+                  <div className="inspector-field">
+                    <label className="inspector-label">Role</label>
+                    <div className="inspector-readonly-val">
+                      {nodeData.role?.toUpperCase()}
+                    </div>
                   </div>
-                </div>
 
-                {/* Provider Selector */}
-                <div className="inspector-field">
-                  <label className="inspector-label" htmlFor="llm-provider-select">
-                    LLM Provider
-                  </label>
-                  <select
-                    id="llm-provider-select"
-                    className="inspector-select"
-                    value={nodeData.llmConfig?.provider || 'anthropic'}
-                    onChange={(e) => {
-                      const newProvider = e.target.value as LLMProvider;
-                      const currentLlm = nodeData.llmConfig || {
-                        provider: 'anthropic',
-                        model: nodeData.model || 'claude-3-5-sonnet',
-                        temperature: 0.2,
-                        maxIterations: 10,
-                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
-                      };
-                      updateNodeData(selectedNode.id, {
-                        llmConfig: {
-                          ...currentLlm,
-                          provider: newProvider,
-                        },
-                      });
-                    }}
-                  >
-                    {PROVIDER_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  {/* 1. Agent Template Selector (auto-fills skills, tools, model, prompt, thinking) */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label" htmlFor="agent-template-select">
+                        Agent Template
+                      </label>
+                      {agentData.templateId && (
+                        <span className="template-badge" title={`Template ID: ${agentData.templateId}`}>
+                          ★ {availableTemplates.find((t) => t.id === agentData.templateId)?.name || agentData.templateId}
+                        </span>
+                      )}
+                    </div>
+                    <select
+                      id="agent-template-select"
+                      className="inspector-select"
+                      value={agentData.templateId || ''}
+                      onChange={(e) => {
+                        const selectedTplId = e.target.value;
+                        if (!selectedTplId) {
+                          updateNodeData(selectedNode.id, { templateId: undefined });
+                          return;
+                        }
+                        const tpl = availableTemplates.find((t) => t.id === selectedTplId);
+                        if (tpl) {
+                          const currentLlm = agentData.llmConfig || {
+                            provider: 'anthropic',
+                            model: tpl.model,
+                            temperature: tpl.temperature ?? 0.2,
+                            maxIterations: tpl.maxIterations ?? 10,
+                            authorizedTools: tpl.tools ? [...tpl.tools] : [],
+                          };
+                          updateNodeData(selectedNode.id, {
+                            templateId: tpl.id,
+                            model: tpl.model,
+                            skills: tpl.skills ? [...tpl.skills] : [],
+                            tools: tpl.tools ? [...tpl.tools] : [],
+                            plugins: tpl.plugins ? [...tpl.plugins] : [],
+                            thinking: tpl.thinking || 'off',
+                            prompt: tpl.prompt || '',
+                            pluginTag: tpl.plugins?.[0] || agentData.pluginTag,
+                            llmConfig: {
+                              ...currentLlm,
+                              model: tpl.model,
+                              temperature: tpl.temperature ?? currentLlm.temperature,
+                              maxIterations: tpl.maxIterations ?? currentLlm.maxIterations,
+                              authorizedTools: tpl.tools ? [...tpl.tools] : currentLlm.authorizedTools,
+                            },
+                          });
+                        }
+                      }}
+                    >
+                      <option value="">-- Apply a Preset Agent Template --</option>
+                      {availableTemplates.map((tpl) => (
+                        <option key={tpl.id} value={tpl.id}>
+                          {tpl.name} ({tpl.model})
+                        </option>
+                      ))}
+                    </select>
+                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      Applying a template auto-populates skills, tools, model, thinking, and prompt.
+                    </p>
+                  </div>
 
-                {/* Model Selector & Custom Input */}
-                <div className="inspector-field">
-                  <label className="inspector-label" htmlFor="llm-model-select">
-                    Model Selection
-                  </label>
-                  <select
-                    id="llm-model-select"
-                    className="inspector-select"
-                    value={
-                      MODEL_PRESETS.some((p) => p.value === nodeData.model)
-                        ? nodeData.model
-                        : 'custom'
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const currentLlm = nodeData.llmConfig || {
-                        provider: 'anthropic',
-                        model: nodeData.model || 'claude-3-5-sonnet',
-                        temperature: 0.2,
-                        maxIterations: 10,
-                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
-                      };
-                      if (val !== 'custom') {
+                  {/* System Prompt & Instructions */}
+                  <div className="inspector-field">
+                    <label className="inspector-label" htmlFor="agent-prompt-input">
+                      Agent System Prompt &amp; Instructions
+                    </label>
+                    <textarea
+                      id="agent-prompt-input"
+                      className="inspector-textarea"
+                      rows={3}
+                      value={agentData.prompt || ''}
+                      onChange={(e) => updateNodeData(selectedNode.id, { prompt: e.target.value })}
+                      placeholder="Core cognitive prompt, role instructions, and behavioral rules..."
+                    />
+                  </div>
+
+                  {/* Provider Selector */}
+                  <div className="inspector-field">
+                    <label className="inspector-label" htmlFor="llm-provider-select">
+                      LLM Provider
+                    </label>
+                    <select
+                      id="llm-provider-select"
+                      className="inspector-select"
+                      value={agentData.llmConfig?.provider || 'anthropic'}
+                      onChange={(e) => {
+                        const newProvider = e.target.value as LLMProvider;
+                        const currentLlm = agentData.llmConfig || {
+                          provider: 'anthropic',
+                          model: agentData.model || 'claude-3-5-sonnet',
+                          temperature: 0.2,
+                          maxIterations: 10,
+                          authorizedTools: currentTools,
+                        };
                         updateNodeData(selectedNode.id, {
-                          model: val,
                           llmConfig: {
                             ...currentLlm,
-                            model: val,
+                            provider: newProvider,
                           },
                         });
-                      }
-                    }}
-                  >
-                    {MODEL_PRESETS.map((preset) => (
-                      <option key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
+                      }}
+                    >
+                      {PROVIDER_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                  {(!MODEL_PRESETS.some((p) => p.value === nodeData.model) ||
-                    nodeData.model === 'custom') && (
-                    <div style={{ marginTop: '0.5rem' }}>
-                      <input
-                        type="text"
-                        className="inspector-input"
-                        placeholder="e.g. qwen2.5-coder:32b, llama-3.3-70b-instruct"
-                        value={nodeData.model === 'custom' ? '' : nodeData.model}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          const currentLlm = nodeData.llmConfig || {
-                            provider: 'anthropic',
-                            model: val,
-                            temperature: 0.2,
-                            maxIterations: 10,
-                            authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
-                          };
+                  {/* Model Selector & Custom Input */}
+                  <div className="inspector-field">
+                    <label className="inspector-label" htmlFor="llm-model-select">
+                      Model Selection
+                    </label>
+                    <select
+                      id="llm-model-select"
+                      className="inspector-select"
+                      value={
+                        MODEL_PRESETS.some((p) => p.value === agentData.model)
+                          ? agentData.model
+                          : 'custom'
+                      }
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const currentLlm = agentData.llmConfig || {
+                          provider: 'anthropic',
+                          model: agentData.model || 'claude-3-5-sonnet',
+                          temperature: 0.2,
+                          maxIterations: 10,
+                          authorizedTools: currentTools,
+                        };
+                        if (val !== 'custom') {
                           updateNodeData(selectedNode.id, {
                             model: val,
                             llmConfig: {
@@ -446,146 +562,542 @@ export const NodeInspector: React.FC = () => {
                               model: val,
                             },
                           });
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
+                        }
+                      }}
+                    >
+                      {MODEL_PRESETS.map((preset) => (
+                        <option key={preset.value} value={preset.value}>
+                          {preset.label}
+                        </option>
+                      ))}
+                    </select>
 
-                {/* Temperature Slider */}
-                <div className="inspector-field">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className="inspector-label" htmlFor="llm-temperature-slider">
-                      Temperature
-                    </label>
-                    <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}>
-                      {(nodeData.llmConfig?.temperature ?? 0.2).toFixed(2)}
-                    </span>
-                  </div>
-                  <input
-                    id="llm-temperature-slider"
-                    type="range"
-                    min="0.0"
-                    max="2.0"
-                    step="0.05"
-                    className="inspector-range"
-                    value={nodeData.llmConfig?.temperature ?? 0.2}
-                    onChange={(e) => {
-                      const temp = parseFloat(e.target.value);
-                      const currentLlm = nodeData.llmConfig || {
-                        provider: 'anthropic',
-                        model: nodeData.model || 'claude-3-5-sonnet',
-                        temperature: 0.2,
-                        maxIterations: 10,
-                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
-                      };
-                      updateNodeData(selectedNode.id, {
-                        llmConfig: {
-                          ...currentLlm,
-                          temperature: temp,
-                        },
-                      });
-                    }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    <span>0.0 (Deterministic)</span>
-                    <span>1.0 (Balanced)</span>
-                    <span>2.0 (Creative)</span>
-                  </div>
-                </div>
-
-                {/* Max Reasoning Iterations */}
-                <div className="inspector-field">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className="inspector-label" htmlFor="llm-max-iterations">
-                      Max Reasoning Iterations
-                    </label>
-                    <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}>
-                      {nodeData.llmConfig?.maxIterations ?? 10}
-                    </span>
-                  </div>
-                  <input
-                    id="llm-max-iterations"
-                    type="range"
-                    min="1"
-                    max="50"
-                    step="1"
-                    className="inspector-range"
-                    value={nodeData.llmConfig?.maxIterations ?? 10}
-                    onChange={(e) => {
-                      const iters = parseInt(e.target.value, 10);
-                      const currentLlm = nodeData.llmConfig || {
-                        provider: 'anthropic',
-                        model: nodeData.model || 'claude-3-5-sonnet',
-                        temperature: 0.2,
-                        maxIterations: 10,
-                        authorizedTools: ['bash_exec', 'git_read', 'file_writer', 'repo_search'],
-                      };
-                      updateNodeData(selectedNode.id, {
-                        llmConfig: {
-                          ...currentLlm,
-                          maxIterations: iters,
-                        },
-                      });
-                    }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    <span>1 turn</span>
-                    <span>10 (default)</span>
-                    <span>50 turns</span>
-                  </div>
-                </div>
-
-                {/* Authorized MCP Tools Picker */}
-                <div className="inspector-field">
-                  <label className="inspector-label">Authorized MCP Tools</label>
-                  <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    Grant sandboxed tool invocation access to the agent cognitive runtime:
-                  </p>
-                  <div className="tools-badge-picker">
-                    {PREDEFINED_TOOLS.map((tool) => {
-                      const currentTools = nodeData.llmConfig?.authorizedTools ?? [
-                        'bash_exec',
-                        'git_read',
-                        'file_writer',
-                        'repo_search',
-                      ];
-                      const isEnabled = currentTools.includes(tool.id);
-
-                      return (
-                        <button
-                          key={tool.id}
-                          type="button"
-                          className={`tool-badge-btn ${isEnabled ? 'enabled' : 'disabled'}`}
-                          title={`${tool.desc} (Click to toggle)`}
-                          onClick={() => {
-                            const newTools = isEnabled
-                              ? currentTools.filter((t) => t !== tool.id)
-                              : [...currentTools, tool.id];
-                            const currentLlm = nodeData.llmConfig || {
+                    {(!MODEL_PRESETS.some((p) => p.value === agentData.model) ||
+                      agentData.model === 'custom') && (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <input
+                          type="text"
+                          className="inspector-input"
+                          placeholder="e.g. qwen2.5-coder:32b, llama-3.3-70b-instruct"
+                          value={agentData.model === 'custom' ? '' : agentData.model}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const currentLlm = agentData.llmConfig || {
                               provider: 'anthropic',
-                              model: nodeData.model || 'claude-3-5-sonnet',
+                              model: val,
                               temperature: 0.2,
                               maxIterations: 10,
                               authorizedTools: currentTools,
                             };
                             updateNodeData(selectedNode.id, {
+                              model: val,
                               llmConfig: {
                                 ...currentLlm,
-                                authorizedTools: newTools,
+                                model: val,
                               },
                             });
                           }}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Skills Multi-Tag Selector with removable badges and tooltips */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label">Skills Pool</label>
+                      <span style={{ fontSize: '0.7rem', color: '#7dd3fc' }}>
+                        {currentSkills.length} active
+                      </span>
+                    </div>
+                    <div className="multi-tag-box">
+                      <div className="multi-tag-list" aria-label="Active Agent Skills">
+                        {currentSkills.length === 0 ? (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            No skills attached. Pick from pool below.
+                          </span>
+                        ) : (
+                          currentSkills.map((skillId) => {
+                            const skillObj = availableSkills.find((s) => s.id === skillId);
+                            const skillName = skillObj?.name || skillId;
+                            const skillDesc = skillObj?.description || `Skill ID: ${skillId}`;
+                            return (
+                              <span
+                                key={skillId}
+                                className="removable-badge badge-skill"
+                                title={skillDesc}
+                                data-testid={`skill-badge-${skillId}`}
+                              >
+                                <span>{skillName}</span>
+                                <button
+                                  type="button"
+                                  className="removable-badge-remove"
+                                  onClick={() => {
+                                    const updatedSkills = currentSkills.filter((s) => s !== skillId);
+                                    updateNodeData(selectedNode.id, { skills: updatedSkills });
+                                  }}
+                                  title={`Remove ${skillName}`}
+                                  aria-label={`Remove skill ${skillName}`}
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <select
+                        id="add-skill-select"
+                        className="inspector-select"
+                        value=""
+                        onChange={(e) => {
+                          const toAdd = e.target.value;
+                          if (toAdd && !currentSkills.includes(toAdd)) {
+                            updateNodeData(selectedNode.id, {
+                              skills: [...currentSkills, toAdd],
+                            });
+                          }
+                        }}
+                      >
+                        <option value="" disabled>+ Add skill from pool...</option>
+                        {availableSkills
+                          .filter((s) => !currentSkills.includes(s.id))
+                          .map((s) => (
+                            <option key={s.id} value={s.id} title={s.description}>
+                              {s.name} ({s.category || 'General'})
+                            </option>
+                          ))}
+                      </select>
+
+                      {/* Quick pool chips */}
+                      <div className="tag-pool-chips">
+                        {availableSkills
+                          .filter((s) => !currentSkills.includes(s.id))
+                          .slice(0, 4)
+                          .map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className="pool-chip-btn"
+                              title={s.description}
+                              onClick={() => {
+                                updateNodeData(selectedNode.id, {
+                                  skills: [...currentSkills, s.id],
+                                });
+                              }}
+                            >
+                              <span>+</span>
+                              <span>{s.name}</span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Authorized Tools & MCPs Multi-Tag Selector */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label">Authorized Tools &amp; MCPs</label>
+                      <span style={{ fontSize: '0.7rem', color: '#c7d2fe' }}>
+                        {currentTools.length} active
+                      </span>
+                    </div>
+                    <div className="multi-tag-box">
+                      <div className="multi-tag-list" aria-label="Active Tools and MCPs">
+                        {currentTools.length === 0 ? (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            No tools authorized.
+                          </span>
+                        ) : (
+                          currentTools.map((toolId) => {
+                            const toolObj = availableTools.find((t) => t.id === toolId);
+                            const toolName = toolObj?.name || toolId;
+                            const toolDesc = toolObj?.description || `Tool ID: ${toolId}`;
+                            const risk = toolObj?.riskLevel || 'standard';
+                            return (
+                              <span
+                                key={toolId}
+                                className="removable-badge badge-tool"
+                                title={`${toolDesc} [Risk: ${risk}]`}
+                                data-testid={`tool-badge-${toolId}`}
+                              >
+                                <span>{toolName}</span>
+                                <span className={`tag-risk-pill risk-${risk}`}>{risk}</span>
+                                <button
+                                  type="button"
+                                  className="removable-badge-remove"
+                                  onClick={() => {
+                                    const updatedTools = currentTools.filter((t) => t !== toolId);
+                                    const currentLlm = agentData.llmConfig || {
+                                      provider: 'anthropic',
+                                      model: agentData.model,
+                                      temperature: 0.2,
+                                      maxIterations: 10,
+                                      authorizedTools: currentTools,
+                                    };
+                                    updateNodeData(selectedNode.id, {
+                                      tools: updatedTools,
+                                      llmConfig: {
+                                        ...currentLlm,
+                                        authorizedTools: updatedTools,
+                                      },
+                                    });
+                                  }}
+                                  title={`Remove ${toolName}`}
+                                  aria-label={`Remove tool ${toolName}`}
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <select
+                        id="add-tool-select"
+                        className="inspector-select"
+                        value=""
+                        onChange={(e) => {
+                          const toAdd = e.target.value;
+                          if (toAdd && !currentTools.includes(toAdd)) {
+                            const updated = [...currentTools, toAdd];
+                            const currentLlm = agentData.llmConfig || {
+                              provider: 'anthropic',
+                              model: agentData.model,
+                              temperature: 0.2,
+                              maxIterations: 10,
+                              authorizedTools: currentTools,
+                            };
+                            updateNodeData(selectedNode.id, {
+                              tools: updated,
+                              llmConfig: {
+                                ...currentLlm,
+                                authorizedTools: updated,
+                              },
+                            });
+                          }
+                        }}
+                      >
+                        <option value="" disabled>+ Add tool / MCP from pool...</option>
+                        {availableTools
+                          .filter((t) => !currentTools.includes(t.id))
+                          .map((t) => (
+                            <option key={t.id} value={t.id} title={t.description}>
+                              {t.name} [{t.category?.toUpperCase() || 'TOOL'}] - {t.riskLevel || 'standard'}
+                            </option>
+                          ))}
+                      </select>
+
+                      {/* Quick tool toggle badges for common tools */}
+                      <div className="tools-badge-picker">
+                        {PREDEFINED_TOOLS.map((tool) => {
+                          const isEnabled = currentTools.includes(tool.id);
+                          return (
+                            <button
+                              key={tool.id}
+                              type="button"
+                              className={`tool-badge-btn ${isEnabled ? 'enabled' : 'disabled'}`}
+                              title={`${tool.desc} (Click to toggle)`}
+                              onClick={() => {
+                                const updatedTools = isEnabled
+                                  ? currentTools.filter((t) => t !== tool.id)
+                                  : [...currentTools, tool.id];
+                                const currentLlm = agentData.llmConfig || {
+                                  provider: 'anthropic',
+                                  model: agentData.model || 'claude-3-5-sonnet',
+                                  temperature: 0.2,
+                                  maxIterations: 10,
+                                  authorizedTools: currentTools,
+                                };
+                                updateNodeData(selectedNode.id, {
+                                  tools: updatedTools,
+                                  llmConfig: {
+                                    ...currentLlm,
+                                    authorizedTools: updatedTools,
+                                  },
+                                });
+                              }}
+                            >
+                              <span className="tool-indicator">{isEnabled ? '✓' : '+'}</span>
+                              <span className="tool-label">{tool.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Plugins / Extensions Selector */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label">Plugins &amp; WASM Extensions</label>
+                      <span style={{ fontSize: '0.7rem', color: '#6ee7b7' }}>
+                        {currentPlugins.length} attached
+                      </span>
+                    </div>
+                    <div className="multi-tag-box">
+                      <div className="multi-tag-list" aria-label="Active Plugins">
+                        {currentPlugins.length === 0 ? (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                            No WASM plugins attached.
+                          </span>
+                        ) : (
+                          currentPlugins.map((pluginUri) => {
+                            const pObj = availablePlugins.find((p) => p.uri === pluginUri || p.id === pluginUri);
+                            const pName = pObj?.name || pluginUri.replace('extism://plugins/', '');
+                            return (
+                              <span
+                                key={pluginUri}
+                                className="removable-badge badge-plugin"
+                                title={pObj?.description || pluginUri}
+                                data-testid={`plugin-badge-${pluginUri}`}
+                              >
+                                <span>{pName}</span>
+                                <button
+                                  type="button"
+                                  className="removable-badge-remove"
+                                  onClick={() => {
+                                    const updated = currentPlugins.filter((p) => p !== pluginUri);
+                                    updateNodeData(selectedNode.id, {
+                                      plugins: updated,
+                                      pluginTag: updated[0] || '',
+                                    });
+                                  }}
+                                  title={`Remove ${pName}`}
+                                  aria-label={`Remove plugin ${pName}`}
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      <select
+                        id="add-plugin-select"
+                        className="inspector-select"
+                        value=""
+                        onChange={(e) => {
+                          const toAdd = e.target.value;
+                          if (toAdd && !currentPlugins.includes(toAdd)) {
+                            const updated = [...currentPlugins, toAdd];
+                            updateNodeData(selectedNode.id, {
+                              plugins: updated,
+                              pluginTag: updated[0] || '',
+                            });
+                          }
+                        }}
+                      >
+                        <option value="" disabled>+ Attach WASM plugin...</option>
+                        {availablePlugins
+                          .filter((p) => !currentPlugins.includes(p.uri || p.id))
+                          .map((p) => (
+                            <option key={p.id} value={p.uri || p.id} title={p.description}>
+                              {p.name} (v{p.version || '1.0'})
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* 5. Thinking Level Selector (off, minimal, low, medium, high, max) */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label">Thinking Level (CoT Budget)</label>
+                      <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                        {currentThinking}
+                      </span>
+                    </div>
+                    <div className="thinking-level-grid">
+                      {THINKING_LEVELS.map((tLevel) => (
+                        <button
+                          key={tLevel.value}
+                          type="button"
+                          className={`thinking-btn ${currentThinking === tLevel.value ? 'active' : ''}`}
+                          onClick={() => updateNodeData(selectedNode.id, { thinking: tLevel.value })}
+                          title={tLevel.desc}
                         >
-                          <span className="tool-indicator">{isEnabled ? '✓' : '+'}</span>
-                          <span className="tool-label">{tool.label}</span>
+                          {tLevel.label}
                         </button>
-                      );
-                    })}
+                      ))}
+                    </div>
+                    <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      {THINKING_LEVELS.find((t) => t.value === currentThinking)?.desc}
+                    </p>
+                  </div>
+
+                  {/* Temperature Slider */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label" htmlFor="llm-temperature-slider">
+                        Temperature
+                      </label>
+                      <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}>
+                        {(agentData.llmConfig?.temperature ?? 0.2).toFixed(2)}
+                      </span>
+                    </div>
+                    <input
+                      id="llm-temperature-slider"
+                      type="range"
+                      min="0.0"
+                      max="2.0"
+                      step="0.05"
+                      className="inspector-range"
+                      value={agentData.llmConfig?.temperature ?? 0.2}
+                      onChange={(e) => {
+                        const temp = parseFloat(e.target.value);
+                        const currentLlm = agentData.llmConfig || {
+                          provider: 'anthropic',
+                          model: agentData.model || 'claude-3-5-sonnet',
+                          temperature: 0.2,
+                          maxIterations: 10,
+                          authorizedTools: currentTools,
+                        };
+                        updateNodeData(selectedNode.id, {
+                          llmConfig: {
+                            ...currentLlm,
+                            temperature: temp,
+                          },
+                        });
+                      }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      <span>0.0 (Deterministic)</span>
+                      <span>1.0 (Balanced)</span>
+                      <span>2.0 (Creative)</span>
+                    </div>
+                  </div>
+
+                  {/* Max Reasoning Iterations */}
+                  <div className="inspector-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="inspector-label" htmlFor="llm-max-iterations">
+                        Max Reasoning Iterations
+                      </label>
+                      <span className="inspector-code-val" style={{ padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}>
+                        {agentData.llmConfig?.maxIterations ?? 10}
+                      </span>
+                    </div>
+                    <input
+                      id="llm-max-iterations"
+                      type="range"
+                      min="1"
+                      max="50"
+                      step="1"
+                      className="inspector-range"
+                      value={agentData.llmConfig?.maxIterations ?? 10}
+                      onChange={(e) => {
+                        const iters = parseInt(e.target.value, 10);
+                        const currentLlm = agentData.llmConfig || {
+                          provider: 'anthropic',
+                          model: agentData.model || 'claude-3-5-sonnet',
+                          temperature: 0.2,
+                          maxIterations: 10,
+                          authorizedTools: currentTools,
+                        };
+                        updateNodeData(selectedNode.id, {
+                          llmConfig: {
+                            ...currentLlm,
+                            maxIterations: iters,
+                          },
+                        });
+                      }}
+                    />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      <span>1 turn</span>
+                      <span>10 (default)</span>
+                      <span>50 turns</span>
+                    </div>
+                  </div>
+
+                  {/* 6. Save current agent configuration as new template */}
+                  <div className="save-template-card">
+                    {!isSavingTemplate ? (
+                      <button
+                        type="button"
+                        className="save-template-btn"
+                        onClick={() => {
+                          setTemplateNameInput(`${agentData.label || 'Custom'} Template`);
+                          setTemplateDescInput(agentData.description || 'Custom agent configuration template');
+                          setIsSavingTemplate(true);
+                          setSaveSuccessMsg(null);
+                        }}
+                      >
+                        💾 Save Agent as New Template
+                      </button>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                        <label className="inspector-label" style={{ margin: 0 }}>Save as Agent Template</label>
+                        <input
+                          type="text"
+                          className="inspector-input"
+                          placeholder="Template Name..."
+                          value={templateNameInput}
+                          onChange={(e) => setTemplateNameInput(e.target.value)}
+                        />
+                        <input
+                          type="text"
+                          className="inspector-input"
+                          placeholder="Short description..."
+                          value={templateDescInput}
+                          onChange={(e) => setTemplateDescInput(e.target.value)}
+                        />
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                          <button
+                            type="button"
+                            className="save-template-btn"
+                            style={{ flex: 1, background: '#10b981', borderColor: '#059669', color: '#fff' }}
+                            onClick={async () => {
+                              if (!templateNameInput.trim()) return;
+                              try {
+                                const created = await createAgentTemplate({
+                                  name: templateNameInput.trim(),
+                                  description: templateDescInput.trim() || 'Custom agent template',
+                                  role: agentData.role,
+                                  model: agentData.model || 'claude-3-5-sonnet',
+                                  prompt: agentData.prompt,
+                                  skills: currentSkills,
+                                  tools: currentTools,
+                                  plugins: currentPlugins,
+                                  thinking: currentThinking,
+                                  temperature: agentData.llmConfig?.temperature ?? 0.2,
+                                  maxIterations: agentData.llmConfig?.maxIterations ?? 10,
+                                });
+                                setAvailableTemplates((prev) => [created, ...prev.filter((t) => t.id !== created.id)]);
+                                updateNodeData(selectedNode.id, { templateId: created.id });
+                                setIsSavingTemplate(false);
+                                setSaveSuccessMsg(`Template "${created.name}" saved!`);
+                                setTimeout(() => setSaveSuccessMsg(null), 3500);
+                              } catch (err) {
+                                console.error('Failed to create template', err);
+                              }
+                            }}
+                          >
+                            Confirm Save
+                          </button>
+                          <button
+                            type="button"
+                            className="inspector-btn-secondary"
+                            style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', background: '#374151', border: 'none', color: '#e5e7eb', borderRadius: '4px', cursor: 'pointer' }}
+                            onClick={() => setIsSavingTemplate(false)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {saveSuccessMsg && (
+                      <div style={{ fontSize: '0.75rem', color: '#34d399', textAlign: 'center', fontWeight: 500 }}>
+                        {saveSuccessMsg}
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <div className="inspector-field-group sandbox-field-group">
               <div className="group-title sandbox-title-row">
