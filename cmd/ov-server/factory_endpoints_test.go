@@ -1193,5 +1193,137 @@ func TestServer_GateResolve_FactoryRun_EndToEnd(t *testing.T) {
 	_ = mq
 }
 
+func TestFactoryEndpoints_PostRun_ModelInjection(t *testing.T) {
+	gw := gateway.NewGateway()
+	defer gw.Close()
+
+	var capturedTask agent.TaskContext
+	var capturedMu sync.Mutex
+
+	runner := &mockFactoryRunner{
+		runFn: func(ctx context.Context, task agent.TaskContext) (*agent.PipelineOutcome, error) {
+			capturedMu.Lock()
+			capturedTask = task
+			capturedMu.Unlock()
+			return &agent.PipelineOutcome{
+				TaskID:   task.TaskID,
+				Success:  true,
+				Decision: agent.DecisionApproved,
+			}, nil
+		},
+	}
+
+	mux := http.NewServeMux()
+	RegisterFactoryEndpoints(mux, gw, runner)
+
+	t.Run("injects model field into task metadata", func(t *testing.T) {
+		payload := `{
+			"task_id": "task-model-1",
+			"title": "Build Model Pipeline",
+			"model": "deepseek-chat"
+		}`
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/factory/run?async=false", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected HTTP 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		capturedMu.Lock()
+		task := capturedTask
+		capturedMu.Unlock()
+
+		if task.TaskID != "task-model-1" {
+			t.Errorf("expected task_id 'task-model-1', got %q", task.TaskID)
+		}
+		if model, ok := task.Metadata["model"].(string); !ok || model != "deepseek-chat" {
+			t.Errorf("expected task.Metadata['model'] to be 'deepseek-chat', got %v", task.Metadata["model"])
+		}
+	})
+
+	t.Run("model in metadata is preserved when req.Model is empty", func(t *testing.T) {
+		payload := `{
+			"task_id": "task-model-2",
+			"title": "Build Model Pipeline Metadata",
+			"metadata": {
+				"model": "gemini-3.8-flash-high"
+			}
+		}`
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/factory/run?async=false", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected HTTP 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		capturedMu.Lock()
+		task := capturedTask
+		capturedMu.Unlock()
+
+		if model, ok := task.Metadata["model"].(string); !ok || model != "gemini-3.8-flash-high" {
+			t.Errorf("expected task.Metadata['model'] to be 'gemini-3.8-flash-high', got %v", task.Metadata["model"])
+		}
+	})
+
+	t.Run("req.Model overrides metadata.model when both provided", func(t *testing.T) {
+		payload := `{
+			"task_id": "task-model-3",
+			"title": "Build Model Pipeline Override",
+			"model": "claude-3-5-sonnet",
+			"metadata": {
+				"model": "old-model"
+			}
+		}`
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/factory/run?async=false", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected HTTP 200 OK, got %d: %s", w.Code, w.Body.String())
+		}
+
+		capturedMu.Lock()
+		task := capturedTask
+		capturedMu.Unlock()
+
+		if model, ok := task.Metadata["model"].(string); !ok || model != "claude-3-5-sonnet" {
+			t.Errorf("expected task.Metadata['model'] to be 'claude-3-5-sonnet', got %v", task.Metadata["model"])
+		}
+	})
+}
+
+func TestFactoryEndpoints_RunPipeline_MetadataModelConfiguration(t *testing.T) {
+	t.Setenv("MODEL", "default-env-model")
+	tempBase := t.TempDir()
+
+	runner := &defaultFactoryRunner{
+		sandboxBaseDir: tempBase,
+		builder: &testFileWritingBuilder{
+			baseDir: filepath.Join(tempBase, "task-model-runner"),
+			files:   map[string]string{"result.txt": "ok"},
+		},
+		approver: &testApprover{},
+	}
+
+	out, err := runner.RunPipeline(context.Background(), agent.TaskContext{
+		TaskID: "task-model-runner",
+		Title:  "Task with custom model in metadata",
+		Metadata: map[string]any{
+			"model": "ollama/llama3.3",
+		},
+	})
+	if err != nil || out == nil {
+		t.Fatalf("unexpected failure running pipeline with custom model: %v", err)
+	}
+}
+
 
 

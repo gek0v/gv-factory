@@ -42,6 +42,7 @@ describe('Factory API Client (web/src/api/factory.ts)', () => {
       const request: FactoryRunRequest = {
         title: 'Implement Auth Middleware',
         description: 'Add JWT verification and RBAC checks',
+        model: 'gemini-3.8-flash-high',
         labels: ['backend', 'security', 'p1'],
         constraints: ['Must satisfy 90% test coverage', '0 security alerts'],
       };
@@ -58,6 +59,38 @@ describe('Factory API Client (web/src/api/factory.ts)', () => {
         body: JSON.stringify(request),
       });
       expect(result).toEqual(mockResponse);
+    });
+
+    it('sends POST /api/v1/factory/run with specific target model', async () => {
+      const mockResponse: FactoryRunResponse = {
+        run_id: 'run-model-test-1',
+        status: 'queued',
+        stage: 'idle',
+      };
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockResponse,
+      });
+      globalThis.fetch = fetchMock;
+
+      const request: FactoryRunRequest = {
+        title: 'Refactor Tree Sitter parser',
+        model: 'deepseek-chat',
+      };
+
+      const result = await dispatchFactoryRun(request);
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/factory/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
+      expect(result.run_id).toBe('run-model-test-1');
     });
 
     it('supports custom baseUrl and customFetch option', async () => {

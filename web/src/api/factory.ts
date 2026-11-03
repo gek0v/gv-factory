@@ -13,6 +13,7 @@ export type PipelineStage =
 export interface FactoryRunRequest {
   title: string;
   description?: string;
+  model?: string;
   labels?: string[] | string;
   constraints?: string[] | string;
   template_key?: string;

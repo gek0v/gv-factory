@@ -127,6 +127,7 @@ type BuilderConfig struct {
 	WorkspaceDir    string
 	CommandExecutor CommandRunner
 	LLMClient       llm.LLMClient
+	Model           string
 	CodeSynthesizer CodeSynthesizer
 	MaxIterations   int
 	// TestCommand specifies the test runner command and arguments.
@@ -140,6 +141,7 @@ type Builder struct {
 	WorkspaceDir    string
 	CommandExecutor CommandRunner
 	LLMClient       llm.LLMClient
+	Model           string
 	Synthesizer     CodeSynthesizer
 	MaxIterations   int
 	TestCommand     []string
@@ -173,6 +175,7 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 	if synth == nil {
 		synth = &defaultCodeSynthesizer{
 			llmClient: cfg.LLMClient,
+			model:     cfg.Model,
 		}
 	}
 
@@ -180,6 +183,7 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 		WorkspaceDir:    cfg.WorkspaceDir,
 		CommandExecutor: executor,
 		LLMClient:       cfg.LLMClient,
+		Model:           cfg.Model,
 		Synthesizer:     synth,
 		MaxIterations:   maxIterations,
 		TestCommand:     testCmd,
@@ -434,6 +438,7 @@ func sanitizeIdentifier(s string) string {
 
 type defaultCodeSynthesizer struct {
 	llmClient llm.LLMClient
+	model     string
 }
 
 func (s *defaultCodeSynthesizer) GenerateTest(ctx context.Context, task AtomicTask, tc TestCase) (GeneratedFile, error) {
@@ -560,7 +565,10 @@ Respond ONLY with a valid JSON object with keys "path" (relative file path) and 
 		kind, task.ID, task.Title, task.Description, tc.Name, tc.ExpectedOutcome, iteration, failureOutput, instructions,
 	)
 
-	model := os.Getenv("MODEL")
+	model := s.model
+	if model == "" {
+		model = os.Getenv("MODEL")
+	}
 	if model == "" {
 		model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
 	}
