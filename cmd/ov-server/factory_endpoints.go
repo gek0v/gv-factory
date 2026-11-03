@@ -58,6 +58,7 @@ type FactoryEndpointsOptions struct {
 	MergeQueue     agent.MergeQueue
 	Tracker        *FactoryRunTracker
 	PendingTracker *PendingGateTracker
+	SandboxBaseDir string
 }
 
 // FactoryRunTracker provides thread-safe in-memory tracking of factory pipeline runs.
@@ -113,6 +114,11 @@ func (t *FactoryRunTracker) List() []*FactoryRunResponse {
 	return list
 }
 
+// SandboxDirProvider allows runner implementations to expose the location of a run's sandbox directory.
+type SandboxDirProvider interface {
+	SandboxDir(runID string) string
+}
+
 // defaultFactoryRunner wires default agent components with Brain, Gateway telemetry, and sequential Merge Queue.
 type defaultFactoryRunner struct {
 	brainSvc       *brain.Service
@@ -123,6 +129,15 @@ type defaultFactoryRunner struct {
 	specWriter     agent.SpecGenerator
 	builder        agent.TaskBuilder
 	approver       agent.GateApprover
+}
+
+// SandboxDir returns the absolute path to the sandbox directory for task/run ID.
+func (d *defaultFactoryRunner) SandboxDir(runID string) string {
+	base := d.sandboxBaseDir
+	if base == "" {
+		base = filepath.Join(os.TempDir(), "ov-sandboxes")
+	}
+	return filepath.Join(base, sanitizeIdentifier(runID))
 }
 
 func runGitCmd(ctx context.Context, dir string, args ...string) (string, error) {
@@ -553,11 +568,11 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 
 					if opts.Store != nil {
 						_ = opts.Store.RecordPendingGate(context.Background(), &store.PendingGate{
-							ID:        token,
-							RunID:     req.TaskID,
-							Token:     token,
-							GateType:  "HUMAN_GATE",
-							ToolName:  "factory_pipeline",
+							ID:       token,
+							RunID:    req.TaskID,
+							Token:    token,
+							GateType: "HUMAN_GATE",
+							ToolName: "factory_pipeline",
 							Arguments: map[string]any{
 								"diff":       diff,
 								"reason":     reason,
@@ -676,32 +691,59 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 		_ = json.NewEncoder(w).Encode(runs)
 	})
 
-	// GET /api/v1/factory/runs/:run_id
-	mux.HandleFunc("/api/v1/factory/runs/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-			return
+	resolveSandboxDir := func(runID string) string {
+		if opts.SandboxBaseDir != "" {
+			return filepath.Join(opts.SandboxBaseDir, sanitizeIdentifier(runID))
 		}
+		if sdp, ok := runner.(SandboxDirProvider); ok {
+			return sdp.SandboxDir(runID)
+		}
+		return filepath.Join(os.TempDir(), "ov-sandboxes", sanitizeIdentifier(runID))
+	}
 
-		runID := strings.TrimPrefix(r.URL.Path, "/api/v1/factory/runs/")
-		runID = strings.Trim(runID, "/")
-		if runID == "" {
+	// GET /api/v1/factory/runs/:run_id and sandbox files endpoints
+	mux.HandleFunc("/api/v1/factory/runs/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/factory/runs/")
+		path = strings.Trim(path, "/")
+		if path == "" {
 			http.NotFound(w, r)
 			return
 		}
 
-		record, found := tracker.Get(runID)
-		if !found {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": fmt.Sprintf("run %q not found", runID),
-			})
-			return
-		}
+		parts := strings.Split(path, "/")
+		runID := parts[0]
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(record)
+		switch {
+		case len(parts) == 1:
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			record, found := tracker.Get(runID)
+			if !found {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf("run %q not found", runID),
+				})
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(record)
+
+		case len(parts) >= 2 && parts[1] == "files":
+			sub := ""
+			if len(parts) > 2 {
+				sub = strings.Join(parts[2:], "/")
+			}
+			sandboxDir := resolveSandboxDir(runID)
+			handleFactoryFiles(w, r, runID, sub, sandboxDir, tracker, opts, gw)
+
+		default:
+			http.NotFound(w, r)
+		}
 	})
 }
