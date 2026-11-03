@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if and .Values.server.enabled .Values.server.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "gv-factory.server.fullname" . }}
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "gv-factory.server.fullname" . }}
+  minReplicas: {{ .Values.server.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.server.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.server.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.server.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.server.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.server.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+{{- if and .Values.worker.enabled .Values.worker.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "gv-factory.worker.fullname" . }}
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "gv-factory.worker.fullname" . }}
+  minReplicas: {{ .Values.worker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.worker.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.worker.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.worker.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.worker.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.worker.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

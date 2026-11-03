@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if and .Values.nats.enabled .Values.nats.persistence.enabled (not .Values.nats.external.enabled) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gv-factory.nats.fullname" . }}-data
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  accessModes:
+    {{- toYaml .Values.nats.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.nats.persistence.size }}
+  {{- if or .Values.nats.persistence.storageClass .Values.global.storageClass }}
+  storageClassName: {{ default .Values.global.storageClass .Values.nats.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}
+{{- if and .Values.nats.enabled .Values.nats.persistence.enabled (not .Values.nats.external.enabled) (and .Values.worker.enabled .Values.worker.persistence.enabled) }}
+---
+{{- end }}
+{{- if and .Values.worker.enabled .Values.worker.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gv-factory.fullname" . }}-sandboxes
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  accessModes:
+    {{- toYaml .Values.worker.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.persistence.size }}
+  {{- if or .Values.worker.persistence.storageClass .Values.global.storageClass }}
+  storageClassName: {{ default .Values.global.storageClass .Values.worker.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

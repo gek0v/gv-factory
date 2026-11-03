@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+apiVersion: v2
+name: gv-factory
+description: Production-ready Helm chart for gv-factory autonomous multi-agent software factory platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+icon: https://raw.githubusercontent.com/gv-factory/gv-factory/main/docs/assets/logo.png
+keywords:
+  - ai-agents
+  - software-factory
+  - k8s
+  - kubernetes
+  - orchestration
+  - pgvector
+  - nats
+  - helm
+home: https://github.com/gv-factory/gv-factory
+sources:
+  - https://github.com/gv-factory/gv-factory
+maintainers:
+  - name: gv-factory contributors
+    url: https://github.com/gv-factory/gv-factory

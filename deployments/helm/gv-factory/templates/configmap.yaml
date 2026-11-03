@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gv-factory.configMapName" . }}
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+data:
+  PORT: {{ .Values.server.service.port | quote }}
+  HEALTH_PORT: {{ .Values.worker.service.port | quote }}
+  OV_WORKTREE_DIR: {{ .Values.worker.persistence.mountPath | quote }}
+
+  {{- if .Values.postgres.external.enabled }}
+  DATABASE_URL: {{ .Values.postgres.external.url | quote }}
+  {{- else }}
+  DATABASE_URL: {{ printf "postgres://%s:%s@%s:%d/%s?sslmode=disable" .Values.postgres.auth.username .Values.postgres.auth.password (include "gv-factory.postgres.fullname" .) (int .Values.postgres.service.port) .Values.postgres.auth.database | quote }}
+  {{- end }}
+
+  {{- if .Values.nats.external.enabled }}
+  NATS_URL: {{ .Values.nats.external.url | quote }}
+  {{- else }}
+  NATS_URL: {{ printf "nats://%s:%d" (include "gv-factory.nats.fullname" .) (int .Values.nats.service.clientPort) | quote }}
+  {{- end }}
+
+  # LLM Provider Configuration
+  PROVIDER: {{ .Values.llm.provider | quote }}
+  {{- if .Values.llm.model }}
+  MODEL: {{ .Values.llm.model | quote }}
+  {{- end }}
+  {{- if .Values.llm.openai.baseUrl }}
+  OPENAI_BASE_URL: {{ .Values.llm.openai.baseUrl | quote }}
+  {{- end }}
+  {{- if .Values.llm.openai.model }}
+  OPENAI_MODEL: {{ .Values.llm.openai.model | quote }}
+  {{- end }}
+  {{- if .Values.llm.ollama.baseUrl }}
+  OLLAMA_BASE_URL: {{ .Values.llm.ollama.baseUrl | quote }}
+  {{- end }}
+  {{- if .Values.llm.vllm.baseUrl }}
+  OPENAI_COMPATIBLE_BASE_URL: {{ .Values.llm.vllm.baseUrl | quote }}
+  {{- else if .Values.llm.openaiCompatible.baseUrl }}
+  OPENAI_COMPATIBLE_BASE_URL: {{ .Values.llm.openaiCompatible.baseUrl | quote }}
+  {{- end }}
+  {{- if .Values.llm.vllm.model }}
+  OPENAI_COMPATIBLE_MODEL: {{ .Values.llm.vllm.model | quote }}
+  {{- else if .Values.llm.openaiCompatible.model }}
+  OPENAI_COMPATIBLE_MODEL: {{ .Values.llm.openaiCompatible.model | quote }}
+  {{- end }}
+
+  # Channel Notifications
+  {{- if .Values.secret.slackDefaultChannel }}
+  SLACK_DEFAULT_CHANNEL: {{ .Values.secret.slackDefaultChannel | quote }}
+  {{- end }}
+  {{- if .Values.secret.discordDefaultChannel }}
+  DISCORD_DEFAULT_CHANNEL: {{ .Values.secret.discordDefaultChannel | quote }}
+  {{- end }}

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+.git/
+.gitignore
+.helmignore
+.vscode/
+*.swp
+*.bak
+*.tmp
+*~
+.DS_Store

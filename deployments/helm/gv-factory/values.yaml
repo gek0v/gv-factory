@@ -1,0 +1,426 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+# ==============================================================================
+# Production Helm Chart Configuration for gv-factory
+# Autonomous Multi-Agent Software Factory Platform
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Global Settings
+# ------------------------------------------------------------------------------
+global:
+  # imageRegistry to prepend to all container images (e.g. "ghcr.io" or "registry.internal")
+  imageRegistry: ""
+  # imagePullSecrets to use for private container registries
+  imagePullSecrets: []
+  # storageClass to apply to all PVCs if not specified individually
+  storageClass: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ServiceAccount configurations
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account (e.g. AWS IAM Roles for Service Accounts - IRSA)
+  annotations: {}
+  # The name of the service account to use (if not set and create is true, a name is generated)
+  name: ""
+
+# ------------------------------------------------------------------------------
+# OV-Server: API Gateway, DAG Orchestrator & State Engine
+# ------------------------------------------------------------------------------
+server:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: gv-factory/ov-server
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    capabilities:
+      drop:
+        - ALL
+
+  # Horizontal Pod Autoscaling (HPA) for ov-server
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+
+  # Probes for health checks
+  probes:
+    liveness:
+      path: /healthz
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      path: /healthz
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    startup:
+      path: /healthz
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 30
+
+  # Extra custom environment variables to inject into ov-server
+  env: []
+
+# ------------------------------------------------------------------------------
+# OV-Worker: Task Execution Daemon, Sandboxes & Code Reviewers
+# ------------------------------------------------------------------------------
+worker:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: gv-factory/ov-worker
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8081
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    capabilities:
+      drop:
+        - ALL
+
+  # Autoscaling for ov-worker
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+
+  probes:
+    liveness:
+      path: /healthz
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      path: /healthz
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  # Persistent volume for ephemeral Git worktrees & task execution sandboxes
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    mountPath: /tmp/ov-sandboxes
+
+  # Docker daemon socket access (optional, when running containerized runners)
+  dockerSocket:
+    enabled: false
+    hostPath: /var/run/docker.sock
+    mountPath: /var/run/docker.sock
+
+  # Rootless sandbox mode (default: isolates builds without root privileges)
+  rootless:
+    enabled: true
+
+  # Extra custom environment variables to inject into ov-worker
+  env: []
+
+# ------------------------------------------------------------------------------
+# OV-Web: Frontend Canvas SPA (Vite + React Flow + Nginx)
+# ------------------------------------------------------------------------------
+web:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: gv-factory/ov-web
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    capabilities:
+      drop:
+        - ALL
+
+  probes:
+    liveness:
+      path: /healthz
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      path: /healthz
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+# ------------------------------------------------------------------------------
+# PostgreSQL 16 with pgvector Extension (StatefulSet + PVC)
+# ------------------------------------------------------------------------------
+postgres:
+  enabled: true
+
+  image:
+    repository: pgvector/pgvector
+    tag: "pg16"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 5432
+
+  auth:
+    database: ov_factory
+    username: ov_user
+    password: ov_password
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # External Postgres instance (disables native StatefulSet when true)
+  external:
+    enabled: false
+    # Complete connection string (e.g. postgres://user:pass@aurora.db:5432/ov_factory?sslmode=require)
+    url: ""
+
+# ------------------------------------------------------------------------------
+# NATS JetStream 2.10: High-Performance Distributed Event Bus
+# ------------------------------------------------------------------------------
+nats:
+  enabled: true
+
+  image:
+    repository: nats
+    tag: "2.10-alpine"
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    clientPort: 4222
+    monitorPort: 8222
+
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # External NATS cluster (disables native deployment when true)
+  external:
+    enabled: false
+    # Connection URL (e.g. nats://nats-cluster.messaging.svc:4222)
+    url: ""
+
+# ------------------------------------------------------------------------------
+# Ingress: Configurable routing for NGINX or Traefik with TLS
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  # Ingress class name: "nginx", "traefik", or cloud controller class
+  className: "nginx"
+
+  # Annotations for ingress controllers
+  annotations:
+    # NGINX annotations (SSE stream & webhook timeouts)
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Traefik annotations (uncomment if using Traefik):
+    # traefik.ingress.kubernetes.io/router.entrypoints: "web,websecure"
+
+  hosts:
+    - host: factory.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: server
+        - path: /events
+          pathType: Prefix
+          service: server
+        - path: /healthz
+          pathType: Exact
+          service: server
+        - path: /webhooks
+          pathType: Prefix
+          service: server
+        - path: /
+          pathType: Prefix
+          service: web
+
+  # TLS termination configuration
+  tls: []
+  #  - secretName: factory-tls-certificate
+  #    hosts:
+  #      - factory.local
+
+# ------------------------------------------------------------------------------
+# LLM Providers Configuration (Cognitive Agents, Reviewers & Planners)
+# ------------------------------------------------------------------------------
+llm:
+  # Active Provider Strategy: "auto", "openai", "openai_compatible", "anthropic", "ollama", "vllm"
+  provider: "auto"
+  # Default model across agents
+  model: "gpt-4o"
+
+  # OpenAI Official API configuration
+  openai:
+    apiKey: ""
+    model: "gpt-4o"
+    baseUrl: "https://api.openai.com/v1"
+
+  # Local or in-cluster Ollama deployment
+  ollama:
+    baseUrl: "http://ollama.ollama.svc.cluster.local:11434"
+    model: "llama3.2"
+
+  # vLLM / Self-hosted high-throughput inference engine (OpenAI compatible)
+  vllm:
+    baseUrl: "http://vllm.vllm.svc.cluster.local:8000/v1"
+    apiKey: ""
+    model: "meta-llama/Llama-3-8B-Instruct"
+
+  # Generic OpenAI-Compatible endpoint (OpenRouter, Groq, DeepSeek, LocalAI)
+  openaiCompatible:
+    baseUrl: ""
+    apiKey: ""
+    model: ""
+
+  # Anthropic Claude API configuration
+  anthropic:
+    apiKey: ""
+    model: "claude-3-5-sonnet-20241022"
+
+# ------------------------------------------------------------------------------
+# Secrets & Integrations (Webhooks, Chat Adapters, Auth)
+# ------------------------------------------------------------------------------
+secret:
+  # Use pre-existing K8s Secret instead of creating one via this chart
+  existingSecret: ""
+
+  # Internal authentication secret key
+  authSecretKey: "factory-default-secret-key-change-in-production"
+
+  # Inbound webhook validation secrets
+  githubWebhookSecret: "dev_github_secret"
+  gitlabWebhookSecret: "dev_gitlab_secret"
+  sentryWebhookSecret: "dev_sentry_secret"
+
+  # Chat adapter tokens (Slack / Discord)
+  slackBotToken: ""
+  slackSigningSecret: ""
+  slackDefaultChannel: ""
+  discordBotToken: ""
+  discordPublicKey: ""
+  discordDefaultChannel: ""

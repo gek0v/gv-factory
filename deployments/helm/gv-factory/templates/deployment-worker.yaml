@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gv-factory.worker.fullname" . }}
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "gv-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "gv-factory.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "gv-factory.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.worker.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.worker.securityContext | nindent 12 }}
+          image: "{{ if .Values.global.imageRegistry }}{{ .Values.global.imageRegistry }}/{{ end }}{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.worker.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "gv-factory.configMapName" . }}
+            - secretRef:
+                name: {{ include "gv-factory.secretName" . }}
+          {{- with .Values.worker.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.worker.probes.liveness.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.worker.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.worker.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.worker.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.worker.probes.readiness.path }}
+              port: health
+            initialDelaySeconds: {{ .Values.worker.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.worker.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.worker.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.worker.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: sandboxes
+              mountPath: {{ .Values.worker.persistence.mountPath }}
+            {{- if .Values.worker.dockerSocket.enabled }}
+            - name: docker-socket
+              mountPath: {{ .Values.worker.dockerSocket.mountPath }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: sandboxes
+          {{- if .Values.worker.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "gv-factory.fullname" . }}-sandboxes
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.worker.dockerSocket.enabled }}
+        - name: docker-socket
+          hostPath:
+            path: {{ .Values.worker.dockerSocket.hostPath }}
+        {{- end }}
+{{- end }}

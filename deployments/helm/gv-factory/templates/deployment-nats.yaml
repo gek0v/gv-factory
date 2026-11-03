@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+{{- if and .Values.nats.enabled (not .Values.nats.external.enabled) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gv-factory.nats.fullname" . }}
+  labels:
+    {{- include "gv-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nats
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "gv-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nats
+  template:
+    metadata:
+      labels:
+        {{- include "gv-factory.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nats
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: nats
+          image: "{{ if .Values.global.imageRegistry }}{{ .Values.global.imageRegistry }}/{{ end }}{{ .Values.nats.image.repository }}:{{ .Values.nats.image.tag }}"
+          imagePullPolicy: {{ .Values.nats.image.pullPolicy }}
+          command:
+            - "nats-server"
+            - "-js"
+            - "-m"
+            - {{ .Values.nats.service.monitorPort | quote }}
+            - "-sd"
+            - "/data"
+          ports:
+            - name: client
+              containerPort: {{ .Values.nats.service.clientPort }}
+              protocol: TCP
+            - name: monitor
+              containerPort: {{ .Values.nats.service.monitorPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.nats.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.nats.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "gv-factory.nats.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}
