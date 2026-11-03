@@ -285,8 +285,12 @@ func registerFactoryEndpointsWithTracker(mux *http.ServeMux, gw *gateway.Gateway
 					status = "failed"
 				}
 			}
-			if outcome != nil && !outcome.Success {
-				status = "failed"
+			if outcome != nil {
+				if outcome.IsHumanGate() {
+					status = "gate_waiting"
+				} else if !outcome.Success {
+					status = "failed"
+				}
 			}
 
 			tracker.Set(&FactoryRunResponse{

@@ -445,7 +445,11 @@ func printStatusTable(out io.Writer, color *Colorizer, resp *FactoryRunResponse)
 	fmt.Fprintln(out, color.Bold("                 FACTORY RUN STATUS & TELEMETRY"))
 	fmt.Fprintln(out, color.Bold("═════════════════════════════════════════════════════════════════════════"))
 
-	statusBadge := color.BadgeStatus(resp.Status)
+	status := resp.Status
+	if resp.Outcome != nil && resp.Outcome.Decision == agent.DecisionHumanGate {
+		status = "gate_waiting"
+	}
+	statusBadge := color.BadgeStatus(status)
 	fmt.Fprintf(out, "  Run ID:           %s\n", color.Bold(resp.RunID))
 	fmt.Fprintf(out, "  Status:           %s\n", statusBadge)
 
