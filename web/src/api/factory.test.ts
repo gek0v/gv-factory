@@ -5,6 +5,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   dispatchFactoryRun,
   getFactoryRun,
+  listSandboxFiles,
+  getSandboxFileContent,
+  updateSandboxFileContent,
   type FactoryRunRequest,
   type FactoryRunResponse,
   type FactoryRunOutcome,
@@ -327,6 +330,99 @@ describe('Factory API Client (web/src/api/factory.ts)', () => {
 
       const outcome = await getFactoryRun('camel-outcome-id');
       expect(outcome.run_id).toBe('camel-outcome-id');
+    });
+  });
+
+  describe('Sandbox Files API', () => {
+    it('listSandboxFiles fetches files array from GET /api/v1/factory/runs/:id/files', async () => {
+      const mockFiles = [
+        { path: 'main.go', size: 120, modified: true },
+        { path: 'calc/calc.go', size: 340, modified: false },
+      ];
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockFiles,
+      });
+      globalThis.fetch = fetchMock;
+
+      const files = await listSandboxFiles('run-123');
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/factory/runs/run-123/files', {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      });
+      expect(files).toEqual(mockFiles);
+    });
+
+    it('listSandboxFiles throws error on missing runId', async () => {
+      await expect(listSandboxFiles('')).rejects.toThrow('Run ID is required');
+    });
+
+    it('getSandboxFileContent fetches file from GET /api/v1/factory/runs/:id/files/content?path=...', async () => {
+      const mockResp = { path: 'main.go', content: 'package main', size: 12 };
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockResp,
+      });
+      globalThis.fetch = fetchMock;
+
+      const res = await getSandboxFileContent('run-123', 'main.go');
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/factory/runs/run-123/files/content?path=main.go',
+        {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        }
+      );
+      expect(res).toEqual(mockResp);
+    });
+
+    it('getSandboxFileContent throws on missing path or runId', async () => {
+      await expect(getSandboxFileContent('run-1', '')).rejects.toThrow('File path is required');
+      await expect(getSandboxFileContent('', 'main.go')).rejects.toThrow('Run ID is required');
+    });
+
+    it('updateSandboxFileContent sends PUT /api/v1/factory/runs/:id/files/content', async () => {
+      const mockResp = {
+        success: true,
+        path: 'main.go',
+        diff: 'diff --git a/main.go',
+        message: 'Updated',
+      };
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockResp,
+      });
+      globalThis.fetch = fetchMock;
+
+      const res = await updateSandboxFileContent('run-123', 'main.go', 'package main\n// new');
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/factory/runs/run-123/files/content', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          path: 'main.go',
+          content: 'package main\n// new',
+        }),
+      });
+      expect(res).toEqual(mockResp);
+    });
+
+    it('updateSandboxFileContent throws on error response', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: 'path traversal detected' }),
+      });
+      globalThis.fetch = fetchMock;
+
+      await expect(
+        updateSandboxFileContent('run-123', '../bad.go', 'bad')
+      ).rejects.toThrow('path traversal detected');
     });
   });
 });

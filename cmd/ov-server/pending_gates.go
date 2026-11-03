@@ -201,6 +201,39 @@ func (t *PendingGateTracker) handleResolved(ev gateway.Event) {
 	}
 }
 
+// UpdateGateDiff updates the git diff for a pending gate associated with runID.
+func (t *PendingGateTracker) UpdateGateDiff(runID string, newDiff string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for k, g := range t.gates {
+		if g.RunID == runID {
+			g.Diff = newDiff
+			if g.Arguments == nil {
+				g.Arguments = make(map[string]any)
+			}
+			g.Arguments["diff"] = newDiff
+			t.gates[k] = g
+			if t.store != nil {
+				_ = t.store.RecordPendingGate(context.Background(), &store.PendingGate{
+					ID:        k,
+					RunID:     g.RunID,
+					Token:     g.Token,
+					GateType:  "HUMAN_GATE",
+					ToolName:  g.ToolName,
+					Arguments: g.Arguments,
+					Status:    store.GateStatusPending,
+					CreatedAt: g.CreatedAt,
+					ExpiresAt: g.ExpiresAt,
+				})
+			}
+		}
+	}
+}
+
 // RecordGate stores or updates a pending gate record directly.
 func (t *PendingGateTracker) RecordGate(info PendingGateInfo) {
 	if t == nil {

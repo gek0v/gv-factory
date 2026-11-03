@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import { useFactoryFlowStore } from '../../store';
 import { GitDiffViewer } from '../drawer/GitDiffViewer';
+import { CodeInspectionModal } from '../editor/CodeInspectionModal';
 import { SandboxTerminalButton } from '../terminal/SandboxTerminalModal';
 
 export interface TddPhase {
@@ -241,6 +242,9 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
   const [drawerHeight, setDrawerHeight] = useState<'normal' | 'expanded'>('normal');
   const [isResolving, setIsResolving] = useState(false);
   const [resolutionFeedback, setResolutionFeedback] = useState<string | null>(null);
+  const [selectedFileForInspection, setSelectedFileForInspection] = useState<string | null>(null);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [customDiff, setCustomDiff] = useState<string | null>(null);
 
   if (!isDrawerOpen) {
     return null;
@@ -267,7 +271,29 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
   }
 
   const effectiveToken = stages.decision?.token || store.activeApproval?.token || '';
-  const effectiveRunId = stages.decision?.runId || store.activeApproval?.runId || store.activeRunId || 'run-active';
+  const effectiveRunId =
+    stages.decision?.runId ||
+    store.activeApproval?.runId ||
+    store.activeRunId ||
+    (executionEvents.find((e) => e.payload?.run_id || e.payload?.runId)?.payload?.run_id ||
+     executionEvents.find((e) => e.payload?.run_id || e.payload?.runId)?.payload?.runId) ||
+    'run-active';
+
+  const handleOpenFileInspector = (filePath: string) => {
+    setSelectedFileForInspection(filePath);
+    setIsInspectorOpen(true);
+  };
+
+  const handleSaveSuccess = (newDiff: string) => {
+    setCustomDiff(newDiff);
+    store.addExecutionEvent({
+      stage: 'build_completed',
+      payload: {
+        ...(stages.build || {}),
+        diff: newDiff,
+      },
+    });
+  };
 
   const handleApproveAndMerge = async () => {
     setIsResolving(true);
@@ -474,9 +500,24 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
                       <span className="section-label">Modified Workspace Files:</span>
                       <ul className="modified-files-list">
                         {stages.build.filesModified.map((f, idx) => (
-                          <li key={idx} className="modified-file-item">
-                            <span className="file-icon">📄</span>
-                            <code>{f}</code>
+                          <li
+                            key={idx}
+                            className="modified-file-item modified-file-clickable"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleOpenFileInspector(f)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                handleOpenFileInspector(f);
+                              }
+                            }}
+                            title={`Inspeccionar y editar ${f} en Monaco Editor`}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <span className="file-icon">📄</span>
+                              <code>{f}</code>
+                            </div>
+                            <span className="modified-file-action-badge">✏️ Edit</span>
                           </li>
                         ))}
                       </ul>
@@ -484,10 +525,10 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
                   )}
 
                   {/* Git Diff Viewer */}
-                  {stages.build.diff && (
+                  {(customDiff || stages.build.diff) && (
                     <div className="stage-diff-section">
                       <span className="section-label">Git Unified Diff:</span>
-                      <GitDiffViewer diff={stages.build.diff} />
+                      <GitDiffViewer diff={customDiff || stages.build.diff!} />
                     </div>
                   )}
                 </div>
@@ -654,6 +695,16 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
           </div>
         )}
       </div>
+
+      {/* Monaco Code Inspector & Hot Edit Modal */}
+      <CodeInspectionModal
+        isOpen={isInspectorOpen}
+        onClose={() => setIsInspectorOpen(false)}
+        runId={effectiveRunId}
+        initialFile={selectedFileForInspection || undefined}
+        files={stages.build?.filesModified || []}
+        onSaveSuccess={handleSaveSuccess}
+      />
     </div>
   );
 };

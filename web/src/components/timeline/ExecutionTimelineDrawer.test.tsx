@@ -286,6 +286,8 @@ describe('ExecutionTimelineDrawer and Helpers (TDD)', () => {
       expect(html).toContain('phase-badge-refactor');
       expect(html).toContain('Refactor (Code Quality)');
       expect(html).toContain('pkg/sandbox/manager.go');
+      expect(html).toContain('modified-file-clickable');
+      expect(html).toContain('✏️ Edit');
       expect(html).toContain('diff-container');
       expect(html).toContain('func PruneWorktrees');
     });
