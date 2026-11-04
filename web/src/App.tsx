@@ -79,7 +79,7 @@ export const App: React.FC = () => {
             skills: tpl.skills ? [...tpl.skills] : [],
             tools: tpl.tools ? [...tpl.tools] : [],
             plugins: tpl.plugins ? [...tpl.plugins] : [],
-            thinking: tpl.thinking || 'off',
+            thinking: typeof tpl.thinking === 'string' ? tpl.thinking : (tpl.thinking ? 'high' : 'off'),
             prompt: tpl.prompt || '',
             pluginTag: tpl.plugins?.[0] || 'extism://plugins/tdd-runner.wasm',
             status: 'pending',

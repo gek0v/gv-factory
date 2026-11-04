@@ -318,6 +318,86 @@ func TestRegistryEndpoints_AgentTemplates_CRUD(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 Bad Request on empty id, got %d", rec.Code)
 	}
+
+	// 11. DELETE /api/v1/agent-templates/test_agent -> 200 OK
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/agent-templates/test_agent", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on DELETE /api/v1/agent-templates/test_agent, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify template is gone
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/agent-templates/test_agent", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found for deleted template, got %d", rec.Code)
+	}
+
+	// 12. DELETE non-existent template -> 404
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/agent-templates/test_agent", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found on deleting non-existent template, got %d", rec.Code)
+	}
+
+	// 13. POST /api/v1/agent-templates and DELETE with query param ?id=
+	tpl2 := registry.AgentTemplate{
+		ID:           "test_agent_query",
+		Name:         "Query Deleted Agent",
+		Role:         "cleaner",
+		Model:        "claude-3-7-sonnet",
+		SystemPrompt: "Clean up resources.",
+	}
+	payload, _ = json.Marshal(tpl2)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/agent-templates", bytes.NewReader(payload))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/agent-templates?id=test_agent_query", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on DELETE /api/v1/agent-templates?id=test_agent_query, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 14. DELETE with empty id on /api/v1/agent-templates -> 400 Bad Request
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/agent-templates", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request on DELETE without ID, got %d", rec.Code)
+	}
+
+	// 15. DELETE with body on /api/v1/agent-templates
+	tpl3 := registry.AgentTemplate{
+		ID:           "test_agent_body",
+		Name:         "Body Deleted Agent",
+		Role:         "tester",
+		Model:        "claude-3-7-sonnet",
+		SystemPrompt: "Test via body delete.",
+	}
+	payload, _ = json.Marshal(tpl3)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/agent-templates", bytes.NewReader(payload))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d", rec.Code)
+	}
+
+	deleteBody := bytes.NewReader([]byte(`{"id":"test_agent_body"}`))
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/agent-templates", deleteBody)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on DELETE with body, got %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestRegistryEndpoints_IntegratedServerMux(t *testing.T) {

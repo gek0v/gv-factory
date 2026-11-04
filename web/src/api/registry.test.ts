@@ -8,6 +8,7 @@ import {
   fetchPlugins,
   fetchAgentTemplates,
   createAgentTemplate,
+  deleteAgentTemplate,
   _resetLocalTemplates,
   DEFAULT_SKILLS,
   DEFAULT_TOOLS,
@@ -272,6 +273,54 @@ describe('Registry API Client (web/src/api/registry.ts)', () => {
           model: 'gpt-4o',
         })
       ).rejects.toThrow('Template name is required');
+    });
+
+    it('deletes agent template locally', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Offline'));
+      await createAgentTemplate({
+        id: 'tpl-to-delete',
+        name: 'Temporary Agent',
+        description: 'Will be deleted',
+        model: 'claude-3-5-sonnet',
+      });
+
+      let templates = await fetchAgentTemplates();
+      expect(templates.some((t) => t.id === 'tpl-to-delete')).toBe(true);
+
+      const deleted = await deleteAgentTemplate('tpl-to-delete');
+      expect(deleted).toBe(true);
+
+      templates = await fetchAgentTemplates();
+      expect(templates.some((t) => t.id === 'tpl-to-delete')).toBe(false);
+    });
+
+    it('deletes agent template via DELETE /api/v1/agent-templates/:id when remote server responds ok', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, id: 'tpl-remote-delete' }),
+      });
+
+      const result = await deleteAgentTemplate('tpl-remote-delete', {
+        baseUrl: 'http://localhost:8080',
+        customFetch: fetchMock as any,
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://localhost:8080/api/v1/agent-templates/tpl-remote-delete',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: {
+            Accept: 'application/json',
+          },
+        })
+      );
+      expect(result).toBe(true);
+    });
+
+    it('rejects deletion if id is empty', async () => {
+      await expect(deleteAgentTemplate('')).rejects.toThrow('Template id is required');
+      await expect(deleteAgentTemplate('   ')).rejects.toThrow('Template id is required');
     });
   });
 });

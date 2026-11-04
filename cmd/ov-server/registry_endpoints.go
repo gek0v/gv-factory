@@ -83,8 +83,8 @@ func registerRegistryEndpoints(mux *http.ServeMux, mgr *registry.Manager) {
 		writeRegistryJSON(w, http.StatusOK, plugins)
 	})
 
-	// GET /api/v1/agent-templates, POST /api/v1/agent-templates
-	mux.HandleFunc("/api/v1/agent-templates", func(w http.ResponseWriter, r *http.Request) {
+	// GET /api/v1/agent-templates, POST /api/v1/agent-templates, DELETE /api/v1/agent-templates
+	agentTemplatesHandler := func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			templates := mgr.ListTemplates()
@@ -100,7 +100,7 @@ func registerRegistryEndpoints(mux *http.ServeMux, mgr *registry.Manager) {
 				return
 			}
 
-			if err := mgr.SaveTemplate(tpl); err != nil {
+			if err := mgr.RegisterCustomTemplate(tpl); err != nil {
 				writeRegistryError(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -110,16 +110,43 @@ func registerRegistryEndpoints(mux *http.ServeMux, mgr *registry.Manager) {
 				"template": tpl,
 			})
 
+		case http.MethodDelete:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				var body struct {
+					ID string `json:"id"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				id = strings.TrimSpace(body.ID)
+			}
+			if id == "" {
+				writeRegistryError(w, http.StatusBadRequest, "template id is required")
+				return
+			}
+
+			if err := mgr.DeleteCustomTemplate(id); err != nil {
+				writeRegistryError(w, http.StatusNotFound, err.Error())
+				return
+			}
+
+			writeRegistryJSON(w, http.StatusOK, map[string]any{
+				"success": true,
+				"id":      id,
+			})
+
 		default:
 			writeRegistryError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
-	})
+	}
+	mux.HandleFunc("/api/v1/agent-templates", agentTemplatesHandler)
+	mux.HandleFunc("/api/v1/registry/templates", agentTemplatesHandler)
 
-	// GET /api/v1/agent-templates/{id}
-	mux.HandleFunc("/api/v1/agent-templates/", func(w http.ResponseWriter, r *http.Request) {
+	// GET /api/v1/agent-templates/{id}, DELETE /api/v1/agent-templates/{id}
+	agentTemplateItemHandler := func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		if id == "" {
 			path := strings.TrimPrefix(r.URL.Path, "/api/v1/agent-templates/")
+			path = strings.TrimPrefix(path, "/api/v1/registry/templates/")
 			id = strings.Trim(path, "/")
 		}
 
@@ -137,8 +164,20 @@ func registerRegistryEndpoints(mux *http.ServeMux, mgr *registry.Manager) {
 			}
 			writeRegistryJSON(w, http.StatusOK, tpl)
 
+		case http.MethodDelete:
+			if err := mgr.DeleteCustomTemplate(id); err != nil {
+				writeRegistryError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			writeRegistryJSON(w, http.StatusOK, map[string]any{
+				"success": true,
+				"id":      id,
+			})
+
 		default:
 			writeRegistryError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
-	})
+	}
+	mux.HandleFunc("/api/v1/agent-templates/", agentTemplateItemHandler)
+	mux.HandleFunc("/api/v1/registry/templates/", agentTemplateItemHandler)
 }
