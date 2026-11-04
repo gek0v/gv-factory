@@ -172,7 +172,7 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 	}
 
 	serverURL := resolveServerURL(*serverFlag)
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 10 * time.Minute}
 
 	bodyBytes, err := json.Marshal(reqPayload)
 	if err != nil {
