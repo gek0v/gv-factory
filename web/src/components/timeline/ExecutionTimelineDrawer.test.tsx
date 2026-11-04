@@ -12,6 +12,8 @@ import {
   getSeverityBadgeClass,
   formatDurationMs,
   extractTimelineStages,
+  normalizeRepoWebUrl,
+  getPullRequestUrl,
   type SpecStagePayload,
   type BuildStagePayload,
   type ReviewStagePayload,
@@ -539,6 +541,124 @@ describe('ExecutionTimelineDrawer and Helpers (TDD)', () => {
       expect(stages.decision?.token).toBe('test-token-value');
       expect(stages.decision?.reason).toBe('Manual QA check required');
       expect(stages.build?.diff).toContain('func New() {}');
+    });
+
+    it('normalizeRepoWebUrl cleans .git suffix and git@ prefixes correctly', () => {
+      expect(normalizeRepoWebUrl('https://github.com/org/repo.git')).toBe('https://github.com/org/repo');
+      expect(normalizeRepoWebUrl('https://github.com/org/repo.git/')).toBe('https://github.com/org/repo');
+      expect(normalizeRepoWebUrl('git@github.com:org/repo.git')).toBe('https://github.com/org/repo');
+      expect(normalizeRepoWebUrl('https://gitlab.com/group/project.git')).toBe('https://gitlab.com/group/project');
+      expect(normalizeRepoWebUrl('')).toBe('');
+      expect(normalizeRepoWebUrl(undefined)).toBe('');
+    });
+
+    it('getPullRequestUrl handles GitHub, GitLab, and explicit PR URLs', () => {
+      expect(getPullRequestUrl('https://github.com/org/repo.git')).toBe('https://github.com/org/repo/pulls');
+      expect(getPullRequestUrl('https://gitlab.com/org/repo.git')).toBe('https://gitlab.com/org/repo/-/merge_requests');
+      expect(
+        getPullRequestUrl('https://github.com/org/repo.git', 'https://github.com/org/repo/pull/42')
+      ).toBe('https://github.com/org/repo/pull/42');
+      expect(getPullRequestUrl('')).toBe('');
+    });
+
+    it('renders repository URL and Pull Request links in resolution banner when repository_url is present in metadata', () => {
+      useFactoryFlowStore.setState({
+        showExecutionTimeline: true,
+        executionEvents: [
+          {
+            stage: 'pipeline_completed',
+            timestamp: '2026-11-02T10:05:00Z',
+            payload: {
+              decision: 'APPROVED',
+              summary: 'All checks passed cleanly',
+              metadata: {
+                repository_url: 'https://github.com/acme/my-service.git',
+              },
+            },
+          },
+        ],
+      });
+
+      const html = renderToStaticMarkup(React.createElement(ExecutionTimelineDrawer));
+      expect(html).toContain('decision-banner');
+      expect(html).toContain('decision-remote-repo-links');
+      expect(html).toContain('href="https://github.com/acme/my-service"');
+      expect(html).toContain('Repository: https://github.com/acme/my-service.git');
+      expect(html).toContain('href="https://github.com/acme/my-service/pulls"');
+      expect(html).toContain('Pull Request');
+    });
+
+    it('renders explicit pull request link when pull_request_url is in metadata', () => {
+      useFactoryFlowStore.setState({
+        showExecutionTimeline: true,
+        executionEvents: [
+          {
+            stage: 'pipeline_completed',
+            timestamp: '2026-11-02T10:05:00Z',
+            payload: {
+              decision: 'APPROVED',
+              summary: 'PR generated',
+              metadata: {
+                repository_url: 'https://github.com/acme/my-service.git',
+                pull_request_url: 'https://github.com/acme/my-service/pull/128',
+              },
+            },
+          },
+        ],
+      });
+
+      const html = renderToStaticMarkup(React.createElement(ExecutionTimelineDrawer));
+      expect(html).toContain('href="https://github.com/acme/my-service/pull/128"');
+      expect(html).toContain('Pull Request');
+    });
+
+    it('renders repository links when repository_url is on store.activeRunOutcome', () => {
+      useFactoryFlowStore.setState({
+        showExecutionTimeline: true,
+        activeRunOutcome: {
+          run_id: 'run-remote-outcome-1',
+          status: 'completed',
+          stage: 'completed',
+          repository_url: 'https://github.com/org/repo-outcome.git',
+          pull_request_url: 'https://github.com/org/repo-outcome/pull/7',
+        },
+        executionEvents: [
+          {
+            stage: 'pipeline_completed',
+            timestamp: '2026-11-02T10:05:00Z',
+            payload: {
+              decision: 'APPROVED',
+            },
+          },
+        ],
+      });
+
+      const html = renderToStaticMarkup(React.createElement(ExecutionTimelineDrawer));
+      expect(html).toContain('decision-remote-repo-links');
+      expect(html).toContain('href="https://github.com/org/repo-outcome"');
+      expect(html).toContain('href="https://github.com/org/repo-outcome/pull/7"');
+    });
+
+    it('does not render repository links when repository_url is absent', () => {
+      useFactoryFlowStore.setState({
+        showExecutionTimeline: true,
+        activeRunOutcome: null,
+        executionEvents: [
+          {
+            stage: 'pipeline_completed',
+            timestamp: '2026-11-02T10:05:00Z',
+            payload: {
+              decision: 'APPROVED',
+              summary: 'Local execution completed',
+            },
+          },
+        ],
+      });
+
+      const html = renderToStaticMarkup(React.createElement(ExecutionTimelineDrawer));
+      expect(html).not.toContain('decision-remote-repo-links');
+      expect(html).not.toContain('decision-repo-link');
+      expect(html).not.toContain('decision-pr-link');
     });
   });
 });
