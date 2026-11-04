@@ -1582,3 +1582,136 @@ func TestFactoryCLI_Run_ModelFlag(t *testing.T) {
 	})
 }
 
+func TestFactoryCLI_Run_RemoteRepoFlags(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("passes --repo and --base-branch flags in request payload", func(t *testing.T) {
+		var receivedReq FactoryRunRequest
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/factory/run" {
+				http.NotFound(w, r)
+				return
+			}
+			if err := json.NewDecoder(r.Body).Decode(&receivedReq); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"run_id": receivedReq.TaskID,
+				"status": "running",
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "run", "Remote Clone Task",
+			"--repo", "https://github.com/org/repo.git",
+			"--base-branch", "develop",
+			"--server", ts.URL,
+		})
+
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Err: %s", code, errBuf.String())
+		}
+
+		if receivedReq.RepositoryURL != "https://github.com/org/repo.git" {
+			t.Errorf("expected repository_url 'https://github.com/org/repo.git', got %q", receivedReq.RepositoryURL)
+		}
+		if receivedReq.BaseBranch != "develop" {
+			t.Errorf("expected base_branch 'develop', got %q", receivedReq.BaseBranch)
+		}
+		if !strings.Contains(out.String(), "https://github.com/org/repo.git") {
+			t.Errorf("expected output to mention repo URL, got: %s", out.String())
+		}
+		if !strings.Contains(out.String(), "develop") {
+			t.Errorf("expected output to mention develop branch, got: %s", out.String())
+		}
+	})
+
+	t.Run("displays repository and pull_request_url in status table", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v1/factory/runs/task-status-repo-1" {
+				http.NotFound(w, r)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(&FactoryRunResponse{
+				RunID:          "task-status-repo-1",
+				Status:         "completed",
+				RepositoryURL:  "https://github.com/gv-factory/gv-factory.git",
+				BaseBranch:     "main",
+				PullRequestURL: "https://github.com/gv-factory/gv-factory/pull/155",
+				Outcome: &agent.PipelineOutcome{
+					TaskID:   "task-status-repo-1",
+					Success:  true,
+					Decision: agent.DecisionApproved,
+				},
+				CreatedAt: time.Now().Add(-10 * time.Minute),
+				UpdatedAt: time.Now(),
+			})
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "status", "task-status-repo-1",
+			"--server", ts.URL,
+		})
+
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Err: %s", code, errBuf.String())
+		}
+
+		outStr := out.String()
+		if !strings.Contains(outStr, "Repository:") || !strings.Contains(outStr, "https://github.com/gv-factory/gv-factory.git (main)") {
+			t.Errorf("expected repository and branch in status output, got: %s", outStr)
+		}
+		if !strings.Contains(outStr, "Pull Request:") || !strings.Contains(outStr, "https://github.com/gv-factory/gv-factory/pull/155") {
+			t.Errorf("expected pull request URL in status output, got: %s", outStr)
+		}
+	})
+
+	t.Run("run sync mode with repo and json flag", func(t *testing.T) {
+		var receivedReq FactoryRunRequest
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			outcome := agent.PipelineOutcome{
+				TaskID:   receivedReq.TaskID,
+				Success:  true,
+				Decision: agent.DecisionApproved,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(outcome)
+		}))
+		defer ts.Close()
+
+		var out, errBuf bytes.Buffer
+		app := NewCLIApp(&out, &errBuf, nil)
+		code := app.Run(ctx, []string{
+			"factory", "run", "Sync Repo Run",
+			"--repo", "https://github.com/org/sync-repo.git",
+			"--base-branch", "main",
+			"--sync",
+			"--json",
+			"--server", ts.URL,
+		})
+
+		if code != 0 {
+			t.Fatalf("expected 0, got %d. Err: %s", code, errBuf.String())
+		}
+		if receivedReq.RepositoryURL != "https://github.com/org/sync-repo.git" {
+			t.Errorf("expected repo in sync request, got: %s", receivedReq.RepositoryURL)
+		}
+	})
+}

@@ -6,11 +6,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/agent"
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/brain"
+	"github.com/gv-factory/gv-factory/internal/connectors/inbound"
 	"github.com/gv-factory/gv-factory/internal/connectors/llm"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/runtime"
@@ -32,24 +36,29 @@ type FactoryPipelineRunner interface {
 
 // FactoryRunRequest represents the payload accepted by POST /api/v1/factory/run.
 type FactoryRunRequest struct {
-	TaskID      string         `json:"task_id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Model       string         `json:"model,omitempty"`
-	Labels      []string       `json:"labels,omitempty"`
-	Constraints []string       `json:"constraints,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	TaskID        string         `json:"task_id"`
+	Title         string         `json:"title"`
+	Description   string         `json:"description,omitempty"`
+	Model         string         `json:"model,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Constraints   []string       `json:"constraints,omitempty"`
+	RepositoryURL string         `json:"repository_url,omitempty"`
+	BaseBranch    string         `json:"base_branch,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
 }
 
 // FactoryRunResponse represents the status and outcome returned by factory endpoints.
 type FactoryRunResponse struct {
-	RunID     string                 `json:"run_id"`
-	Status    string                 `json:"status"` // "running", "completed", "failed", "gate_waiting"
-	Token     string                 `json:"token,omitempty"`
-	Outcome   *agent.PipelineOutcome `json:"outcome,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-	CreatedAt time.Time              `json:"created_at,omitempty"`
-	UpdatedAt time.Time              `json:"updated_at,omitempty"`
+	RunID          string                 `json:"run_id"`
+	Status         string                 `json:"status"` // "running", "completed", "failed", "gate_waiting"
+	Token          string                 `json:"token,omitempty"`
+	Outcome        *agent.PipelineOutcome `json:"outcome,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	RepositoryURL  string                 `json:"repository_url,omitempty"`
+	BaseBranch     string                 `json:"base_branch,omitempty"`
+	PullRequestURL string                 `json:"pull_request_url,omitempty"`
+	CreatedAt      time.Time              `json:"created_at,omitempty"`
+	UpdatedAt      time.Time              `json:"updated_at,omitempty"`
 }
 
 // FactoryEndpointsOptions configures optional dependencies for factory endpoints.
@@ -60,6 +69,7 @@ type FactoryEndpointsOptions struct {
 	Tracker        *FactoryRunTracker
 	PendingTracker *PendingGateTracker
 	SandboxBaseDir string
+	PRCreator      inbound.PullRequestCreator
 }
 
 // FactoryRunTracker provides thread-safe in-memory tracking of factory pipeline runs.
@@ -131,6 +141,19 @@ type defaultFactoryRunner struct {
 	builder        agent.TaskBuilder
 	approver       agent.GateApprover
 	usePiRunner    bool
+	prCreator      inbound.PullRequestCreator
+}
+
+// PRCreatorProvider allows runner implementations to expose an optional PullRequestCreator.
+type PRCreatorProvider interface {
+	PRCreator() inbound.PullRequestCreator
+}
+
+func (d *defaultFactoryRunner) PRCreator() inbound.PullRequestCreator {
+	if d == nil {
+		return nil
+	}
+	return d.prCreator
 }
 
 // SandboxDir returns the absolute path to the sandbox directory for task/run ID.
@@ -142,16 +165,245 @@ func (d *defaultFactoryRunner) SandboxDir(runID string) string {
 	return filepath.Join(base, sanitizeIdentifier(runID))
 }
 
+// GitSandboxOptions encapsulates optional parameters for configuring a git sandbox.
+type GitSandboxOptions struct {
+	RepositoryURL string
+	AuthToken     string
+}
+
+var (
+	credRegex       = regexp.MustCompile(`(?i)(https?://)([^:]+):([^@]+)@`)
+	tokenInURLRegex = regexp.MustCompile(`(?i)(https?://)[^/@]+@`)
+)
+
+// maskCredentials redacts sensitive credentials from URLs and strings.
+func maskCredentials(s string, extraTokens ...string) string {
+	res := credRegex.ReplaceAllString(s, "${1}***:***@")
+	res = tokenInURLRegex.ReplaceAllString(res, "${1}***@")
+	for _, tok := range extraTokens {
+		tok = strings.TrimSpace(tok)
+		if len(tok) >= 4 {
+			res = strings.ReplaceAll(res, tok, "***")
+		}
+	}
+	return res
+}
+
+// injectAuthToURL safely embeds an authentication token into an HTTP/HTTPS repository URL.
+func injectAuthToURL(repoURL string, token string) string {
+	if token == "" || (!strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://")) {
+		return repoURL
+	}
+	u, err := url.Parse(repoURL)
+	if err != nil {
+		return repoURL
+	}
+	host := strings.ToLower(u.Host)
+	if strings.Contains(host, "gitlab") {
+		u.User = url.UserPassword("oauth2", token)
+	} else {
+		u.User = url.UserPassword("x-access-token", token)
+	}
+	return u.String()
+}
+
+// extractAuthToken resolves a GitHub or GitLab access token from task metadata or environment variables.
+func extractAuthToken(metadata map[string]any, repoURL string) string {
+	if metadata != nil {
+		for _, key := range []string{"github_token", "gitlab_token", "git_token", "token", "auth_token"} {
+			if v, ok := metadata[key].(string); ok && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+
+	normURL := strings.ToLower(repoURL)
+	if strings.Contains(normURL, "gitlab") {
+		if t := strings.TrimSpace(os.Getenv("GITLAB_TOKEN")); t != "" {
+			return t
+		}
+	}
+	if strings.Contains(normURL, "github") {
+		if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
+			return t
+		}
+		if t := strings.TrimSpace(os.Getenv("GH_TOKEN")); t != "" {
+			return t
+		}
+	}
+
+	if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
+		return t
+	}
+	if t := strings.TrimSpace(os.Getenv("GITLAB_TOKEN")); t != "" {
+		return t
+	}
+	return ""
+}
+
+// parseRepoOwnerAndName extracts provider type ('github', 'gitlab', 'generic', 'local') and repository identifier.
+func parseRepoOwnerAndName(repoURL string) (provider string, repoPath string, err error) {
+	trimmed := strings.TrimSpace(repoURL)
+	if trimmed == "" {
+		return "", "", errors.New("empty repository url")
+	}
+
+	trimmed = strings.TrimSuffix(trimmed, ".git")
+
+	// SSH format: git@host:owner/repo
+	if strings.Contains(trimmed, "@") && strings.Contains(trimmed, ":") && !strings.Contains(trimmed, "://") {
+		parts := strings.SplitN(trimmed, ":", 2)
+		hostPart := strings.ToLower(parts[0])
+		pathPart := strings.Trim(parts[1], "/")
+		if strings.Contains(hostPart, "gitlab") {
+			return "gitlab", pathPart, nil
+		}
+		if strings.Contains(hostPart, "github") {
+			return "github", pathPart, nil
+		}
+		return "generic", pathPart, nil
+	}
+
+	// HTTP/HTTPS format
+	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return "", "", err
+		}
+		host := strings.ToLower(u.Host)
+		path := strings.Trim(u.Path, "/")
+		if strings.Contains(host, "gitlab") {
+			return "gitlab", path, nil
+		}
+		if strings.Contains(host, "github") {
+			return "github", path, nil
+		}
+		return "generic", path, nil
+	}
+
+	return "local", "", nil
+}
+
+// handleRemoteRepoPushAndPR pushes the sandbox branch and creates a pull request on GitHub or GitLab.
+func handleRemoteRepoPushAndPR(
+	ctx context.Context,
+	sandboxDir string,
+	taskID string,
+	title string,
+	desc string,
+	repoURL string,
+	baseBranch string,
+	diff string,
+	token string,
+	prCreator inbound.PullRequestCreator,
+	auditDecision string,
+) (*inbound.PullRequestResponse, error) {
+	if strings.TrimSpace(repoURL) == "" {
+		return nil, nil
+	}
+
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	branchName := fmt.Sprintf("ov-run/%s", taskID)
+	// Git push branch to origin
+	if _, err := runGitCmd(ctx, sandboxDir, "push", "-u", "origin", branchName); err != nil {
+		return nil, fmt.Errorf("failed to git push branch %s to origin: %w", branchName, err)
+	}
+
+	provider, repoPath, err := parseRepoOwnerAndName(repoURL)
+	if err != nil || repoPath == "" {
+		// Non-API remote (e.g. local bare repository)
+		if prCreator != nil {
+			prTitle := title
+			if !strings.HasPrefix(strings.ToLower(prTitle), "feat") && !strings.HasPrefix(strings.ToLower(prTitle), "fix") {
+				prTitle = fmt.Sprintf("feat(%s): %s", sanitizeIdentifier(taskID), title)
+			}
+			decisionText := auditDecision
+			if decisionText == "" {
+				decisionText = "Autonomous Pipeline Completed"
+			}
+			bodyBuilder := fmt.Sprintf("## Summary of Changes\n\n%s\n\n%s\n\n## Audit Trail\n- **Task ID**: `%s`\n- **Source Branch**: `%s`\n- **Target Branch**: `%s`\n- **Author**: GV Factory Bot <bot@gv-factory.local>\n- **Decision**: %s\n- **Timestamp**: %s",
+				title, desc, taskID, branchName, baseBranch, decisionText, time.Now().UTC().Format(time.RFC3339))
+			return prCreator.CreatePullRequest(ctx, repoPath, branchName, baseBranch, prTitle, bodyBuilder)
+		}
+		return nil, nil
+	}
+
+	if token == "" {
+		token = extractAuthToken(nil, repoURL)
+	}
+
+	if prCreator == nil {
+		switch provider {
+		case "github":
+			if token != "" {
+				apiURL := os.Getenv("GITHUB_API_URL")
+				prCreator = inbound.NewGitHubIssueReporter(inbound.GitHubReporterConfig{
+					Token:   token,
+					BaseURL: apiURL,
+				})
+			}
+		case "gitlab":
+			if token != "" {
+				apiURL := os.Getenv("GITLAB_API_URL")
+				prCreator = inbound.NewGitLabIssueReporter(inbound.GitLabReporterConfig{
+					Token:   token,
+					BaseURL: apiURL,
+				})
+			}
+		}
+	}
+
+	if prCreator == nil {
+		return nil, nil
+	}
+
+	prTitle := title
+	if !strings.HasPrefix(strings.ToLower(prTitle), "feat") && !strings.HasPrefix(strings.ToLower(prTitle), "fix") {
+		prTitle = fmt.Sprintf("feat(%s): %s", sanitizeIdentifier(taskID), title)
+	}
+
+	decisionText := auditDecision
+	if decisionText == "" {
+		decisionText = "Autonomous Pipeline Completed"
+	}
+
+	diffSection := ""
+	if strings.TrimSpace(diff) != "" {
+		diffSection = fmt.Sprintf("\n\n<details>\n<summary>Git Diff Summary</summary>\n\n```diff\n%s\n```\n</details>", diff)
+	}
+
+	bodyBuilder := fmt.Sprintf("## Summary of Changes\n\n%s\n\n%s\n\n## Audit Trail\n- **Task ID**: `%s`\n- **Source Branch**: `%s`\n- **Target Branch**: `%s`\n- **Author**: GV Factory Bot <bot@gv-factory.local>\n- **Decision**: %s\n- **Timestamp**: %s%s",
+		title,
+		desc,
+		taskID,
+		branchName,
+		baseBranch,
+		decisionText,
+		time.Now().UTC().Format(time.RFC3339),
+		diffSection,
+	)
+
+	return prCreator.CreatePullRequest(ctx, repoPath, branchName, baseBranch, prTitle, bodyBuilder)
+}
+
 func runGitCmd(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	outStr := strings.TrimSpace(string(out))
+	masked := maskCredentials(outStr)
+	if err != nil {
+		return masked, fmt.Errorf("%s: %w", masked, err)
+	}
+	return masked, nil
 }
 
-func initGitSandbox(ctx context.Context, dir string, taskID string, baseBranch string) error {
+func initGitSandbox(ctx context.Context, dir string, taskID string, baseBranch string, opts ...GitSandboxOptions) error {
 	if baseBranch == "" {
 		baseBranch = "main"
 	}
@@ -159,8 +411,62 @@ func initGitSandbox(ctx context.Context, dir string, taskID string, baseBranch s
 		return fmt.Errorf("failed to create sandbox directory: %w", err)
 	}
 
+	var repoURL, authToken string
+	if len(opts) > 0 {
+		repoURL = strings.TrimSpace(opts[0].RepositoryURL)
+		authToken = strings.TrimSpace(opts[0].AuthToken)
+	}
+
 	gitDir := filepath.Join(dir, ".git")
-	if fi, err := os.Stat(gitDir); err != nil || !fi.IsDir() {
+	isCloned := false
+	if fi, err := os.Stat(gitDir); err == nil && fi.IsDir() {
+		isCloned = true
+	}
+
+	if repoURL != "" {
+		if !isCloned {
+			cloneURL := repoURL
+			if authToken != "" && (strings.HasPrefix(repoURL, "http://") || strings.HasPrefix(repoURL, "https://")) {
+				cloneURL = injectAuthToURL(repoURL, authToken)
+			}
+
+			// Try git clone --depth 1 -b <baseBranch> <repoUrl> .
+			_, err := runGitCmd(ctx, dir, "clone", "--depth", "1", "-b", baseBranch, cloneURL, ".")
+			if err != nil {
+				// Fallback without depth 1 (e.g. file:// or local bare repo)
+				_, err = runGitCmd(ctx, dir, "clone", "-b", baseBranch, cloneURL, ".")
+			}
+			if err != nil {
+				// Fallback without branch flag if remote has no default branch set yet
+				_, err = runGitCmd(ctx, dir, "clone", cloneURL, ".")
+			}
+			if err != nil {
+				return fmt.Errorf("failed to git clone remote repository: %w", err)
+			}
+
+			if cloneURL != repoURL {
+				_, _ = runGitCmd(ctx, dir, "remote", "set-url", "origin", cloneURL)
+			}
+		}
+
+		if _, err := runGitCmd(ctx, dir, "config", "user.name", "GV Factory Bot"); err != nil {
+			return fmt.Errorf("failed to set git user.name: %w", err)
+		}
+		if _, err := runGitCmd(ctx, dir, "config", "user.email", "bot@gv-factory.local"); err != nil {
+			return fmt.Errorf("failed to set git user.email: %w", err)
+		}
+
+		branchName := fmt.Sprintf("ov-run/%s", taskID)
+		if _, err := runGitCmd(ctx, dir, "checkout", "-B", branchName, baseBranch); err != nil {
+			if _, err := runGitCmd(ctx, dir, "checkout", "-B", branchName); err != nil {
+				return fmt.Errorf("failed to checkout branch %s: %w", branchName, err)
+			}
+		}
+
+		return nil
+	}
+
+	if !isCloned {
 		if _, err := runGitCmd(ctx, dir, "init"); err != nil {
 			return fmt.Errorf("failed to git init sandbox: %w", err)
 		}
@@ -317,7 +623,18 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		baseBranch = strings.TrimSpace(bb)
 	}
 
-	if err := initGitSandbox(ctx, sandboxDir, task.TaskID, baseBranch); err != nil {
+	repoURL := ""
+	if ru, ok := task.Metadata["repository_url"].(string); ok && strings.TrimSpace(ru) != "" {
+		repoURL = strings.TrimSpace(ru)
+	} else if ru, ok := task.Metadata["repo_url"].(string); ok && strings.TrimSpace(ru) != "" {
+		repoURL = strings.TrimSpace(ru)
+	}
+	authToken := extractAuthToken(task.Metadata, repoURL)
+
+	if err := initGitSandbox(ctx, sandboxDir, task.TaskID, baseBranch, GitSandboxOptions{
+		RepositoryURL: repoURL,
+		AuthToken:     authToken,
+	}); err != nil {
 		return nil, fmt.Errorf("failed to initialize git sandbox: %w", err)
 	}
 
@@ -491,10 +808,25 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 		return
 	}
 	if runner == nil {
-		runner = &defaultFactoryRunner{gw: gw, mergeQueue: opts.MergeQueue}
+		runner = &defaultFactoryRunner{
+			gw:             gw,
+			mergeQueue:     opts.MergeQueue,
+			sandboxBaseDir: opts.SandboxBaseDir,
+			prCreator:      opts.PRCreator,
+		}
 	}
 	if tracker == nil {
 		tracker = NewFactoryRunTracker()
+	}
+
+	resolveSandboxDir := func(runID string) string {
+		if opts.SandboxBaseDir != "" {
+			return filepath.Join(opts.SandboxBaseDir, sanitizeIdentifier(runID))
+		}
+		if sdp, ok := runner.(SandboxDirProvider); ok {
+			return sdp.SandboxDir(runID)
+		}
+		return filepath.Join(os.TempDir(), "ov-sandboxes", sanitizeIdentifier(runID))
 	}
 
 	// POST /api/v1/factory/run
@@ -516,6 +848,8 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 
 		req.TaskID = strings.TrimSpace(req.TaskID)
 		req.Title = strings.TrimSpace(req.Title)
+		req.RepositoryURL = strings.TrimSpace(req.RepositoryURL)
+		req.BaseBranch = strings.TrimSpace(req.BaseBranch)
 		if req.TaskID == "" || req.Title == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -542,6 +876,12 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 		if strings.TrimSpace(req.Model) != "" {
 			taskCtx.Metadata["model"] = strings.TrimSpace(req.Model)
 		}
+		if req.RepositoryURL != "" {
+			taskCtx.Metadata["repository_url"] = req.RepositoryURL
+		}
+		if req.BaseBranch != "" {
+			taskCtx.Metadata["base_branch"] = req.BaseBranch
+		}
 
 		emittedStages := make(map[string]bool)
 		var emitMu sync.Mutex
@@ -554,10 +894,12 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 
 		now := time.Now().UTC()
 		tracker.Set(&FactoryRunResponse{
-			RunID:     req.TaskID,
-			Status:    "running",
-			CreatedAt: now,
-			UpdatedAt: now,
+			RunID:         req.TaskID,
+			Status:        "running",
+			RepositoryURL: req.RepositoryURL,
+			BaseBranch:    req.BaseBranch,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		})
 
 		executePipeline := func(ctx context.Context) (*agent.PipelineOutcome, error) {
@@ -574,6 +916,7 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 			token := ""
 			diff := ""
 			reason := ""
+			pullRequestURL := ""
 			if outcome != nil {
 				if outcome.IsHumanGate() {
 					status = "gate_waiting"
@@ -653,18 +996,48 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 							Timestamp: now.UnixMilli(),
 						})
 					}
-				} else if !outcome.Success {
+				} else if outcome.Success {
+					status = "completed"
+					if req.RepositoryURL != "" {
+						sandboxDir := resolveSandboxDir(req.TaskID)
+						diffStr := ""
+						if outcome.BuildResult != nil {
+							diffStr = outcome.BuildResult.GitDiff
+						}
+						authToken := extractAuthToken(taskCtx.Metadata, req.RepositoryURL)
+						prResp, prErr := handleRemoteRepoPushAndPR(
+							ctx,
+							sandboxDir,
+							req.TaskID,
+							req.Title,
+							req.Description,
+							req.RepositoryURL,
+							req.BaseBranch,
+							diffStr,
+							authToken,
+							opts.PRCreator,
+							"Autonomous Pipeline Completed",
+						)
+						if prResp != nil && prErr == nil {
+							pullRequestURL = prResp.HTMLURL
+						}
+					}
+				} else {
 					status = "failed"
 				}
 			}
 
 			tracker.Set(&FactoryRunResponse{
-				RunID:     req.TaskID,
-				Status:    status,
-				Token:     token,
-				Outcome:   outcome,
-				Error:     errMsg,
-				UpdatedAt: now,
+				RunID:          req.TaskID,
+				Status:         status,
+				Token:          token,
+				Outcome:        outcome,
+				Error:          errMsg,
+				RepositoryURL:  req.RepositoryURL,
+				BaseBranch:     req.BaseBranch,
+				PullRequestURL: pullRequestURL,
+				CreatedAt:      now,
+				UpdatedAt:      time.Now().UTC(),
 			})
 
 			// Ensure pipeline_completed is broadcast if not emitted by runner
@@ -724,16 +1097,6 @@ func registerFactoryEndpointsWithTrackerAndOptions(
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(runs)
 	})
-
-	resolveSandboxDir := func(runID string) string {
-		if opts.SandboxBaseDir != "" {
-			return filepath.Join(opts.SandboxBaseDir, sanitizeIdentifier(runID))
-		}
-		if sdp, ok := runner.(SandboxDirProvider); ok {
-			return sdp.SandboxDir(runID)
-		}
-		return filepath.Join(os.TempDir(), "ov-sandboxes", sanitizeIdentifier(runID))
-	}
 
 	// GET /api/v1/factory/runs/:run_id and sandbox files endpoints
 	mux.HandleFunc("/api/v1/factory/runs/", func(w http.ResponseWriter, r *http.Request) {

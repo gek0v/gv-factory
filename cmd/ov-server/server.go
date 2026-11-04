@@ -13,6 +13,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -350,12 +352,16 @@ func NewServerMuxWithRunner(
 	factoryTracker := NewFactoryRunTracker()
 
 	var factoryMergeQueue agent.MergeQueue
+	var prCreator inbound.PullRequestCreator
 	if gw != nil {
 		factoryMergeQueue = merger.NewQueue(nil, gw, nil, nil, merger.Config{RepoPath: ".", BaseBranch: "main"})
 	}
 	if runner != nil {
 		if defRunner, ok := runner.(*defaultFactoryRunner); ok && defRunner.mergeQueue != nil {
 			factoryMergeQueue = defRunner.mergeQueue
+		}
+		if pcp, ok := runner.(PRCreatorProvider); ok {
+			prCreator = pcp.PRCreator()
 		}
 	}
 
@@ -513,6 +519,41 @@ func NewServerMuxWithRunner(
 						runRecord.Outcome.Success = true
 						runRecord.Outcome.MergeStatus = "enqueued"
 					}
+
+					if runRecord.RepositoryURL != "" {
+						sandboxDir := filepath.Join(os.TempDir(), "ov-sandboxes", sanitizeIdentifier(payload.RunID))
+						if sdp, ok := runner.(SandboxDirProvider); ok {
+							sandboxDir = sdp.SandboxDir(payload.RunID)
+						}
+						baseBranch := runRecord.BaseBranch
+						if baseBranch == "" {
+							baseBranch = "main"
+						}
+						diffStr := ""
+						title := payload.RunID
+						desc := ""
+						if runRecord.Outcome != nil && runRecord.Outcome.BuildResult != nil {
+							diffStr = runRecord.Outcome.BuildResult.GitDiff
+						}
+						authToken := extractAuthToken(nil, runRecord.RepositoryURL)
+						prResp, _ := handleRemoteRepoPushAndPR(
+							r.Context(),
+							sandboxDir,
+							payload.RunID,
+							title,
+							desc,
+							runRecord.RepositoryURL,
+							baseBranch,
+							diffStr,
+							authToken,
+							prCreator,
+							"Human-in-the-Loop Approved",
+						)
+						if prResp != nil {
+							runRecord.PullRequestURL = prResp.HTMLURL
+						}
+					}
+
 					factoryTracker.Set(runRecord)
 
 					if factoryMergeQueue != nil {
@@ -1038,6 +1079,7 @@ func NewServerMuxWithRunner(
 		MergeQueue:     factoryMergeQueue,
 		Tracker:        factoryTracker,
 		PendingTracker: pendingTracker,
+		PRCreator:      prCreator,
 	})
 
 	var handler http.Handler = corsMiddleware(mux)

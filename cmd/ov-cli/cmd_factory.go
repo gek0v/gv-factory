@@ -22,23 +22,28 @@ import (
 
 // FactoryRunRequest represents the payload accepted by POST /api/v1/factory/run.
 type FactoryRunRequest struct {
-	TaskID      string         `json:"task_id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Model       string         `json:"model,omitempty"`
-	Labels      []string       `json:"labels,omitempty"`
-	Constraints []string       `json:"constraints,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	TaskID        string         `json:"task_id"`
+	Title         string         `json:"title"`
+	Description   string         `json:"description,omitempty"`
+	Model         string         `json:"model,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	Constraints   []string       `json:"constraints,omitempty"`
+	RepositoryURL string         `json:"repository_url,omitempty"`
+	BaseBranch    string         `json:"base_branch,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
 }
 
 // FactoryRunResponse represents the status and outcome returned by factory endpoints.
 type FactoryRunResponse struct {
-	RunID     string                 `json:"run_id"`
-	Status    string                 `json:"status"` // "running", "completed", "failed", "gate_waiting"
-	Outcome   *agent.PipelineOutcome `json:"outcome,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-	CreatedAt time.Time              `json:"created_at,omitempty"`
-	UpdatedAt time.Time              `json:"updated_at,omitempty"`
+	RunID          string                 `json:"run_id"`
+	Status         string                 `json:"status"` // "running", "completed", "failed", "gate_waiting"
+	Outcome        *agent.PipelineOutcome `json:"outcome,omitempty"`
+	Error          string                 `json:"error,omitempty"`
+	RepositoryURL  string                 `json:"repository_url,omitempty"`
+	BaseBranch     string                 `json:"base_branch,omitempty"`
+	PullRequestURL string                 `json:"pull_request_url,omitempty"`
+	CreatedAt      time.Time              `json:"created_at,omitempty"`
+	UpdatedAt      time.Time              `json:"updated_at,omitempty"`
 }
 
 // ExecuteFactoryCommand handles `ov-cli factory <subcommand>`.
@@ -135,6 +140,8 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 		serverFlag      = fs.String("server", "", "Remote ov-server URL")
 		jsonFlag        = fs.Bool("json", false, "Output in JSON format")
 		taskIDFlag      = fs.String("task-id", "", "Explicit task ID (auto-generated if omitted)")
+		repoFlag        = fs.String("repo", "", "Remote git repository URL to clone and push to (e.g. 'https://github.com/org/repo.git')")
+		baseBranchFlag  = fs.String("base-branch", "", "Base git branch to branch off and target PR towards (default: 'main')")
 	)
 
 	valFlags := map[string]bool{
@@ -144,6 +151,8 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 		"constraints": true,
 		"server":      true,
 		"task-id":     true,
+		"repo":        true,
+		"base-branch": true,
 	}
 
 	reordered := reorderArgs(args, valFlags)
@@ -163,12 +172,14 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 	}
 
 	reqPayload := FactoryRunRequest{
-		TaskID:      taskID,
-		Title:       title,
-		Description: strings.TrimSpace(*descFlag),
-		Model:       strings.TrimSpace(*modelFlag),
-		Labels:      parseCommaSeparated(*labelsFlag),
-		Constraints: parseCommaSeparated(*constraintsFlag),
+		TaskID:        taskID,
+		Title:         title,
+		Description:   strings.TrimSpace(*descFlag),
+		Model:         strings.TrimSpace(*modelFlag),
+		Labels:        parseCommaSeparated(*labelsFlag),
+		Constraints:   parseCommaSeparated(*constraintsFlag),
+		RepositoryURL: strings.TrimSpace(*repoFlag),
+		BaseBranch:    strings.TrimSpace(*baseBranchFlag),
 	}
 
 	serverURL := resolveServerURL(*serverFlag)
@@ -273,6 +284,12 @@ func executeFactoryRun(ctx context.Context, args []string, out io.Writer, color 
 	fmt.Fprintf(out, "• Title:   %s\n", title)
 	if *descFlag != "" {
 		fmt.Fprintf(out, "• Desc:    %s\n", *descFlag)
+	}
+	if *repoFlag != "" {
+		fmt.Fprintf(out, "• Repo:    %s\n", *repoFlag)
+	}
+	if *baseBranchFlag != "" {
+		fmt.Fprintf(out, "• Branch:  %s\n", *baseBranchFlag)
 	}
 	if len(reqPayload.Labels) > 0 {
 		fmt.Fprintf(out, "• Labels:  %s\n", strings.Join(reqPayload.Labels, ", "))
@@ -468,6 +485,17 @@ func printStatusTable(out io.Writer, color *Colorizer, resp *FactoryRunResponse)
 
 	durationStr := computeDurationStr(resp)
 	fmt.Fprintf(out, "  Duration:         %s\n", durationStr)
+
+	if resp.RepositoryURL != "" {
+		branchInfo := ""
+		if resp.BaseBranch != "" {
+			branchInfo = fmt.Sprintf(" (%s)", resp.BaseBranch)
+		}
+		fmt.Fprintf(out, "  Repository:       %s%s\n", resp.RepositoryURL, branchInfo)
+	}
+	if resp.PullRequestURL != "" {
+		fmt.Fprintf(out, "  Pull Request:     %s\n", color.Bold(resp.PullRequestURL))
+	}
 
 	if !resp.CreatedAt.IsZero() {
 		fmt.Fprintf(out, "  Created At:       %s\n", resp.CreatedAt.Format(time.RFC3339))
