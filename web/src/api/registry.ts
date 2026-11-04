@@ -38,10 +38,11 @@ export interface AgentTemplate {
   role?: AgentRole | string;
   model: string;
   prompt?: string;
+  system_prompt?: string;
   skills?: string[];
   tools?: string[];
   plugins?: string[];
-  thinking?: string;
+  thinking?: string | boolean;
   temperature?: number;
   maxIterations?: number;
   createdAt?: string;
@@ -463,4 +464,70 @@ export async function createAgentTemplate(
   // Graceful fallback: persist to local session store
   localCustomTemplates = [newTemplate, ...localCustomTemplates.filter((t) => t.id !== newTemplate.id)];
   return newTemplate;
+}
+
+/**
+ * Delete an agent template via DELETE /api/v1/agent-templates/{id} or /api/v1/registry/templates/{id}
+ */
+export async function deleteAgentTemplate(
+  id: string,
+  options?: RegistryRequestOptions
+): Promise<boolean> {
+  if (!id || id.trim().length === 0) {
+    throw new Error('Template id is required');
+  }
+
+  const cleanId = id.trim();
+  const fetchFn = options?.customFetch || globalThis.fetch;
+  const baseUrl = options?.baseUrl ? options.baseUrl.replace(/\/+$/, '') : '';
+  const url = `${baseUrl}/api/v1/agent-templates/${encodeURIComponent(cleanId)}`;
+
+  try {
+    const res = await fetchFn(url, {
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (res.ok) {
+      localCustomTemplates = localCustomTemplates.filter((t) => t.id !== cleanId);
+      return true;
+    } else if (res.status === 404) {
+      // Also try alternative endpoint /api/v1/registry/templates/{id} if needed
+      const altUrl = `${baseUrl}/api/v1/registry/templates/${encodeURIComponent(cleanId)}`;
+      try {
+        const altRes = await fetchFn(altUrl, {
+          method: 'DELETE',
+          headers: { Accept: 'application/json' },
+        });
+        if (altRes.ok) {
+          localCustomTemplates = localCustomTemplates.filter((t) => t.id !== cleanId);
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+      if (options?.fallbackToDefaults === false) {
+        throw new Error(`Failed to delete agent template (status ${res.status})`);
+      }
+    } else if (options?.fallbackToDefaults === false) {
+      throw new Error(`Failed to delete agent template (status ${res.status})`);
+    }
+  } catch (err) {
+    if (options?.fallbackToDefaults === false) {
+      throw err;
+    }
+  }
+
+  // Graceful fallback: remove from local session store
+  localCustomTemplates = localCustomTemplates.filter((t) => t.id !== cleanId);
+  return true;
+}
+
+/**
+ * Reset local custom templates cache (primarily for test isolation)
+ */
+export function _resetLocalCustomTemplates(): void {
+  localCustomTemplates = [];
 }

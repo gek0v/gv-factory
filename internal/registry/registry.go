@@ -6,6 +6,7 @@ package registry
 import (
 	"context"
 	"os"
+	"path/filepath"
 )
 
 // ManagerOptions configures roots and storage for the unified registry manager.
@@ -34,6 +35,11 @@ func NewManager(opts ManagerOptions) *Manager {
 		}
 	}
 
+	tmplDir := opts.TemplatesDir
+	if tmplDir == "" {
+		tmplDir = filepath.Join(wsRoot, ".agents", "templates")
+	}
+
 	return &Manager{
 		Skills: NewSkillsRegistryWithOptions(SkillsRegistryOptions{
 			WorkspaceRoot:   wsRoot,
@@ -44,7 +50,7 @@ func NewManager(opts ManagerOptions) *Manager {
 			WorkspaceRoot:   wsRoot,
 			IncludeUserHome: opts.IncludeUserHome,
 		}),
-		Templates: NewTemplateRegistry(opts.TemplatesDir),
+		Templates: NewTemplateRegistry(tmplDir),
 	}
 }
 
@@ -81,4 +87,14 @@ func (m *Manager) SaveTemplate(tpl AgentTemplate) error {
 // DeleteTemplate removes an agent template by ID.
 func (m *Manager) DeleteTemplate(id string) error {
 	return m.Templates.Delete(id)
+}
+
+// RegisterCustomTemplate creates or updates an agent template in the manager.
+func (m *Manager) RegisterCustomTemplate(tpl AgentTemplate) error {
+	return m.Templates.RegisterCustomTemplate(tpl)
+}
+
+// DeleteCustomTemplate removes an agent template by ID.
+func (m *Manager) DeleteCustomTemplate(id string) error {
+	return m.Templates.DeleteCustomTemplate(id)
 }

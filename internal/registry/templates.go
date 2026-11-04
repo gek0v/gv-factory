@@ -16,6 +16,7 @@ import (
 type AgentTemplate struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
 	Role         string   `json:"role"`
 	Model        string   `json:"model"`
 	Thinking     bool     `json:"thinking"`
@@ -29,6 +30,9 @@ type AgentTemplate struct {
 func (t *AgentTemplate) Validate() error {
 	if strings.TrimSpace(t.ID) == "" {
 		return fmt.Errorf("template id is required")
+	}
+	if strings.Contains(t.ID, "..") || strings.ContainsAny(t.ID, "/\\") {
+		return fmt.Errorf("invalid template id %q: path traversal characters not allowed", t.ID)
 	}
 	if strings.TrimSpace(t.Name) == "" {
 		return fmt.Errorf("template name is required")
@@ -49,6 +53,67 @@ func (t *AgentTemplate) Validate() error {
 		t.Plugins = make([]string, 0)
 	}
 	return nil
+}
+
+// DefaultCustomTemplatesDir points to the default location for custom templates.
+const DefaultCustomTemplatesDir = ".agents/templates"
+
+var (
+	customTemplatesDir = filepath.Join(".agents", "templates")
+	customTemplatesMu  sync.RWMutex
+)
+
+// GetCustomTemplatesDir returns the active directory for custom template persistence.
+func GetCustomTemplatesDir() string {
+	customTemplatesMu.RLock()
+	defer customTemplatesMu.RUnlock()
+	return customTemplatesDir
+}
+
+// SetCustomTemplatesDir sets the directory used for custom template persistence.
+func SetCustomTemplatesDir(dir string) {
+	customTemplatesMu.Lock()
+	defer customTemplatesMu.Unlock()
+	customTemplatesDir = dir
+}
+
+// RegisterCustomTemplate validates and persists an agent template to .agents/templates/<id>.json.
+func RegisterCustomTemplate(tmpl AgentTemplate) error {
+	if err := tmpl.Validate(); err != nil {
+		return err
+	}
+
+	dir := GetCustomTemplatesDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create custom templates directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(tmpl, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal template: %w", err)
+	}
+
+	filePath := filepath.Join(dir, fmt.Sprintf("%s.json", tmpl.ID))
+	return os.WriteFile(filePath, data, 0o644)
+}
+
+// DeleteCustomTemplate deletes an agent template file from .agents/templates/<id>.json.
+func DeleteCustomTemplate(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("template id is required")
+	}
+	if strings.Contains(id, "..") || strings.ContainsAny(id, "/\\") {
+		return fmt.Errorf("invalid template id %q: path traversal characters not allowed", id)
+	}
+
+	dir := GetCustomTemplatesDir()
+	filePath := filepath.Join(dir, fmt.Sprintf("%s.json", id))
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return fmt.Errorf("custom agent template %q not found", id)
+	}
+
+	return os.Remove(filePath)
 }
 
 // TemplateRegistry manages persistent and in-memory agent templates.
@@ -118,8 +183,22 @@ func (r *TemplateRegistry) Save(tpl AgentTemplate) error {
 	return nil
 }
 
+// RegisterCustomTemplate validates and stores a custom agent template.
+func (r *TemplateRegistry) RegisterCustomTemplate(tpl AgentTemplate) error {
+	return r.Save(tpl)
+}
+
+// DeleteCustomTemplate removes a template by ID from memory and disk.
+func (r *TemplateRegistry) DeleteCustomTemplate(id string) error {
+	return r.Delete(id)
+}
+
 // Delete removes a template by ID from memory and disk.
 func (r *TemplateRegistry) Delete(id string) error {
+	if strings.Contains(id, "..") || strings.ContainsAny(id, "/\\") {
+		return fmt.Errorf("invalid template id %q: path traversal characters not allowed", id)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

@@ -9,6 +9,7 @@ import {
   DEFAULT_AGENT_TEMPLATES,
   type AgentTemplate,
 } from '../../api/registry';
+import { NewTemplateModal } from './NewTemplateModal';
 import type { AgentNodeData } from '../../types/flow';
 import {
   WebhookIcon,
@@ -69,6 +70,18 @@ const getPaletteIcon = (iconName: string) => {
 export const NodePalette: React.FC = () => {
   const addNode = useFactoryFlowStore((state) => state.addNode);
   const [templates, setTemplates] = useState<AgentTemplate[]>(DEFAULT_AGENT_TEMPLATES);
+  const [isNewTemplateModalOpen, setIsNewTemplateModalOpen] = useState(false);
+
+  const reloadTemplates = async () => {
+    try {
+      const tpls = await fetchAgentTemplates();
+      if (tpls && tpls.length > 0) {
+        setTemplates(tpls);
+      }
+    } catch {
+      // Fallback
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -107,7 +120,7 @@ export const NodePalette: React.FC = () => {
       skills: tpl.skills ? [...tpl.skills] : [],
       tools: tpl.tools ? [...tpl.tools] : [],
       plugins: tpl.plugins ? [...tpl.plugins] : [],
-      thinking: tpl.thinking || 'off',
+      thinking: typeof tpl.thinking === 'string' ? tpl.thinking : (tpl.thinking ? 'high' : 'off'),
       prompt: tpl.prompt || '',
       pluginTag: tpl.plugins?.[0] || 'extism://plugins/tdd-runner.wasm',
       status: 'pending',
@@ -142,6 +155,16 @@ export const NodePalette: React.FC = () => {
         <div className="palette-section palette-section-templates">
           <div className="palette-section-title">
             <span>Agent Templates</span>
+            <button
+              type="button"
+              className="palette-btn-new-template"
+              onClick={() => setIsNewTemplateModalOpen(true)}
+              title="Design new custom agent template"
+              data-testid="btn-new-template"
+            >
+              <PlusIcon size={11} />
+              <span>+ New</span>
+            </button>
             <span className="palette-section-count">{templates.length}</span>
           </div>
           <div className="palette-grid">
@@ -205,6 +228,16 @@ export const NodePalette: React.FC = () => {
           </div>
         ))}
       </div>
+
+      {/* New Agent Template Designer Modal */}
+      <NewTemplateModal
+        isOpen={isNewTemplateModalOpen}
+        onClose={() => setIsNewTemplateModalOpen(false)}
+        onTemplateCreated={(newTpl) => {
+          setTemplates((prev) => [newTpl, ...prev.filter((t) => t.id !== newTpl.id)]);
+          void reloadTemplates();
+        }}
+      />
     </aside>
   );
 };
