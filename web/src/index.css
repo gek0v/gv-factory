@@ -5338,6 +5338,10 @@ body,
   flex: 1;
 }
 
+.flex-2 {
+  flex: 2;
+}
+
 .form-label {
   font-size: 0.78rem;
   font-weight: 500;
@@ -6075,6 +6079,49 @@ body,
   margin: 0.2rem 0 0 0;
   font-size: 0.78rem;
   opacity: 0.9;
+}
+
+.decision-remote-repo-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.45rem;
+}
+
+.decision-repo-link,
+.decision-pr-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.76rem;
+  font-weight: 500;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  text-decoration: none;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  transition: all 0.15s ease;
+}
+
+.decision-repo-link:hover,
+.decision-pr-link:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: #38bdf8;
+  color: #7dd3fc;
+  text-decoration: underline;
+}
+
+.decision-pr-link {
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #c084fc;
+}
+
+.decision-pr-link:hover {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: #c084fc;
+  color: #e9d5ff;
 }
 
 .decision-badge-approved {

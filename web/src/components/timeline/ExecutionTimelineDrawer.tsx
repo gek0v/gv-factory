@@ -53,6 +53,11 @@ export interface DecisionStagePayload {
   diff?: string;
   reason?: string;
   status?: string;
+  repositoryUrl?: string;
+  repository_url?: string;
+  pullRequestUrl?: string;
+  pull_request_url?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TimelineStages {
@@ -123,6 +128,27 @@ export function formatDurationMs(ms?: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
+export function normalizeRepoWebUrl(url?: string): string {
+  if (!url) return '';
+  let clean = url.trim().replace(/\.git\/?$/, '');
+  if (clean.startsWith('git@')) {
+    clean = clean.replace(/^git@([^:]+):/, 'https://$1/');
+  }
+  return clean;
+}
+
+export function getPullRequestUrl(repoUrl?: string, explicitPrUrl?: string): string {
+  if (explicitPrUrl && explicitPrUrl.trim().length > 0) {
+    return explicitPrUrl.trim();
+  }
+  const cleanRepo = normalizeRepoWebUrl(repoUrl);
+  if (!cleanRepo) return '';
+  if (cleanRepo.includes('gitlab')) {
+    return `${cleanRepo}/-/merge_requests`;
+  }
+  return `${cleanRepo}/pulls`;
+}
+
 export function extractTimelineStages(
   events: Array<{ stage: string; timestamp: string; payload: any }>
 ): TimelineStages {
@@ -169,6 +195,23 @@ export function extractTimelineStages(
         findings: payload.findings || [],
       };
     } else if (event.stage === 'pipeline_completed' || event.stage === 'gate_waiting') {
+      const meta =
+        payload.metadata && typeof payload.metadata === 'object'
+          ? (payload.metadata as Record<string, unknown>)
+          : {};
+      const repoUrl =
+        (meta.repository_url as string | undefined) ||
+        (meta.repositoryUrl as string | undefined) ||
+        (payload.repository_url as string | undefined) ||
+        (payload.repositoryUrl as string | undefined);
+      const prUrl =
+        (meta.pull_request_url as string | undefined) ||
+        (meta.pullRequestUrl as string | undefined) ||
+        (meta.pr_url as string | undefined) ||
+        (payload.pull_request_url as string | undefined) ||
+        (payload.pullRequestUrl as string | undefined) ||
+        (payload.pr_url as string | undefined);
+
       result.decision = {
         decision: payload.decision || (event.stage === 'gate_waiting' ? 'HUMAN_GATE' : 'APPROVED'),
         totalDurationMs: payload.totalDurationMs ?? payload.duration_ms,
@@ -179,6 +222,11 @@ export function extractTimelineStages(
         diff: payload.diff,
         reason: payload.reason,
         status: payload.status || (event.stage === 'gate_waiting' ? 'gate_waiting' : undefined),
+        repositoryUrl: repoUrl,
+        repository_url: repoUrl,
+        pullRequestUrl: prUrl,
+        pull_request_url: prUrl,
+        metadata: meta,
       };
       if (event.stage === 'gate_waiting' && payload.diff && (!result.build || !result.build.diff)) {
         if (!result.build) {
@@ -278,6 +326,71 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
     (executionEvents.find((e) => e.payload?.run_id || e.payload?.runId)?.payload?.run_id ||
      executionEvents.find((e) => e.payload?.run_id || e.payload?.runId)?.payload?.runId) ||
     'run-active';
+
+  const effectiveRepoUrl: string | undefined =
+    stages.decision?.repositoryUrl ||
+    stages.decision?.repository_url ||
+    (stages.decision?.metadata?.repository_url as string | undefined) ||
+    (stages.decision?.metadata?.repositoryUrl as string | undefined) ||
+    store.activeRunOutcome?.repository_url ||
+    (store.activeRunOutcome?.metadata?.repository_url as string | undefined) ||
+    (store.activeRunOutcome?.metadata?.repositoryUrl as string | undefined) ||
+    (executionEvents.find(
+      (e) =>
+        e.payload?.repository_url ||
+        e.payload?.repositoryUrl ||
+        e.payload?.metadata?.repository_url ||
+        e.payload?.metadata?.repositoryUrl
+    )?.payload?.metadata?.repository_url as string | undefined) ||
+    (executionEvents.find(
+      (e) =>
+        e.payload?.repository_url ||
+        e.payload?.repositoryUrl ||
+        e.payload?.metadata?.repository_url ||
+        e.payload?.metadata?.repositoryUrl
+    )?.payload?.repository_url as string | undefined) ||
+    (executionEvents.find(
+      (e) =>
+        e.payload?.repository_url ||
+        e.payload?.repositoryUrl ||
+        e.payload?.metadata?.repository_url ||
+        e.payload?.metadata?.repositoryUrl
+    )?.payload?.repositoryUrl as string | undefined);
+
+  const rawPrUrl: string | undefined =
+    stages.decision?.pullRequestUrl ||
+    stages.decision?.pull_request_url ||
+    (stages.decision?.metadata?.pull_request_url as string | undefined) ||
+    (stages.decision?.metadata?.pr_url as string | undefined) ||
+    store.activeRunOutcome?.pull_request_url ||
+    (store.activeRunOutcome?.metadata?.pull_request_url as string | undefined) ||
+    (store.activeRunOutcome?.metadata?.pr_url as string | undefined) ||
+    (executionEvents.find(
+      (e) =>
+        e.payload?.pull_request_url ||
+        e.payload?.pullRequestUrl ||
+        e.payload?.pr_url ||
+        e.payload?.metadata?.pull_request_url ||
+        e.payload?.metadata?.pr_url
+    )?.payload?.metadata?.pull_request_url as string | undefined) ||
+    (executionEvents.find(
+      (e) =>
+        e.payload?.pull_request_url ||
+        e.payload?.pullRequestUrl ||
+        e.payload?.pr_url ||
+        e.payload?.metadata?.pull_request_url ||
+        e.payload?.metadata?.pr_url
+    )?.payload?.pull_request_url as string | undefined) ||
+    (executionEvents.find(
+      (e) =>
+        e.payload?.pull_request_url ||
+        e.payload?.pullRequestUrl ||
+        e.payload?.pr_url ||
+        e.payload?.metadata?.pull_request_url ||
+        e.payload?.metadata?.pr_url
+    )?.payload?.pr_url as string | undefined);
+
+  const effectivePrUrl = getPullRequestUrl(effectiveRepoUrl, rawPrUrl);
 
   const handleOpenFileInspector = (filePath: string) => {
     setSelectedFileForInspection(filePath);
@@ -630,6 +743,30 @@ export const ExecutionTimelineDrawer: React.FC<ExecutionTimelineDrawerProps> = (
                         <span className="decision-title">{stages.decision.decision}</span>
                         {stages.decision.summary && (
                           <p className="decision-summary">{stages.decision.summary}</p>
+                        )}
+                        {effectiveRepoUrl && (
+                          <div className="decision-remote-repo-links" data-testid="decision-remote-repo-links">
+                            <a
+                              href={normalizeRepoWebUrl(effectiveRepoUrl)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="decision-repo-link"
+                              title="Open Remote Repository"
+                            >
+                              <span className="link-icon">📦</span>
+                              <span>Repository: {effectiveRepoUrl}</span>
+                            </a>
+                            <a
+                              href={effectivePrUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="decision-pr-link"
+                              title="Open Pull Request"
+                            >
+                              <span className="link-icon">🔀</span>
+                              <span>Pull Request</span>
+                            </a>
+                          </div>
                         )}
                       </div>
                     </div>

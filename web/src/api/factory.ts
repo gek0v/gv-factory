@@ -18,6 +18,8 @@ export interface FactoryRunRequest {
   constraints?: string[] | string;
   template_key?: string;
   templateKey?: string;
+  repository_url?: string;
+  base_branch?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -44,6 +46,10 @@ export interface FactoryRunOutcome {
   error?: string;
   logs?: string[];
   results?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  repository_url?: string;
+  base_branch?: string;
+  pull_request_url?: string;
   completed_at?: string;
 }
 

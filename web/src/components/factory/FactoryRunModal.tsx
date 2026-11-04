@@ -46,6 +46,8 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
   const [customModel, setCustomModel] = useState('');
   const [labels, setLabels] = useState('');
   const [constraints, setConstraints] = useState('');
+  const [repositoryUrl, setRepositoryUrl] = useState('');
+  const [baseBranch, setBaseBranch] = useState('main');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successResponse, setSuccessResponse] = useState<FactoryRunResponse | null>(null);
@@ -76,6 +78,8 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
       const parsedLabels = parseCommaOrNewlineSeparated(labels);
       const parsedConstraints = parseCommaOrNewlineSeparated(constraints);
       const effectiveModel = model === 'custom' ? customModel.trim() : model.trim();
+      const trimmedRepo = repositoryUrl.trim();
+      const trimmedBranch = baseBranch.trim() || 'main';
 
       const response = await dispatchFactoryRun({
         title: title.trim(),
@@ -83,6 +87,8 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
         model: effectiveModel || undefined,
         labels: parsedLabels.length > 0 ? parsedLabels : undefined,
         constraints: parsedConstraints.length > 0 ? parsedConstraints : undefined,
+        repository_url: trimmedRepo || undefined,
+        base_branch: trimmedBranch || undefined,
       });
 
       setSuccessResponse(response);
@@ -96,6 +102,12 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
         title: title.trim(),
         description: description.trim() || undefined,
         approval_token: response.approval_token || response.approvalToken,
+        repository_url: trimmedRepo || undefined,
+        base_branch: trimmedBranch || undefined,
+        metadata: {
+          ...(trimmedRepo ? { repository_url: trimmedRepo } : {}),
+          ...(trimmedBranch ? { base_branch: trimmedBranch } : {}),
+        },
       });
       setActivePipelineStage(stage);
 
@@ -107,6 +119,8 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
         setCustomModel('');
         setLabels('');
         setConstraints('');
+        setRepositoryUrl('');
+        setBaseBranch('main');
         setSuccessResponse(null);
       }, 1200);
     } catch (err) {
@@ -255,6 +269,38 @@ export const FactoryRunModal: React.FC<FactoryRunModalProps> = ({ isOpen, onClos
                 disabled={isSubmitting}
               />
             )}
+          </div>
+
+          <div className="form-row">
+            <div className="form-field-group flex-2">
+              <label htmlFor="repository-url" className="form-label">
+                Repository URL (GitHub/GitLab)
+              </label>
+              <input
+                id="repository-url"
+                type="text"
+                className="form-input"
+                placeholder="https://github.com/org/repo.git"
+                value={repositoryUrl}
+                onChange={(e) => setRepositoryUrl(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
+
+            <div className="form-field-group flex-1">
+              <label htmlFor="base-branch" className="form-label">
+                Base Branch
+              </label>
+              <input
+                id="base-branch"
+                type="text"
+                className="form-input"
+                placeholder="main"
+                value={baseBranch}
+                onChange={(e) => setBaseBranch(e.target.value)}
+                disabled={isSubmitting}
+              />
+            </div>
           </div>
 
           <div className="form-row">

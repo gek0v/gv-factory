@@ -96,6 +96,19 @@ describe('FactoryRunModal Component & Helpers', () => {
       expect(modelValues).toContain('custom');
     });
 
+    it('renders repository URL and base branch input fields with defaults', () => {
+      useFactoryFlowStore.setState({ showFactoryRunModal: true });
+      const html = renderToStaticMarkup(React.createElement(FactoryRunModal));
+
+      expect(html).toContain('Repository URL (GitHub/GitLab)');
+      expect(html).toContain('placeholder="https://github.com/org/repo.git"');
+      expect(html).toContain('id="repository-url"');
+      expect(html).toContain('Base Branch');
+      expect(html).toContain('id="base-branch"');
+      expect(html).toContain('placeholder="main"');
+      expect(html).toContain('value="main"');
+    });
+
     it('contains close button and cancel button', () => {
       useFactoryFlowStore.setState({ showFactoryRunModal: true });
       const html = renderToStaticMarkup(React.createElement(FactoryRunModal));
@@ -180,6 +193,27 @@ describe('FactoryRunModal Component & Helpers', () => {
         model: 'deepseek-chat',
       });
       expect(res.run_id).toBe('run-auton-501');
+    });
+
+    it('dispatches factory run with repository_url and base_branch', async () => {
+      const dispatchSpy = vi.spyOn(factoryApi, 'dispatchFactoryRun').mockResolvedValue({
+        run_id: 'run-remote-repo-999',
+        status: 'queued',
+        stage: 'spec_generated',
+      });
+
+      const res = await factoryApi.dispatchFactoryRun({
+        title: 'Run with remote repository',
+        repository_url: 'https://github.com/gv-factory/gv-factory.git',
+        base_branch: 'develop',
+      });
+
+      expect(dispatchSpy).toHaveBeenCalledWith({
+        title: 'Run with remote repository',
+        repository_url: 'https://github.com/gv-factory/gv-factory.git',
+        base_branch: 'develop',
+      });
+      expect(res.run_id).toBe('run-remote-repo-999');
     });
 
     it('handles dispatch failure and displays error feedback in UI', async () => {

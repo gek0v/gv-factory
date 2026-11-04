@@ -64,6 +64,39 @@ describe('Factory API Client (web/src/api/factory.ts)', () => {
       expect(result).toEqual(mockResponse);
     });
 
+    it('sends POST /api/v1/factory/run with repository_url and base_branch', async () => {
+      const mockResponse: FactoryRunResponse = {
+        run_id: 'run-remote-repo-1',
+        status: 'queued',
+        stage: 'idle',
+      };
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 201,
+        json: async () => mockResponse,
+      });
+      globalThis.fetch = fetchMock;
+
+      const request: FactoryRunRequest = {
+        title: 'Add remote git sync',
+        repository_url: 'https://github.com/org/repo.git',
+        base_branch: 'develop',
+      };
+
+      const result = await dispatchFactoryRun(request);
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/v1/factory/run', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(request),
+      });
+      expect(result.run_id).toBe('run-remote-repo-1');
+    });
+
     it('sends POST /api/v1/factory/run with specific target model', async () => {
       const mockResponse: FactoryRunResponse = {
         run_id: 'run-model-test-1',
