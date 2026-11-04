@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/connectors/llm"
+	"github.com/gv-factory/gv-factory/internal/sandbox"
 )
 
 // Standard domain errors for Builder agent operations.
@@ -131,9 +132,10 @@ type BuilderConfig struct {
 	CodeSynthesizer CodeSynthesizer
 	MaxIterations   int
 	// TestCommand specifies the test runner command and arguments.
-	// Defaults to []string{"go", "test", "-cover", "./..."}.
+	// Defaults to Stack.TestCommand or []string{"go", "test", "-cover", "./..."}.
 	TestCommand     []string
 	FormatCommand   []string
+	Stack           sandbox.StackInfo
 }
 
 // Builder orchestrates the Red-Green-Refactor development loop within an isolated workspace.
@@ -146,6 +148,7 @@ type Builder struct {
 	MaxIterations   int
 	TestCommand     []string
 	FormatCommand   []string
+	Stack           sandbox.StackInfo
 	mu              sync.RWMutex
 }
 
@@ -161,14 +164,33 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 		executor = &DefaultCommandRunner{}
 	}
 
+	stack := cfg.Stack
+	if stack.Language == "" {
+		if cfg.WorkspaceDir != "" {
+			stack = sandbox.DetectStack(cfg.WorkspaceDir)
+		} else {
+			stack = sandbox.DefaultGoStack()
+		}
+	}
+
 	testCmd := cfg.TestCommand
 	if len(testCmd) == 0 {
-		testCmd = []string{"go", "test", "-cover", "./..."}
+		if cfg.Stack.Language != "" && len(cfg.Stack.TestCommand) > 0 {
+			testCmd = cfg.Stack.TestCommand
+		} else if cfg.WorkspaceDir != "" && stack.Language != "go" {
+			testCmd = stack.TestCommand
+		} else {
+			testCmd = []string{"go", "test", "-cover", "./..."}
+		}
 	}
 
 	formatCmd := cfg.FormatCommand
 	if len(formatCmd) == 0 {
-		formatCmd = []string{"go", "fmt", "./..."}
+		if len(stack.FormatCommand) > 0 {
+			formatCmd = stack.FormatCommand
+		} else {
+			formatCmd = []string{"go", "fmt", "./..."}
+		}
 	}
 
 	synth := cfg.CodeSynthesizer
@@ -176,6 +198,7 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 		synth = &defaultCodeSynthesizer{
 			llmClient: cfg.LLMClient,
 			model:     cfg.Model,
+			stack:     stack,
 		}
 	}
 
@@ -188,7 +211,15 @@ func NewBuilder(cfg BuilderConfig) *Builder {
 		MaxIterations:   maxIterations,
 		TestCommand:     testCmd,
 		FormatCommand:   formatCmd,
+		Stack:           stack,
 	}
+}
+
+// StackInfo returns the configured or detected stack metadata for the Builder.
+func (b *Builder) StackInfo() sandbox.StackInfo {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.Stack
 }
 
 // ExecuteTask executes the Red-Green-Refactor cycle for an atomic task and its test cases.
@@ -439,6 +470,7 @@ func sanitizeIdentifier(s string) string {
 type defaultCodeSynthesizer struct {
 	llmClient llm.LLMClient
 	model     string
+	stack     sandbox.StackInfo
 }
 
 func (s *defaultCodeSynthesizer) GenerateTest(ctx context.Context, task AtomicTask, tc TestCase) (GeneratedFile, error) {
@@ -454,8 +486,73 @@ func (s *defaultCodeSynthesizer) GenerateTest(ctx context.Context, task AtomicTa
 	if id == "" {
 		id = sanitizeIdentifier(task.ID)
 	}
-	fileName := strings.ToLower(id) + "_test.go"
-	content := fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
+
+	lang := strings.ToLower(s.stack.Language)
+	var fileName string
+	var content string
+
+	switch lang {
+	case "typescript", "javascript", "node":
+		ext := s.stack.TestExtension
+		if ext == "" {
+			if lang == "javascript" {
+				ext = ".test.js"
+			} else {
+				ext = ".test.ts"
+			}
+		}
+		fileName = strings.ToLower(id) + ext
+		content = fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+import { describe, it, expect } from 'vitest';
+
+describe('%s', () => {
+  it('satisfies %s in Red phase', () => {
+    // Red phase failing test assertion
+    expect(false).toBe(true);
+  });
+});
+`, tc.Name, task.Title)
+
+	case "python":
+		testID := strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(id), "test_"), "test")
+		if testID == "" {
+			testID = strings.ToLower(sanitizeIdentifier(task.ID))
+		}
+		if testID == "" {
+			testID = "case"
+		}
+		fileName = "test_" + testID + ".py"
+		content = fmt.Sprintf(`# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+import pytest
+
+def test_%s():
+    """Red phase failing test for %s"""
+    assert False, "red phase failing test"
+`, testID, task.Title)
+
+	case "rust":
+		ext := s.stack.TestExtension
+		if ext == "" {
+			ext = "_test.rs"
+		}
+		fileName = strings.ToLower(id) + ext
+		content = fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+#[test]
+fn test_%s() {
+    // Red phase failing test assertion
+    panic!("red phase failing test for %s");
+}
+`, strings.ToLower(id), task.Title)
+
+	default: // "go" and fallback
+		fileName = strings.ToLower(id) + "_test.go"
+		content = fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
 package main
@@ -467,6 +564,7 @@ func %s(t *testing.T) {
 	t.Fatalf("red phase failing test for %s")
 }
 `, tc.Name, task.Title)
+	}
 
 	return GeneratedFile{
 		Path:    fileName,
@@ -487,8 +585,64 @@ func (s *defaultCodeSynthesizer) GenerateImplementation(ctx context.Context, tas
 	if id == "" {
 		id = sanitizeIdentifier(task.ID)
 	}
-	fileName := strings.ToLower(id) + ".go"
-	content := fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
+
+	lang := strings.ToLower(s.stack.Language)
+	var fileName string
+	var content string
+
+	switch lang {
+	case "typescript", "javascript", "node":
+		ext := s.stack.SourceExtension
+		if ext == "" {
+			if lang == "javascript" {
+				ext = ".js"
+			} else {
+				ext = ".ts"
+			}
+		}
+		fileName = strings.ToLower(id) + ext
+		content = fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+/**
+ * %s satisfies task %s
+ */
+export function %s(): boolean {
+  return true;
+}
+`, tc.Name, task.ID, id)
+
+	case "python":
+		implID := strings.TrimPrefix(strings.TrimPrefix(strings.ToLower(id), "test_"), "test")
+		if implID == "" {
+			implID = strings.ToLower(sanitizeIdentifier(task.ID))
+		}
+		if implID == "" {
+			implID = "module"
+		}
+		fileName = implID + ".py"
+		content = fmt.Sprintf(`# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+"""%s satisfies task %s"""
+def %s() -> bool:
+    return True
+`, tc.Name, task.ID, implID)
+
+	case "rust":
+		fileName = strings.ToLower(id) + ".rs"
+		content = fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 gv-factory contributors
+
+/// %s satisfies task %s
+pub fn %s() -> bool {
+    true
+}
+`, tc.Name, task.ID, id)
+
+	default: // "go"
+		fileName = strings.ToLower(id) + ".go"
+		content = fmt.Sprintf(`// SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 gv-factory contributors
 
 package main
@@ -498,6 +652,7 @@ func %s() bool {
 	return true
 }
 `, tc.Name, task.ID, id)
+	}
 
 	return GeneratedFile{
 		Path:    fileName,
@@ -518,35 +673,51 @@ func (s *defaultCodeSynthesizer) RefactorCode(ctx context.Context, task AtomicTa
 var markdownJSONRegex = regexp.MustCompile("(?is)```(?:json)?\\s*(.*?)\\s*```")
 
 func (s *defaultCodeSynthesizer) synthesizeWithLLM(ctx context.Context, kind string, task AtomicTask, tc TestCase, failureOutput string, iteration int) (GeneratedFile, error) {
+	lang := s.stack.Language
+	if lang == "" {
+		lang = "go"
+	}
+	testRunner := strings.Join(s.stack.TestCommand, " ")
+	if testRunner == "" {
+		testRunner = "test runner"
+	}
+	srcExt := s.stack.SourceExtension
+	if srcExt == "" {
+		srcExt = ".go"
+	}
+	testExt := s.stack.TestExtension
+	if testExt == "" {
+		testExt = "_test.go"
+	}
+
 	var instructions string
 	switch kind {
 	case "test":
-		instructions = `Generate a complete, valid, and compilable Go test file (*_test.go).
-- Must declare the appropriate Go package name.
-- Must import "testing" and any required packages.
-- Must include REAL test assertions (e.g. using t.Errorf, t.Fatalf, t.Run) verifying the required behavior and expected outcome.
+		instructions = fmt.Sprintf(`Generate a complete, valid, and executable %s test file (*%s) runnable with '%s'.
+- Must declare the appropriate package name, modules, and imports for %s.
+- Must include REAL test assertions verifying the required behavior and expected outcome.
 - Do NOT generate empty test functions, dummy placeholders, or tests without assertions.
 - Include the SPDX license header:
   // SPDX-License-Identifier: Apache-2.0
-  // SPDX-FileCopyrightText: 2026 gv-factory contributors`
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors`, lang, testExt, testRunner, lang)
 	case "implementation":
-		instructions = `Generate a complete, valid, and compilable Go implementation file (*.go).
-- Must declare the appropriate Go package name matching the tests.
+		instructions = fmt.Sprintf(`Generate a complete, valid, and compilable %s implementation file (*%s).
+- Must declare the appropriate package name and exports matching the tests.
 - Must fully implement the functions, types, and methods required to satisfy the task and pass tests.
 - Address any previous failure output or compilation errors reported below.
 - Do NOT use placeholders, "TODO", or unimplemented stubs.
 - Include the SPDX license header:
   // SPDX-License-Identifier: Apache-2.0
-  // SPDX-FileCopyrightText: 2026 gv-factory contributors`
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors`, lang, srcExt)
 	case "refactor":
-		instructions = `Generate a complete, valid, and compilable refactored Go file (*.go).
+		instructions = fmt.Sprintf(`Generate a complete, valid, and idiomatic refactored %s file (*%s).
 - Preserve all existing public contracts and behavior so all tests continue to pass.
 - Improve code quality, idiomatic patterns, readability, and performance.
 - Include the SPDX license header:
   // SPDX-License-Identifier: Apache-2.0
-  // SPDX-FileCopyrightText: 2026 gv-factory contributors`
+  // SPDX-FileCopyrightText: 2026 gv-factory contributors`, lang, srcExt)
 	default:
-		instructions = `Generate complete, valid, and compilable Go code with proper package declarations and full implementation.`
+		instructions = fmt.Sprintf(`Generate complete, valid, and compilable %s code with full implementation.`, lang)
 	}
 
 	prompt := fmt.Sprintf(`You are an autonomous TDD expert. Generate a %s file for:
@@ -582,7 +753,7 @@ Respond ONLY with a valid JSON object with keys "path" (relative file path) and 
 	req := &llm.ChatRequest{
 		Model: model,
 		Messages: []llm.ChatMessage{
-			llm.NewSystemMessage("You are an autonomous TDD code generation agent in gv-factory. You produce complete, valid, compilable Go code with proper package declarations, real test assertions, and strict REUSE/SPDX licensing. Output only a valid JSON object."),
+			llm.NewSystemMessage(fmt.Sprintf("You are an autonomous TDD code generation agent in gv-factory specialized in %s. You produce complete, valid, idiomatic code with real test assertions and strict REUSE/SPDX licensing. Output only a valid JSON object.", lang)),
 			llm.NewUserMessage(prompt),
 		},
 	}

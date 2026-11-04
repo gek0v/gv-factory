@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gv-factory/gv-factory/internal/agent"
+	"github.com/gv-factory/gv-factory/internal/sandbox"
 )
 
 var (
@@ -78,23 +79,54 @@ You MUST output your final answer as a single valid JSON object matching the Spe
 
 // DefaultBuilderTemplate returns the standard agent configuration for Red-Green-Refactor builds.
 func DefaultBuilderTemplate() AgentTemplate {
-	return AgentTemplate{
-		Name:     "Builder",
-		Role:     "TDD Autonomous Engineer",
-		Model:    "",
-		Thinking: "high",
-		Skills:   []string{"tdd"},
-		Tools:    []string{"read", "bash", "edit", "write"},
-		SystemPrompt: `You are the Builder autonomous engineer agent in gv-factory.
+	return BuilderTemplateForStack(sandbox.DefaultGoStack())
+}
+
+// BuilderTemplateForStack returns an AgentTemplate configured for the detected language and stack.
+func BuilderTemplateForStack(stack sandbox.StackInfo) AgentTemplate {
+	testCmd := strings.Join(stack.TestCommand, " ")
+	if testCmd == "" {
+		testCmd = "go test -v -cover ./..."
+	}
+	lang := stack.Language
+	if lang == "" {
+		lang = "go"
+	}
+	srcExt := stack.SourceExtension
+	if srcExt == "" {
+		srcExt = ".go"
+	}
+	testExt := stack.TestExtension
+	if testExt == "" {
+		testExt = "_test.go"
+	}
+
+	systemPrompt := fmt.Sprintf(`You are the Builder autonomous engineer agent in gv-factory specialized in %s.
 Your task is to execute the Red-Green-Refactor TDD cycle inside the isolated git worktree:
-1. Write unit tests first asserting expected behavior.
-2. Run tests to confirm failure (Red).
-3. Implement the minimum clean code to make tests pass (Green).
-4. Refactor and ensure all linters and tests pass with >= 90% coverage.
+1. Write unit tests first asserting expected behavior in *%s files.
+2. Run '%s' to confirm failure (Red).
+3. Implement the minimum clean code in *%s files to make tests pass (Green).
+4. Refactor and ensure all linters and tests pass with >= 90%% coverage.
 5. All code must strictly include the SPDX header:
    // SPDX-License-Identifier: Apache-2.0
    // SPDX-FileCopyrightText: 2026 gv-factory contributors
 Report your progress and output a final summary of modified files and verification results.`,
+		lang, testExt, testCmd, srcExt,
+	)
+
+	name := "Builder"
+	if lang != "go" {
+		name = fmt.Sprintf("Builder-%s", strings.Title(lang))
+	}
+
+	return AgentTemplate{
+		Name:         name,
+		Role:         fmt.Sprintf("TDD Autonomous Engineer (%s)", strings.Title(lang)),
+		Model:        "",
+		Thinking:     "high",
+		Skills:       []string{"tdd"},
+		Tools:        []string{"read", "bash", "edit", "write"},
+		SystemPrompt: systemPrompt,
 	}
 }
 
@@ -277,6 +309,7 @@ type PiBuilder struct {
 	runner       *PiRunner
 	template     AgentTemplate
 	workspaceDir string
+	stack        sandbox.StackInfo
 }
 
 // NewPiBuilder constructs a PiBuilder.
@@ -284,13 +317,34 @@ func NewPiBuilder(runner *PiRunner, template AgentTemplate, workspaceDir string)
 	if runner == nil {
 		return nil, ErrNilRunner
 	}
+	stack := sandbox.DetectStack(workspaceDir)
 	if template.Name == "" {
-		template = DefaultBuilderTemplate()
+		template = BuilderTemplateForStack(stack)
 	}
 	return &PiBuilder{
 		runner:       runner,
 		template:     template,
 		workspaceDir: workspaceDir,
+		stack:        stack,
+	}, nil
+}
+
+// NewPiBuilderForStack constructs a PiBuilder configured explicitly for a target stack.
+func NewPiBuilderForStack(runner *PiRunner, template AgentTemplate, workspaceDir string, stack sandbox.StackInfo) (*PiBuilder, error) {
+	if runner == nil {
+		return nil, ErrNilRunner
+	}
+	if stack.Language == "" {
+		stack = sandbox.DetectStack(workspaceDir)
+	}
+	if template.Name == "" {
+		template = BuilderTemplateForStack(stack)
+	}
+	return &PiBuilder{
+		runner:       runner,
+		template:     template,
+		workspaceDir: workspaceDir,
+		stack:        stack,
 	}, nil
 }
 
@@ -324,6 +378,7 @@ func (b *PiBuilder) BuildSpec(ctx context.Context, spec *agent.SpecDocument) ([]
 Task ID: %s
 Title: %s
 Description: %s
+Language: %s (Test Command: %s, Source: *%s, Tests: *%s)
 Dependencies: %s
 Acceptance Criteria: %s
 
@@ -331,6 +386,10 @@ Architecture Overview: %s`,
 			task.ID,
 			task.Title,
 			task.Description,
+			b.stack.Language,
+			strings.Join(b.stack.TestCommand, " "),
+			b.stack.SourceExtension,
+			b.stack.TestExtension,
 			strings.Join(task.Dependencies, ", "),
 			strings.Join(task.AcceptanceCriteria, "; "),
 			spec.ArchitectureOverview,
