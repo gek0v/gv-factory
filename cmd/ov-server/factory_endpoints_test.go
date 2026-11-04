@@ -22,6 +22,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/agent"
 	"github.com/gv-factory/gv-factory/internal/auth"
 	"github.com/gv-factory/gv-factory/internal/gateway"
+	"github.com/gv-factory/gv-factory/internal/sandbox"
 	"github.com/gv-factory/gv-factory/internal/sandbox/merger"
 	"github.com/gv-factory/gv-factory/internal/store"
 )
@@ -1324,6 +1325,90 @@ func TestFactoryEndpoints_RunPipeline_MetadataModelConfiguration(t *testing.T) {
 		t.Fatalf("unexpected failure running pipeline with custom model: %v", err)
 	}
 }
+
+func TestEvaluateCoverageWithStack(t *testing.T) {
+	t.Run("nil or failed build returns 0", func(t *testing.T) {
+		stack := sandbox.DefaultGoStack()
+		if cov := EvaluateCoverageWithStack(nil, stack); cov != 0.0 {
+			t.Fatalf("expected 0 for nil build, got %f", cov)
+		}
+		failedBuild := &agent.BuildResult{Success: false}
+		if cov := EvaluateCoverageWithStack(failedBuild, stack); cov != 0.0 {
+			t.Fatalf("expected 0 for failed build, got %f", cov)
+		}
+	})
+
+	t.Run("go stack coverage", func(t *testing.T) {
+		stack := sandbox.DefaultGoStack()
+		build := &agent.BuildResult{
+			Success: true,
+			Phases: []agent.PhaseOutcome{
+				{Phase: "Refactor", Stdout: "coverage: 91.5% of statements\nPASS"},
+			},
+		}
+		cov := EvaluateCoverageWithStack(build, stack)
+		if cov < 0.91 || cov > 0.92 {
+			t.Fatalf("expected ~0.915, got %f", cov)
+		}
+	})
+
+	t.Run("typescript stack coverage", func(t *testing.T) {
+		stack := sandbox.StackInfo{Language: "typescript"}
+		build := &agent.BuildResult{
+			Success: true,
+			Phases: []agent.PhaseOutcome{
+				{Phase: "Refactor", Stdout: "All files | 89.5 | 85 | 100 | 89.5 |"},
+			},
+		}
+		cov := EvaluateCoverageWithStack(build, stack)
+		if cov < 0.89 || cov > 0.90 {
+			t.Fatalf("expected ~0.895, got %f", cov)
+		}
+	})
+
+	t.Run("python stack coverage", func(t *testing.T) {
+		stack := sandbox.StackInfo{Language: "python"}
+		build := &agent.BuildResult{
+			Success: true,
+			Phases: []agent.PhaseOutcome{
+				{Phase: "Refactor", Stdout: "TOTAL    50    5    90%"},
+			},
+		}
+		cov := EvaluateCoverageWithStack(build, stack)
+		if cov < 0.89 || cov > 0.91 {
+			t.Fatalf("expected ~0.90, got %f", cov)
+		}
+	})
+
+	t.Run("rust stack coverage", func(t *testing.T) {
+		stack := sandbox.StackInfo{Language: "rust"}
+		build := &agent.BuildResult{
+			Success: true,
+			Phases: []agent.PhaseOutcome{
+				{Phase: "Refactor", Stdout: "88.0% coverage, 176/200 lines"},
+			},
+		}
+		cov := EvaluateCoverageWithStack(build, stack)
+		if cov < 0.87 || cov > 0.89 {
+			t.Fatalf("expected ~0.88, got %f", cov)
+		}
+	})
+
+	t.Run("fallback 1.0 when successful without coverage text", func(t *testing.T) {
+		stack := sandbox.StackInfo{Language: "go"}
+		build := &agent.BuildResult{
+			Success: true,
+			Phases: []agent.PhaseOutcome{
+				{Phase: "Refactor", Stdout: "clean build output"},
+			},
+		}
+		cov := EvaluateCoverageWithStack(build, stack)
+		if cov != 1.0 {
+			t.Fatalf("expected 1.0 for success with no coverage string, got %f", cov)
+		}
+	})
+}
+
 
 
 

@@ -25,6 +25,7 @@ import (
 	"github.com/gv-factory/gv-factory/internal/connectors/llm"
 	"github.com/gv-factory/gv-factory/internal/gateway"
 	"github.com/gv-factory/gv-factory/internal/runtime"
+	"github.com/gv-factory/gv-factory/internal/sandbox"
 	"github.com/gv-factory/gv-factory/internal/store"
 	"github.com/gv-factory/gv-factory/internal/telemetry"
 )
@@ -638,6 +639,8 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		return nil, fmt.Errorf("failed to initialize git sandbox: %w", err)
 	}
 
+	detectedStack := sandbox.DetectStack(sandboxDir)
+
 	var brainSource agent.BrainKnowledgeSource
 	if d.brainSvc != nil {
 		brainSource = d.brainSvc
@@ -670,18 +673,23 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		if usePi {
 			if piBin, err := runtime.DetectPiBinary(); err == nil && piBin != "" {
 				if piRunner, rErr := runtime.NewPiRunner(runtime.PiRunnerConfig{BinaryPath: piBin, Gateway: d.gw}); rErr == nil {
-					builderTemplate := runtime.DefaultBuilderTemplate()
+					builderTemplate := runtime.BuilderTemplateForStack(detectedStack)
 					if model != "" {
 						builderTemplate.Model = model
 					}
-					if pb, bErr := runtime.NewPiBuilder(piRunner, builderTemplate, sandboxDir); bErr == nil {
+					if pb, bErr := runtime.NewPiBuilderForStack(piRunner, builderTemplate, sandboxDir, detectedStack); bErr == nil {
 						rawBuilder = pb
 					}
 				}
 			}
 		}
 		if rawBuilder == nil {
-			rawBuilder = agent.NewBuilder(agent.BuilderConfig{WorkspaceDir: sandboxDir, LLMClient: llmClient, Model: model})
+			rawBuilder = agent.NewBuilder(agent.BuilderConfig{
+				WorkspaceDir: sandboxDir,
+				LLMClient:    llmClient,
+				Model:        model,
+				Stack:        detectedStack,
+			})
 		}
 	}
 	wrappedBuilder := &gitSandboxBuilder{
@@ -702,14 +710,31 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		brainRecorder = d.brainSvc
 	}
 
+	coverageCalculator := func(ctx context.Context, build *agent.BuildResult, task agent.TaskContext) float32 {
+		if task.Metadata != nil {
+			if covVal, ok := task.Metadata["coverage"]; ok {
+				switch v := covVal.(type) {
+				case float32:
+					return v
+				case float64:
+					return float32(v)
+				case int:
+					return float32(v) / 100.0
+				}
+			}
+		}
+		return EvaluateCoverageWithStack(build, detectedStack)
+	}
+
 	cfg := agent.CoordinatorConfig{
-		SpecWriter:  specWriter,
-		Builder:     wrappedBuilder,
-		Approver:    approver,
-		Brain:       brainRecorder,
-		MergeQueue:  d.mergeQueue,
-		CostTracker: d.costTracker,
-		EventHook:   hook,
+		SpecWriter:         specWriter,
+		Builder:            wrappedBuilder,
+		Approver:           approver,
+		Brain:              brainRecorder,
+		MergeQueue:         d.mergeQueue,
+		CostTracker:        d.costTracker,
+		EventHook:          hook,
+		CoverageCalculator: coverageCalculator,
 	}
 
 	coord := agent.NewFactoryCoordinator(cfg)
@@ -720,6 +745,22 @@ func (d *defaultFactoryRunner) RunPipeline(ctx context.Context, task agent.TaskC
 		}
 	}
 	return outcome, err
+}
+
+// EvaluateCoverageWithStack parses test coverage metrics from build phase outputs using the stack-specific parser.
+func EvaluateCoverageWithStack(build *agent.BuildResult, stack sandbox.StackInfo) float32 {
+	if build == nil || !build.Success {
+		return 0.0
+	}
+	for _, phase := range build.Phases {
+		if cov, ok := stack.ParseCoverageFloat32(phase.Stdout); ok {
+			return cov
+		}
+		if cov, ok := stack.ParseCoverageFloat32(phase.Stderr); ok {
+			return cov
+		}
+	}
+	return 1.0
 }
 
 func sanitizeIdentifier(s string) string {
